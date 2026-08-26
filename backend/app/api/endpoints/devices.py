@@ -23,6 +23,24 @@ def get_supported_device_types():
     """Return supported Netmiko device drivers"""
     return {"device_types": SUPPORTED_DEVICE_TYPES}
 
+@router.get("/serial-ports")
+def get_available_serial_ports():
+    """Detect and return available serial ports on host"""
+    import re
+    import serial.tools.list_ports
+    ports = []
+    for p in serial.tools.list_ports.comports():
+        device_path = p.device
+        label = device_path
+        # If /dev/ttyS<N>, annotate with (COM<N> on Windows)
+        match = re.match(r"^/dev/ttyS(\d+)$", device_path)
+        if match:
+            com_num = match.group(1)
+            label = f"{device_path} (COM{com_num})"
+        ports.append({"value": device_path, "label": label, "description": p.description})
+    
+    return {"serial_ports": ports}
+
 @router.post("/test-connection", response_model=DeviceTestResult)
 def test_connection(device: DeviceCredentials):
     """Test SSH connectivity and credentials on the target network device"""

@@ -20,8 +20,13 @@ export default function HealthCheckPage({ device }) {
   const [errorMessage, setErrorMessage] = useState('');
 
   const handleRunHealthCheck = async () => {
-    if (!device.host) {
+    const isSerial = device.connection_mode === 'serial';
+    if (!isSerial && !device.host) {
       setErrorMessage('Please fill in Device Host / IP Address above.');
+      return;
+    }
+    if (isSerial && !device.serial_port) {
+      setErrorMessage('Please fill in Serial Port above.');
       return;
     }
 

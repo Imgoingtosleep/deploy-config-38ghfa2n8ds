@@ -15,6 +15,11 @@ export const getSupportedDeviceTypes = async () => {
   return response.data;
 };
 
+export const getAvailableSerialPorts = async () => {
+  const response = await apiClient.get('/devices/serial-ports');
+  return response.data;
+};
+
 export const testDeviceConnection = async (device) => {
   const response = await apiClient.post('/devices/test-connection', device);
   return response.data;

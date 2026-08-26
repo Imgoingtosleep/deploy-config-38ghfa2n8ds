@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Network, CheckCircle2, XCircle, Loader2, RefreshCw, Cable, Globe } from 'lucide-react';
-import { testDeviceConnection, getSupportedDeviceTypes } from '../services/api';
+import { testDeviceConnection, getSupportedDeviceTypes, getAvailableSerialPorts } from '../services/api';
 import './DeviceForm.css';
 
 export default function DeviceForm({ device, setDevice, onConnectionStatusChange }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [serialPortsList, setSerialPortsList] = useState([]);
   const [deviceTypes, setDeviceTypes] = useState([
     { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
     { label: 'Cisco IOS (Telnet)', value: 'cisco_ios_telnet' },
@@ -22,6 +23,15 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
         }
       })
       .catch(() => console.log('Using default device types list'));
+
+    // Fetch detected serial ports
+    getAvailableSerialPorts()
+      .then((data) => {
+        if (data && data.serial_ports) {
+          setSerialPortsList(data.serial_ports);
+        }
+      })
+      .catch(() => console.log('No serial ports endpoint response'));
   }, []);
 
   const handleChange = (e) => {
@@ -156,18 +166,47 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
           </>
         ) : (
           <>
-            {/* Serial: Port (COM3 or /dev/ttyUSB0) */}
+            {/* Serial: Port (COM3 or /dev/ttyS3 or /dev/ttyUSB0) */}
             <div className="form-group col-span-2">
-              <label className="form-label">Serial Port (/dev/ttyUSB0 or COM3) *</label>
-              <input
-                type="text"
-                name="serial_port"
-                value={device.serial_port || '/dev/ttyUSB0'}
-                onChange={handleChange}
-                placeholder="/dev/ttyUSB0 or COM3"
-                required
-                className="form-input font-mono"
-              />
+              <label className="form-label">Serial Port (e.g. /dev/ttyS3 or COM3) *</label>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  name="serial_port"
+                  value={device.serial_port || ''}
+                  onChange={handleChange}
+                  placeholder="/dev/ttyS3 or COM3"
+                  list="detected-serial-ports"
+                  required
+                  className="form-input font-mono flex-1"
+                />
+                {serialPortsList.length > 0 && (
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setDevice((prev) => ({ ...prev, serial_port: e.target.value }));
+                      }
+                    }}
+                    value={device.serial_port || ''}
+                    className="form-select font-mono text-xs"
+                    style={{ width: 'auto', maxWidth: '140px' }}
+                  >
+                    <option value="">-- Detect --</option>
+                    {serialPortsList.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <datalist id="detected-serial-ports">
+                {serialPortsList.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </datalist>
             </div>
 
             {/* Serial: Baudrate */}
