@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: net-auto-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-4050}:4050"
+    environment:
+      - BACKEND_PORT=4050
+      - BACKEND_HOST=0.0.0.0
+      - ALLOWED_ORIGINS=http://localhost:4000,http://127.0.0.1:4000,http://localhost:${FRONTEND_PORT:-4000}
+      - DEFAULT_TIMEOUT=${DEFAULT_TIMEOUT:-30}
+      - GLOBAL_DELAY_FACTOR=${GLOBAL_DELAY_FACTOR:-1}
+    volumes:
+      - ./backend/app:/app/app
+    # privileged: true allows backend to directly access USB-to-Serial Console cables (/dev/ttyUSB0, /dev/ttyACM0)
+    privileged: true
+    networks:
+      - net-auto-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-4050}
+    container_name: net-auto-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-4000}:4000"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-4050}
+    depends_on:
+      - backend
+    networks:
+      - net-auto-network
+
+networks:
+  net-auto-network:
+    driver: bridge

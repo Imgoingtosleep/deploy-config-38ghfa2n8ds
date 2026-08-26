@@ -1,0 +1,13 @@
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.4.0
+pydantic-settings>=2.0.0
+netmiko>=4.2.0
+paramiko>=3.3.0
+nornir>=3.4.0
+nornir-netmiko>=0.2.0
+nornir-utils>=0.2.0
+jinja2>=3.1.2
+python-multipart>=0.0.6
+requests>=2.31.0
+pyserial>=3.5
