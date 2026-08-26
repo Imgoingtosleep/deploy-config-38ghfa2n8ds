@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from app.schemas.device import DeviceCredentials
 
@@ -32,3 +32,4 @@ class MultiCommandResponse(BaseModel):
     results: List[CommandResponse]
     success: bool
     overall_time_seconds: Optional[float] = None
+    summary: Optional[Dict[str, Any]] = None

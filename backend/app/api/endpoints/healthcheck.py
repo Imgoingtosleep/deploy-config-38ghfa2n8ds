@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.schemas.command import HealthCheckRequest, MultiCommandResponse
 from app.services.netmiko_service import NetmikoService
+from app.services.parser_service import ParserService
 
 router = APIRouter()
 
@@ -79,7 +80,7 @@ def get_presets():
 
 @router.post("/run", response_model=MultiCommandResponse)
 def run_health_check(request: HealthCheckRequest):
-    """Execute a batch of health-check commands on the target device"""
+    """Execute a batch of health-check commands on the target device and parse metrics"""
     device_type = request.device.device_type
     driver_group = "huawei" if "huawei" in device_type else "cisco_ios"
     check_type = request.check_type or "standard"
@@ -88,9 +89,15 @@ def run_health_check(request: HealthCheckRequest):
     commands = presets_for_driver.get(check_type, presets_for_driver["standard"])
     
     result = NetmikoService.send_multiple_commands(request.device, commands)
+    command_results = result.get("results", [])
+
+    # Use RegEx Parser to synthesize clean summary dashboard metrics
+    summary = ParserService.parse_health_summary(command_results, device_type)
+
     return MultiCommandResponse(
         host=result["host"],
-        results=result.get("results", []),
+        results=command_results,
         success=result.get("success", False),
         overall_time_seconds=result.get("overall_time_seconds"),
+        summary=summary,
     )

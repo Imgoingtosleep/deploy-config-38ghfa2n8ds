@@ -1,5 +1,19 @@
-import React, { useState } from 'react';
-import { Activity, Play, CheckCircle2, AlertTriangle, Loader2, ListChecks } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  Activity,
+  Play,
+  CheckCircle2,
+  AlertTriangle,
+  Loader2,
+  ListChecks,
+  Cpu,
+  Server,
+  Network,
+  ShieldCheck,
+  Clock,
+  RefreshCw,
+  Zap,
+} from 'lucide-react';
 import { runHealthCheck } from '../services/api';
 import TerminalOutput from '../components/TerminalOutput';
 import './HealthCheckPage.css';
@@ -16,10 +30,19 @@ export default function HealthCheckPage({ device }) {
   const [selectedCategory, setSelectedCategory] = useState('standard');
   const [running, setRunning] = useState(false);
   const [healthData, setHealthData] = useState(null);
+  const [cachedSummary, setCachedSummary] = useState(null);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleRunHealthCheck = async () => {
+  const deviceIdentifier = device.connection_mode === 'serial' ? device.serial_port : device.host;
+
+  // Reset cached summary when target device changes
+  useEffect(() => {
+    setCachedSummary(null);
+    setHealthData(null);
+  }, [deviceIdentifier]);
+
+  const handleRunHealthCheck = async (forceRescanSummary = false) => {
     const isSerial = device.connection_mode === 'serial';
     if (!isSerial && !device.host) {
       setErrorMessage('Please fill in Device Host / IP Address above.');
@@ -32,12 +55,30 @@ export default function HealthCheckPage({ device }) {
 
     setRunning(true);
     setErrorMessage('');
-    setHealthData(null);
+
+    // If forcing rescan, target standard category
+    const categoryToRun = forceRescanSummary ? 'standard' : selectedCategory;
+    if (forceRescanSummary) {
+      setSelectedCategory('standard');
+    }
 
     try {
-      const data = await runHealthCheck(device, selectedCategory);
+      const data = await runHealthCheck(device, categoryToRun);
       setHealthData(data);
       setSelectedCommandIndex(0);
+
+      // Merge and persist summary cards so they never vanish
+      if (data.summary) {
+        setCachedSummary((prev) => {
+          if (!prev) return data.summary;
+          return {
+            device_info: data.summary.device_info?.model !== 'Unknown Model' ? data.summary.device_info : prev.device_info,
+            performance: data.summary.performance?.cpu_percent ? data.summary.performance : prev.performance,
+            ports_summary: data.summary.ports_summary?.total_ports > 0 ? data.summary.ports_summary : prev.ports_summary,
+            hardware_health: data.summary.hardware_health?.status ? data.summary.hardware_health : prev.hardware_health,
+          };
+        });
+      }
     } catch (err) {
       setErrorMessage(err.response?.data?.detail || err.message || 'Health check execution failed');
     } finally {
@@ -46,6 +87,13 @@ export default function HealthCheckPage({ device }) {
   };
 
   const activeResult = healthData?.results?.[selectedCommandIndex];
+  const displaySummary = healthData?.summary || cachedSummary;
+
+  const getGaugeColor = (percent) => {
+    if (percent < 60) return 'green';
+    if (percent < 85) return 'yellow';
+    return 'red';
+  };
 
   return (
     <div className="health-page-container">
@@ -58,13 +106,13 @@ export default function HealthCheckPage({ device }) {
               <span>Automated Switch Health Check</span>
             </h2>
             <p className="health-subtitle">
-              Execute standardized diagnostic show commands against target switch via Netmiko.
+              Execute standardized diagnostic show commands against target switch and parse clean metrics.
             </p>
           </div>
 
           <button
-            onClick={handleRunHealthCheck}
-            disabled={running || !device.host}
+            onClick={() => handleRunHealthCheck(false)}
+            disabled={running || (device.connection_mode === 'network' ? !device.host : !device.serial_port)}
             className="btn-run-health"
           >
             {running ? (
@@ -75,7 +123,7 @@ export default function HealthCheckPage({ device }) {
             ) : (
               <>
                 <Play className="h-4 w-4" style={{ fill: 'currentColor' }} />
-                <span>Run Health Check</span>
+                <span>Run {CATEGORIES.find((c) => c.id === selectedCategory)?.name || 'Check'}</span>
               </>
             )}
           </button>
@@ -103,7 +151,7 @@ export default function HealthCheckPage({ device }) {
         )}
       </div>
 
-      {/* Health Check Results Breakdown */}
+      {/* Health Check Results Breakdown (CLI) */}
       {healthData && (
         <div className="health-results-grid">
           {/* Left Column: Command List */}
