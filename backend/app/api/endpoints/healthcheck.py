@@ -56,6 +56,7 @@ HEALTH_CHECK_PRESETS = {
         "transceiver": [
             "display transceiver",
             "display transceiver diagnosis interface",
+            "display transceiver verbose",
         ],
         "environment": [
             "display device",
