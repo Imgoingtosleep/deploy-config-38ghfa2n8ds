@@ -19,8 +19,9 @@ import TerminalOutput from '../components/TerminalOutput';
 import './HealthCheckPage.css';
 
 const CATEGORIES = [
-  { id: 'standard', name: 'Standard Overall Check', desc: 'show version, ip int brief, interfaces status, cdp/lldp, cpu' },
+  { id: 'standard', name: 'Standard Overall Check', desc: 'display version, interface brief, device status, cpu-usage' },
   { id: 'interfaces', name: 'Interface Diagnostics', desc: 'Port status, descriptions, speed/duplex, counters' },
+  { id: 'transceiver', name: 'Fiber & Transceiver (SFP/SFP+)', desc: 'display transceiver, optical power (Tx/Rx dBm), alarms' },
   { id: 'environment', name: 'Hardware & Environment', desc: 'CPU, Memory, Fan, Power Supply & Temperature' },
   { id: 'routing', name: 'Routing & ARP Table', desc: 'Routing table, protocols, ARP cache' },
   { id: 'logs', name: 'System Logs (Syslog)', desc: 'Recent switch log buffer and error messages' },

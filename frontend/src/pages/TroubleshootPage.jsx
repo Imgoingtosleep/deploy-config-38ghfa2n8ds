@@ -4,20 +4,37 @@ import { executeTroubleshootCommand } from '../services/api';
 import TerminalOutput from '../components/TerminalOutput';
 import './TroubleshootPage.css';
 
-const QUICK_COMMANDS = [
+const HUAWEI_COMMANDS = [
+  { label: 'Fiber Transceiver', cmd: 'display transceiver' },
+  { label: 'Transceiver Verbose', cmd: 'display transceiver verbose' },
+  { label: 'Transceiver Alarm', cmd: 'display transceiver alarm' },
+  { label: 'IP Interfaces', cmd: 'display ip interface brief' },
+  { label: 'Interface Brief', cmd: 'display interface brief' },
+  { label: 'Device Status', cmd: 'display device' },
+  { label: 'MAC Table', cmd: 'display mac-address' },
+  { label: 'ARP Table', cmd: 'display arp all' },
+  { label: 'LLDP Neighbors', cmd: 'display lldp neighbor brief' },
+  { label: 'Current Config', cmd: 'display current-configuration' },
+  { label: 'Recent Logs', cmd: 'display logbuffer' },
+  { label: 'CPU Usage', cmd: 'display cpu-usage' },
+];
+
+const CISCO_COMMANDS = [
+  { label: 'Fiber Transceiver', cmd: 'show interfaces transceiver' },
+  { label: 'Transceiver Detail', cmd: 'show interfaces transceiver detail' },
   { label: 'IP Interfaces', cmd: 'show ip interface brief' },
   { label: 'Port Status', cmd: 'show interfaces status' },
   { label: 'MAC Table', cmd: 'show mac address-table' },
   { label: 'ARP Table', cmd: 'show ip arp' },
-  { label: 'CDP Neighbors', cmd: 'show cdp neighbors detail' },
+  { label: 'CDP Neighbors', cmd: 'show cdp neighbors' },
   { label: 'LLDP Neighbors', cmd: 'show lldp neighbors' },
-  { label: 'VLAN Database', cmd: 'show vlan brief' },
-  { label: 'Spanning-Tree', cmd: 'show spanning-tree summary' },
   { label: 'Running Config', cmd: 'show running-config' },
   { label: 'Recent Logs', cmd: 'show logging' },
 ];
 
 export default function TroubleshootPage({ device }) {
+  const isHuawei = device.device_type?.toLowerCase().includes('huawei');
+  const quickCommands = isHuawei ? HUAWEI_COMMANDS : CISCO_COMMANDS;
   const [customCommand, setCustomCommand] = useState('');
   const [pingTarget, setPingTarget] = useState('');
   const [executing, setExecuting] = useState(false);
@@ -122,7 +139,7 @@ export default function TroubleshootPage({ device }) {
         <div className="troubleshoot-card">
           <h3 className="shortcuts-heading">Quick Diagnostic Shortcuts</h3>
           <div className="shortcuts-grid">
-            {QUICK_COMMANDS.map((qc, idx) => (
+            {quickCommands.map((qc, idx) => (
               <button
                 key={idx}
                 onClick={() => {

@@ -180,6 +180,12 @@ class ParserService:
             health["alerts"].append("High temperature threshold exceeded")
             health["status"] = "CRITICAL"
 
+        # Check for Optical signal loss or Transceiver alarms
+        if re.search(r"\b(LOS|RX\s+Power\s+Low|Loss\s+of\s+signal|RX\s+Alarm|TX\s+Alarm)\b", raw_output, re.IGNORECASE):
+            health["alerts"].append("Optical transceiver signal alarm / low Rx power detected")
+            if health["status"] == "HEALTHY":
+                health["status"] = "WARNING"
+
         if not health["alerts"]:
             health["alerts"].append("All hardware components operating within normal parameters")
 
@@ -208,7 +214,7 @@ class ParserService:
                 mem_text = out
             elif "interface" in cmd or "int brief" in cmd or "status" in cmd:
                 interface_text += "\n" + out
-            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd or "temp" in cmd:
+            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd or "temp" in cmd or "transceiver" in cmd or "optic" in cmd:
                 hw_text += "\n" + out
 
         # If memory text was not in a separate command, check if it's in cpu or version output

@@ -21,6 +21,10 @@ HEALTH_CHECK_PRESETS = {
             "show interfaces description",
             "show interfaces summary",
         ],
+        "transceiver": [
+            "show interfaces transceiver",
+            "show interfaces transceiver detail",
+        ],
         "environment": [
             "show environment all",
             "show processes cpu",
@@ -49,6 +53,10 @@ HEALTH_CHECK_PRESETS = {
             "display interface brief",
             "display ip interface brief",
         ],
+        "transceiver": [
+            "display transceiver",
+            "display transceiver diagnosis interface",
+        ],
         "environment": [
             "display device",
             "display temperature all",
@@ -72,6 +80,7 @@ def get_presets():
         "categories": [
             {"id": "standard", "name": "Standard Health Check (System, Interface, Environment)"},
             {"id": "interfaces", "name": "Interface & Port Status"},
+            {"id": "transceiver", "name": "Fiber Optic & Transceiver (SFP/SFP+ Tx/Rx Power)"},
             {"id": "environment", "name": "Hardware, CPU, Memory & Power"},
             {"id": "routing", "name": "Routing Table & ARP"},
             {"id": "logs", "name": "Recent System Logs"},
