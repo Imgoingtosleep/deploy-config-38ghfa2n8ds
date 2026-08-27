@@ -208,7 +208,7 @@ class ParserService:
                 mem_text = out
             elif "interface" in cmd or "int brief" in cmd or "status" in cmd:
                 interface_text += "\n" + out
-            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd:
+            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd or "temp" in cmd:
                 hw_text += "\n" + out
 
         # If memory text was not in a separate command, check if it's in cpu or version output

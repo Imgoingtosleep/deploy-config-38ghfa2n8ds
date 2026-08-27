@@ -10,15 +10,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('healthcheck');
   const [deviceConnected, setDeviceConnected] = useState(false);
   const [device, setDevice] = useState({
-    connection_mode: 'network',
     host: '192.168.1.1',
     port: 22,
-    serial_port: '/dev/ttyUSB0',
-    baud_rate: 9600,
     username: '',
     password: '',
     secret: '',
-    device_type: 'cisco_ios',
+    device_type: 'huawei',
+    connection_mode: 'network',
   });
 
   const handleConnectionStatusChange = (status, host) => {

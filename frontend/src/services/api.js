@@ -55,4 +55,40 @@ export const deployConfiguration = async (device, configCommands, saveConfig = t
   return response.data;
 };
 
+// Template APIs (Level 1 & Level 2)
+export const getTemplates = async (vendor = null) => {
+  const params = vendor ? { vendor } : {};
+  const response = await apiClient.get('/templates', { params });
+  return response.data;
+};
+
+export const getTemplate = async (templateId) => {
+  const response = await apiClient.get(`/templates/${templateId}`);
+  return response.data;
+};
+
+export const createTemplate = async (templateData) => {
+  const response = await apiClient.post('/templates', templateData);
+  return response.data;
+};
+
+export const updateTemplate = async (templateId, templateData) => {
+  const response = await apiClient.put(`/templates/${templateId}`, templateData);
+  return response.data;
+};
+
+export const deleteTemplate = async (templateId) => {
+  const response = await apiClient.delete(`/templates/${templateId}`);
+  return response.data;
+};
+
+export const executeTemplate = async (device, templateId, commands = null) => {
+  const response = await apiClient.post('/templates/execute', {
+    device,
+    template_id: templateId,
+    commands,
+  });
+  return response.data;
+};
+
 export default apiClient;

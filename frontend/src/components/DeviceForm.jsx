@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Network, CheckCircle2, XCircle, Loader2, RefreshCw, Cable, Globe } from 'lucide-react';
-import { testDeviceConnection, getSupportedDeviceTypes, getAvailableSerialPorts } from '../services/api';
+import { Network, CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react';
+import { testDeviceConnection, getSupportedDeviceTypes } from '../services/api';
 import './DeviceForm.css';
 
 export default function DeviceForm({ device, setDevice, onConnectionStatusChange }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [serialPortsList, setSerialPortsList] = useState([]);
   const [deviceTypes, setDeviceTypes] = useState([
-    { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
+    { label: 'Huawei VRP (SSH)', value: 'huawei' },
+    { label: 'Huawei VRP (Telnet)', value: 'huawei_telnet' },
+    { label: 'Cisco IOS / IOS-XE (SSH)', value: 'cisco_ios' },
     { label: 'Cisco IOS (Telnet)', value: 'cisco_ios_telnet' },
-    { label: 'Huawei VRP', value: 'huawei' },
     { label: 'Aruba OS-CX', value: 'aruba_os' },
     { label: 'Juniper JunOS', value: 'juniper_junos' },
   ]);
@@ -23,15 +23,6 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
         }
       })
       .catch(() => console.log('Using default device types list'));
-
-    // Fetch detected serial ports
-    getAvailableSerialPorts()
-      .then((data) => {
-        if (data && data.serial_ports) {
-          setSerialPortsList(data.serial_ports);
-        }
-      })
-      .catch(() => console.log('No serial ports endpoint response'));
   }, []);
 
   const handleChange = (e) => {
@@ -46,16 +37,9 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
     } else {
       setDevice((prev) => ({
         ...prev,
-        [name]: (name === 'port' || name === 'baud_rate') ? parseInt(value) || value : value,
+        [name]: name === 'port' ? parseInt(value) || value : value,
       }));
     }
-  };
-
-  const setConnectionMode = (mode) => {
-    setDevice((prev) => ({
-      ...prev,
-      connection_mode: mode,
-    }));
   };
 
   const handleTestConnection = async (e) => {
@@ -67,8 +51,7 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
       const res = await testDeviceConnection(device);
       setTestResult(res);
       if (onConnectionStatusChange) {
-        const targetIdentifier = device.connection_mode === 'serial' ? device.serial_port : device.host;
-        onConnectionStatusChange(res.connected, targetIdentifier);
+        onConnectionStatusChange(res.connected, device.host);
       }
     } catch (err) {
       const errMsg = err.response?.data?.detail || err.message || 'Cannot reach backend server';
@@ -78,15 +61,12 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
       };
       setTestResult(failedResult);
       if (onConnectionStatusChange) {
-        const targetIdentifier = device.connection_mode === 'serial' ? device.serial_port : device.host;
-        onConnectionStatusChange(false, targetIdentifier);
+        onConnectionStatusChange(false, device.host);
       }
     } finally {
       setTesting(false);
     }
   };
-
-  const isSerial = device.connection_mode === 'serial';
 
   return (
     <div className="device-card">
@@ -95,160 +75,57 @@ export default function DeviceForm({ device, setDevice, onConnectionStatusChange
           <Network className="device-header-icon" />
           <h2 className="device-header-text">Target Device (Switch / Router)</h2>
         </div>
-
-        {/* Mode Toggle: Network (SSH/Telnet) vs Serial (Console Cable) */}
-        <div className="mode-toggle-group">
-          <button
-            type="button"
-            onClick={() => setConnectionMode('network')}
-            className={`btn-mode-toggle ${!isSerial ? 'active' : ''}`}
-          >
-            <Globe className="h-3.5 w-3.5" />
-            <span>Network (SSH / Telnet)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setConnectionMode('serial')}
-            className={`btn-mode-toggle ${isSerial ? 'active' : ''}`}
-          >
-            <Cable className="h-3.5 w-3.5" />
-            <span>Serial / Console Cable</span>
-          </button>
-        </div>
       </div>
 
       <form onSubmit={handleTestConnection} className="device-grid">
-        {!isSerial ? (
-          <>
-            {/* Network: Host IP */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Host / IP Address *</label>
-              <input
-                type="text"
-                name="host"
-                value={device.host}
-                onChange={handleChange}
-                placeholder="192.168.1.1"
-                required
-                className="form-input font-mono"
-              />
-            </div>
+        {/* Host IP */}
+        <div className="form-group col-span-2">
+          <label className="form-label">Host / IP Address *</label>
+          <input
+            type="text"
+            name="host"
+            value={device.host}
+            onChange={handleChange}
+            placeholder="192.168.1.1"
+            required
+            className="form-input font-mono"
+          />
+        </div>
 
-            {/* Network: Protocol / Driver */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Protocol / Driver *</label>
-              <select
-                name="device_type"
-                value={device.device_type}
-                onChange={handleChange}
-                className="form-select"
-              >
-                {deviceTypes.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+        {/* Protocol / Driver */}
+        <div className="form-group col-span-2">
+          <label className="form-label">Protocol / Driver *</label>
+          <select
+            name="device_type"
+            value={device.device_type}
+            onChange={handleChange}
+            className="form-select"
+          >
+            {deviceTypes.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-            {/* Network: Port */}
-            <div className="form-group col-span-1">
-              <label className="form-label">Port</label>
-              <input
-                type="number"
-                name="port"
-                value={device.port || 22}
-                onChange={handleChange}
-                className="form-input font-mono"
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            {/* Serial: Port (COM3 or /dev/ttyS3 or /dev/ttyUSB0) */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Serial Port (e.g. /dev/ttyS3 or COM3) *</label>
-              <div className="flex gap-1.5">
-                <input
-                  type="text"
-                  name="serial_port"
-                  value={device.serial_port || ''}
-                  onChange={handleChange}
-                  placeholder="/dev/ttyS3 or COM3"
-                  list="detected-serial-ports"
-                  required
-                  className="form-input font-mono flex-1"
-                />
-                {serialPortsList.length > 0 && (
-                  <select
-                    onChange={(e) => {
-                      if (e.target.value) {
-                        setDevice((prev) => ({ ...prev, serial_port: e.target.value }));
-                      }
-                    }}
-                    value={device.serial_port || ''}
-                    className="form-select font-mono text-xs"
-                    style={{ width: 'auto', maxWidth: '140px' }}
-                  >
-                    <option value="">-- Detect --</option>
-                    {serialPortsList.map((p) => (
-                      <option key={p.value} value={p.value}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <datalist id="detected-serial-ports">
-                {serialPortsList.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </datalist>
-            </div>
-
-            {/* Serial: Baudrate */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Baud Rate *</label>
-              <select
-                name="baud_rate"
-                value={device.baud_rate || 9600}
-                onChange={handleChange}
-                className="form-select font-mono"
-              >
-                <option value={9600}>9600 (Standard Cisco/Huawei)</option>
-                <option value={19200}>19200</option>
-                <option value={38400}>38400</option>
-                <option value={57600}>57600</option>
-                <option value={115200}>115200 (High Speed)</option>
-              </select>
-            </div>
-
-            {/* Serial: Driver */}
-            <div className="form-group col-span-1">
-              <label className="form-label">Vendor OS</label>
-              <select
-                name="device_type"
-                value={device.device_type}
-                onChange={handleChange}
-                className="form-select"
-              >
-                <option value="cisco_ios">Cisco IOS</option>
-                <option value="huawei">Huawei VRP</option>
-                <option value="aruba_os">Aruba / ProCurve</option>
-                <option value="generic_termserver">Generic Serial</option>
-              </select>
-            </div>
-          </>
-        )}
+        {/* Port */}
+        <div className="form-group col-span-1">
+          <label className="form-label">Port</label>
+          <input
+            type="number"
+            name="port"
+            value={device.port || 22}
+            onChange={handleChange}
+            className="form-input font-mono"
+          />
+        </div>
 
         {/* Test Button */}
         <div className="form-group col-span-1" style={{ justifyContent: 'flex-end' }}>
           <button
             type="submit"
-            disabled={testing || (!isSerial && !device.host) || (isSerial && !device.serial_port)}
+            disabled={testing || !device.host}
             className="btn-test"
           >
             {testing ? (

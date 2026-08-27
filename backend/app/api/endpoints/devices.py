@@ -5,11 +5,11 @@ from app.services.netmiko_service import NetmikoService
 router = APIRouter()
 
 SUPPORTED_DEVICE_TYPES = [
+    {"label": "Huawei VRP (SSH)", "value": "huawei"},
+    {"label": "Huawei VRP (Telnet)", "value": "huawei_telnet"},
     {"label": "Cisco IOS / IOS-XE (SSH)", "value": "cisco_ios"},
     {"label": "Cisco IOS (Telnet - No Auth / Simple Pass)", "value": "cisco_ios_telnet"},
     {"label": "Cisco NX-OS", "value": "cisco_nxos"},
-    {"label": "Huawei VRP (SSH)", "value": "huawei"},
-    {"label": "Huawei VRP (Telnet)", "value": "huawei_telnet"},
     {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
     {"label": "Juniper JunOS", "value": "juniper_junos"},
     {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},

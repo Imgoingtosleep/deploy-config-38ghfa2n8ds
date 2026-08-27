@@ -17,7 +17,7 @@ class DeviceCredentials(BaseModel):
     username: Optional[str] = Field("", description="Username (Optional)")
     password: Optional[str] = Field("", description="Password (Optional)")
     secret: Optional[str] = Field(None, description="Enable / Secret password (if required)")
-    device_type: str = Field("cisco_ios", description="Netmiko device type e.g. cisco_ios, cisco_ios_serial, huawei")
+    device_type: str = Field("huawei", description="Netmiko device type e.g. huawei, cisco_ios")
 
 class DeviceTestResult(BaseModel):
     host: str

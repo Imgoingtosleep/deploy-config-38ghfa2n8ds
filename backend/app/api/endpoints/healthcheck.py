@@ -51,7 +51,7 @@ HEALTH_CHECK_PRESETS = {
         ],
         "environment": [
             "display device",
-            "display environment",
+            "display temperature all",
             "display cpu-usage",
             "display memory-usage",
         ],

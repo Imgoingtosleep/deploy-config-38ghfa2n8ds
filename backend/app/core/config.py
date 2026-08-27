@@ -32,7 +32,7 @@ class Settings(BaseSettings):
             return v
         return ["*"]
     
-    DEFAULT_DEVICE_TYPE: str = os.getenv("DEFAULT_DEVICE_TYPE", "cisco_ios")
+    DEFAULT_DEVICE_TYPE: str = os.getenv("DEFAULT_DEVICE_TYPE", "huawei")
     DEFAULT_SSH_PORT: int = int(os.getenv("DEFAULT_SSH_PORT", 22))
     DEFAULT_TELNET_PORT: int = int(os.getenv("DEFAULT_TELNET_PORT", 23))
     DEFAULT_TIMEOUT: int = int(os.getenv("DEFAULT_TIMEOUT", 30))

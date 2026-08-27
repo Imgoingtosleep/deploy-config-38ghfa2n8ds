@@ -34,22 +34,15 @@ export default function HealthCheckPage({ device }) {
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const deviceIdentifier = device.connection_mode === 'serial' ? device.serial_port : device.host;
-
   // Reset cached summary when target device changes
   useEffect(() => {
     setCachedSummary(null);
     setHealthData(null);
-  }, [deviceIdentifier]);
+  }, [device.host]);
 
   const handleRunHealthCheck = async (forceRescanSummary = false) => {
-    const isSerial = device.connection_mode === 'serial';
-    if (!isSerial && !device.host) {
+    if (!device.host) {
       setErrorMessage('Please fill in Device Host / IP Address above.');
-      return;
-    }
-    if (isSerial && !device.serial_port) {
-      setErrorMessage('Please fill in Serial Port above.');
       return;
     }
 
@@ -112,7 +105,7 @@ export default function HealthCheckPage({ device }) {
 
           <button
             onClick={() => handleRunHealthCheck(false)}
-            disabled={running || (device.connection_mode === 'network' ? !device.host : !device.serial_port)}
+            disabled={running || !device.host}
             className="btn-run-health"
           >
             {running ? (

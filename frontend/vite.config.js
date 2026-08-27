@@ -8,6 +8,10 @@ export default defineConfig({
     host: '0.0.0.0',
     watch: {
       usePolling: true,
+      interval: 100,
+    },
+    hmr: {
+      clientPort: 4000,
     },
   },
   preview: {

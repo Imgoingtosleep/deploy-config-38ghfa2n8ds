@@ -23,13 +23,14 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-4050}
+      dockerfile: Dockerfile.dev
     container_name: net-auto-frontend
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-4000}:4000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     environment:
       - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-4050}
     depends_on:
