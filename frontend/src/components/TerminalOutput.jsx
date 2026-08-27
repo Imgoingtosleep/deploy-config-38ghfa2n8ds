@@ -3,6 +3,59 @@ import { Terminal, Copy, Check, Download, Trash2, Filter, Plus, X, Save, Loader2
 import { getTemplates, createTemplate } from '../services/api';
 import './TerminalOutput.css';
 
+// Helper to mask passwords in terminal output (AAA, local-user, secret, password)
+export function maskSensitiveCli(text) {
+  if (!text || typeof text !== 'string') return text;
+  
+  // Huawei: local-user <user> password (irreversible-cipher|cipher|simple) <password>
+  let masked = text.replace(
+    /(local-user\s+\S+\s+password\s+(?:irreversible-cipher|cipher|simple)\s+)(\S+)/gi,
+    '$1*****'
+  );
+  
+  // Huawei: local-user <user> password <password>
+  masked = masked.replace(
+    /(local-user\s+\S+\s+password\s+)(?!(?:irreversible-cipher|cipher|simple)\b)(\S+)/gi,
+    '$1*****'
+  );
+
+  // Cisco: username <user> [privilege <num>] (secret|password) [0-9]? <password>
+  masked = masked.replace(
+    /(username\s+\S+(?:\s+privilege\s+\d+)?\s+(?:secret|password)(?:\s+\d+)?\s+)(\S+)/gi,
+    '$1*****'
+  );
+
+  // Enable secret / password: enable (secret|password) [0-9]? <password>
+  masked = masked.replace(
+    /(enable\s+(?:secret|password)(?:\s+\d+)?\s+)(\S+)/gi,
+    '$1*****'
+  );
+
+  // Set authentication password / super password
+  masked = masked.replace(
+    /((?:set\s+authentication\s+password|super\s+password)(?:\s+level\s+\d+)?(?:\s+(?:cipher|simple))?\s+)(\S+)/gi,
+    '$1*****'
+  );
+
+  // Standalone password line: password (0|7|cipher|simple)? <password>
+  masked = masked.replace(
+    /(^\s*password(?:\s+(?:0|7|cipher|simple))?\s+)(\S+)/gim,
+    '$1*****'
+  );
+
+  // SNMP community
+  masked = masked.replace(
+    /(snmp-server\s+community\s+)(\S+)/gi,
+    '$1*****'
+  );
+  masked = masked.replace(
+    /(snmp-agent\s+community\s+(?:read|write)(?:\s+(?:cipher|simple))?\s+)(\S+)/gi,
+    '$1*****'
+  );
+
+  return masked;
+}
+
 export default function TerminalOutput({
   title,
   command,
@@ -138,22 +191,24 @@ export default function TerminalOutput({
 
   const getFilteredOutput = () => {
     if (!output) return '';
-    if (!selectedTemplate || !selectedTemplate.regex) return output;
+    const safeOutput = maskSensitiveCli(output);
+    if (!selectedTemplate || !selectedTemplate.regex) return safeOutput;
 
     try {
       const pattern = new RegExp(selectedTemplate.regex, 'im');
-      const lines = output.split('\n');
+      const lines = safeOutput.split('\n');
       const matched = lines.filter((line) => pattern.test(line));
       if (matched.length === 0) {
         return `[Template Filter: ${selectedTemplate.name}]\n[Regex: /${selectedTemplate.regex}/]\n\n--- No lines matched this regex filter (Select "Raw Output" to view full data) ---`;
       }
       return `[Filtered by Template: ${selectedTemplate.name} (Regex: /${selectedTemplate.regex}/)]\n\n` + matched.join('\n');
     } catch (e) {
-      return output;
+      return safeOutput;
     }
   };
 
   const displayOutput = getFilteredOutput();
+  const displayCommand = maskSensitiveCli(command);
 
   const handleCopy = () => {
     if (!displayOutput) return;
@@ -187,7 +242,7 @@ export default function TerminalOutput({
           </div>
           <Terminal className="terminal-icon" />
           <span className="terminal-title-text">
-            {title || 'Terminal Console'} {command && `— $ ${command}`}
+            {title || 'Terminal Console'} {displayCommand && `— $ ${displayCommand}`}
           </span>
         </div>
 

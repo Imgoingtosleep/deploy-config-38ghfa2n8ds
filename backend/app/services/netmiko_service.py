@@ -192,6 +192,137 @@ class NetmikoService:
                 "overall_time_seconds": elapsed,
             }
 
+    @staticmethod
+    def _get_show_run_cmd(device_type: str) -> str:
+        dev_type = (device_type or "").lower()
+        if "huawei" in dev_type:
+            return "display current-configuration"
+        elif "juniper" in dev_type:
+            return "show configuration"
+        elif "hp" in dev_type or "aruba" in dev_type:
+            return "show running-config"
+        else:
+            return "show running-config"
+
+    @staticmethod
+    def mask_sensitive_data(text: str) -> str:
+        if not text or not isinstance(text, str):
+            return text
+        import re
+        # Huawei: local-user <user> password (irreversible-cipher|cipher|simple) <pass>
+        masked = re.sub(
+            r"(local-user\s+\S+\s+password\s+(?:irreversible-cipher|cipher|simple)\s+)(\S+)",
+            r"\g<1>*****",
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Huawei: local-user <user> password <pass>
+        masked = re.sub(
+            r"(local-user\s+\S+\s+password\s+)(?!(?:irreversible-cipher|cipher|simple)\b)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        # Cisco: username <user> [privilege <num>] (secret|password) [0-9]? <pass>
+        masked = re.sub(
+            r"(username\s+\S+(?:\s+privilege\s+\d+)?\s+(?:secret|password)(?:\s+\d+)?\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        # Enable secret / password: enable (secret|password) [0-9]? <pass>
+        masked = re.sub(
+            r"(enable\s+(?:secret|password)(?:\s+\d+)?\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        # Set authentication password / super password
+        masked = re.sub(
+            r"((?:set\s+authentication\s+password|super\s+password)(?:\s+level\s+\d+)?(?:\s+(?:cipher|simple))?\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        # Standalone password line: password (0|7|cipher|simple)? <pass>
+        masked = re.sub(
+            r"(^\s*password(?:\s+(?:0|7|cipher|simple))?\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        # SNMP community
+        masked = re.sub(
+            r"(snmp-server\s+community\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        masked = re.sub(
+            r"(snmp-agent\s+community\s+(?:read|write)(?:\s+(?:cipher|simple))?\s+)(\S+)",
+            r"\g<1>*****",
+            masked,
+            flags=re.IGNORECASE,
+        )
+        return masked
+
+    @staticmethod
+    def generate_rollback(config_lines: List[str], device_type: str) -> List[str]:
+        dev_type = (device_type or "").lower()
+        is_huawei = "huawei" in dev_type
+        prefix = "undo " if is_huawei else "no "
+        
+        rollback = []
+        for line in reversed(config_lines):
+            trimmed = line.strip()
+            if not trimmed or trimmed.startswith("!") or trimmed.startswith("#"):
+                continue
+            lower = trimmed.lower()
+            if lower.startswith("interface ") or lower.startswith("sysname ") or lower.startswith("hostname "):
+                continue
+            if lower.startswith("undo "):
+                rollback.append(trimmed[5:].strip())
+            elif lower.startswith("no "):
+                rollback.append(trimmed[3:].strip())
+            elif lower == "shutdown":
+                rollback.append("undo shutdown" if is_huawei else "no shutdown")
+            elif lower in ["undo shutdown", "no shutdown"]:
+                rollback.append("shutdown")
+            else:
+                rollback.append(f"{prefix}{trimmed}")
+        return rollback
+
+    @classmethod
+    def fetch_running_config(cls, device: DeviceCredentials) -> Dict[str, Any]:
+        """Fetch running configuration for backup"""
+        start_time = time.time()
+        params = cls._build_netmiko_dict(device)
+        target_name = device.serial_port if device.connection_mode == "serial" else device.host
+        cmd = cls._get_show_run_cmd(device.device_type)
+        try:
+            with ConnectHandler(**params) as net_connect:
+                cls._prepare_session(net_connect, device)
+                output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                elapsed = round(time.time() - start_time, 2)
+                return {
+                    "host": target_name,
+                    "command": cmd,
+                    "output": output,
+                    "success": True,
+                    "error": None,
+                    "execution_time_seconds": elapsed,
+                }
+        except Exception as e:
+            elapsed = round(time.time() - start_time, 2)
+            return {
+                "host": target_name,
+                "command": cmd,
+                "output": "",
+                "success": False,
+                "error": str(e),
+                "execution_time_seconds": elapsed,
+            }
+
     @classmethod
     def deploy_config(cls, device: DeviceCredentials, config_lines: List[str], save: bool = True) -> Dict[str, Any]:
         """Deploy configuration set to the device"""
@@ -210,11 +341,12 @@ class NetmikoService:
                         save_output = f"Config deployed but save failed: {str(se)}"
                 
                 full_output = f"{output}\n\n[Save Config Status]:\n{save_output}" if save else output
+                masked_output = cls.mask_sensitive_data(full_output)
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
                     "command": f"Config deployment ({len(config_lines)} lines)",
-                    "output": full_output,
+                    "output": masked_output,
                     "success": True,
                     "error": None,
                     "execution_time_seconds": elapsed,
@@ -228,4 +360,146 @@ class NetmikoService:
                 "success": False,
                 "error": str(e),
                 "execution_time_seconds": elapsed,
+            }
+
+    @classmethod
+    def deploy_config_advanced(
+        cls,
+        device: DeviceCredentials,
+        config_lines: List[str],
+        save: bool = True,
+        pre_check_commands: List[str] = None,
+        post_check_commands: List[str] = None,
+        backup_before: bool = False,
+    ) -> Dict[str, Any]:
+        """Advanced deployment with pre-check, backup, config deployment, save, post-check, and rollback generation"""
+        start_time = time.time()
+        params = cls._build_netmiko_dict(device)
+        target_name = device.serial_port if device.connection_mode == "serial" else device.host
+        pre_check_commands = pre_check_commands or []
+        post_check_commands = post_check_commands or []
+        
+        pre_results = []
+        post_results = []
+        backup_output = None
+        step_logs = []
+        
+        try:
+            with ConnectHandler(**params) as net_connect:
+                cls._prepare_session(net_connect, device)
+                
+                # 1. Optional pre-deployment backup
+                if backup_before:
+                    backup_cmd = cls._get_show_run_cmd(device.device_type)
+                    step_logs.append({"step": "backup", "title": f"Fetching Backup ({backup_cmd})", "status": "running"})
+                    try:
+                        backup_output = net_connect.send_command(backup_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        step_logs[-1]["status"] = "success"
+                    except Exception as be:
+                        backup_output = f"Backup failed: {str(be)}"
+                        step_logs[-1]["status"] = "failed"
+                        step_logs[-1]["error"] = str(be)
+
+                # 2. Pre-check commands
+                for cmd in pre_check_commands:
+                    cmd_start = time.time()
+                    try:
+                        out = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        pre_results.append({
+                            "host": target_name,
+                            "command": cmd,
+                            "output": out,
+                            "success": True,
+                            "error": None,
+                            "execution_time_seconds": round(time.time() - cmd_start, 2),
+                        })
+                    except Exception as pe:
+                        pre_results.append({
+                            "host": target_name,
+                            "command": cmd,
+                            "output": "",
+                            "success": False,
+                            "error": str(pe),
+                            "execution_time_seconds": round(time.time() - cmd_start, 2),
+                        })
+
+                # 3. Deploy configuration lines
+                step_logs.append({"step": "deploy", "title": f"Pushing {len(config_lines)} Config Commands", "status": "running"})
+                deploy_output = net_connect.send_config_set(config_lines)
+                step_logs[-1]["status"] = "success"
+
+                # 4. Save to Startup / NVRAM if enabled
+                save_output = ""
+                if save:
+                    step_logs.append({"step": "save", "title": "Saving Config to NVRAM (save/write mem)", "status": "running"})
+                    try:
+                        save_output = net_connect.save_config()
+                        step_logs[-1]["status"] = "success"
+                    except Exception as se:
+                        save_output = f"Config deployed but save failed: {str(se)}"
+                        step_logs[-1]["status"] = "failed"
+                        step_logs[-1]["error"] = str(se)
+
+                # 5. Post-check commands
+                for cmd in post_check_commands:
+                    cmd_start = time.time()
+                    try:
+                        out = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        post_results.append({
+                            "host": target_name,
+                            "command": cmd,
+                            "output": out,
+                            "success": True,
+                            "error": None,
+                            "execution_time_seconds": round(time.time() - cmd_start, 2),
+                        })
+                    except Exception as pe:
+                        post_results.append({
+                            "host": target_name,
+                            "command": cmd,
+                            "output": "",
+                            "success": False,
+                            "error": str(pe),
+                            "execution_time_seconds": round(time.time() - cmd_start, 2),
+                        })
+
+                # 6. Generate rollback commands
+                rollback_cmds = cls.generate_rollback(config_lines, device.device_type)
+
+                elapsed = round(time.time() - start_time, 2)
+                full_output = f"{deploy_output}\n\n[Save Config Status]:\n{save_output}" if save and save_output else deploy_output
+                masked_full_output = cls.mask_sensitive_data(full_output)
+
+                return {
+                    "host": target_name,
+                    "command": f"Advanced Config Deployment ({len(config_lines)} commands)",
+                    "output": masked_full_output,
+                    "success": True,
+                    "error": None,
+                    "execution_time_seconds": elapsed,
+                    "commands_deployed": config_lines,
+                    "save_output": save_output if save else None,
+                    "backup_config": backup_output,
+                    "pre_check_results": pre_results,
+                    "post_check_results": post_results,
+                    "rollback_commands": rollback_cmds,
+                    "step_logs": step_logs,
+                }
+        except Exception as e:
+            elapsed = round(time.time() - start_time, 2)
+            rollback_cmds = cls.generate_rollback(config_lines, device.device_type)
+            return {
+                "host": target_name,
+                "command": f"Advanced Config Deployment ({len(config_lines)} commands)",
+                "output": "",
+                "success": False,
+                "error": str(e),
+                "execution_time_seconds": elapsed,
+                "commands_deployed": config_lines,
+                "save_output": None,
+                "backup_config": backup_output,
+                "pre_check_results": pre_results,
+                "post_check_results": post_results,
+                "rollback_commands": rollback_cmds,
+                "step_logs": step_logs,
             }

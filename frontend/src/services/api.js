@@ -55,6 +55,33 @@ export const deployConfiguration = async (device, configCommands, saveConfig = t
   return response.data;
 };
 
+export const deployConfigurationAdvanced = async (
+  device,
+  configCommands,
+  saveConfig = true,
+  preCheckCommands = [],
+  postCheckCommands = [],
+  backupBeforeDeploy = false
+) => {
+  const response = await apiClient.post('/deploy/push-advanced', {
+    device,
+    config_commands: configCommands,
+    save_config: saveConfig,
+    pre_check_commands: preCheckCommands,
+    post_check_commands: postCheckCommands,
+    backup_before_deploy: backupBeforeDeploy,
+  });
+  return response.data;
+};
+
+export const backupRunningConfig = async (device) => {
+  const response = await apiClient.post('/deploy/backup', {
+    device,
+  });
+  return response.data;
+};
+
+
 // Template APIs (Level 1 & Level 2)
 export const getTemplates = async (vendor = null) => {
   const params = vendor ? { vendor } : {};
