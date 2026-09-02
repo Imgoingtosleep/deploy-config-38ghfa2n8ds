@@ -296,7 +296,7 @@ export default function DeployConfigPage({ device }) {
   const [builderPort, setBuilderPort] = useState({ port: 'GigabitEthernet0/0/1', mode: 'access', vlan: '10', vlansAllowed: '10,20,99', desc: 'Server Port', portfast: true });
   const [builderRoute, setBuilderRoute] = useState({ dest: '0.0.0.0', mask: '0.0.0.0', nexthop: '192.168.1.254', metric: '60' });
   const [builderServices, setBuilderServices] = useState({ hostname: 'SW-CORE-01', ntp: '192.168.1.50', syslog: '192.168.1.50', banner: 'AUTHORIZED ACCESS ONLY' });
-  const [builderUser, setBuilderUser] = useState({ username: 'admin', password: 'Admin@2026Password!', priv: '15', ssh: true });
+  const [builderUser, setBuilderUser] = useState({ username: '', password: '', priv: '15', ssh: true });
   const [builderShowPassword, setBuilderShowPassword] = useState(false);
 
   const fileInputRef = useRef(null);

@@ -29,10 +29,23 @@ class CommandResponse(BaseModel):
 
 class MultiCommandResponse(BaseModel):
     host: str
+    device_name: Optional[str] = None
     results: List[CommandResponse]
     success: bool
+    error: Optional[str] = None
     overall_time_seconds: Optional[float] = None
     summary: Optional[Dict[str, Any]] = None
+
+class BatchHealthCheckRequest(BaseModel):
+    devices: List[DeviceCredentials]
+    check_type: Optional[str] = Field("standard", description="standard, interfaces, environment, routing, logs, all")
+
+class BatchHealthCheckResponse(BaseModel):
+    devices_count: int
+    success_count: int
+    failed_count: int
+    overall_time_seconds: float
+    results: List[MultiCommandResponse]
 
 class BackupConfigRequest(BaseModel):
     device: DeviceCredentials

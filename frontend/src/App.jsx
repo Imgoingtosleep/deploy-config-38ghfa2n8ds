@@ -9,6 +9,9 @@ import './App.css';
 export default function App() {
   const [activeTab, setActiveTab] = useState('healthcheck');
   const [deviceConnected, setDeviceConnected] = useState(false);
+  const [deviceMode, setDeviceMode] = useState('multi'); // 'single' | 'multi'
+
+  // Single Device State
   const [device, setDevice] = useState({
     host: '192.168.1.1',
     port: 22,
@@ -18,6 +21,37 @@ export default function App() {
     device_type: 'huawei',
     connection_mode: 'network',
   });
+
+  // Multi-Device Fleet State
+  const [fleet, setFleet] = useState([
+    {
+      id: 'dev-1',
+      host: '192.168.1.2',
+      port: 22,
+      device_type: 'huawei',
+      username: '',
+      password: '',
+      secret: '',
+    },
+    {
+      id: 'dev-2',
+      host: '192.168.1.1',
+      port: 22,
+      device_type: 'huawei',
+      username: '',
+      password: '',
+      secret: '',
+    },
+    {
+      id: 'dev-3',
+      host: '10.0.0.2',
+      port: 22,
+      device_type: 'cisco_ios',
+      username: '',
+      password: '',
+      secret: '',
+    },
+  ]);
 
   const handleConnectionStatusChange = (status, host) => {
     setDeviceConnected(status);
@@ -30,21 +64,31 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         deviceConnected={deviceConnected}
-        deviceHost={device.host}
+        deviceHost={deviceMode === 'multi' ? `${fleet.filter(d => d.host).length} Devices` : device.host}
       />
 
       {/* Main Content Area */}
       <main className="main-content">
-        {/* Device Credentials / Connection Bar Component */}
+        {/* Device Credentials / Target Device Component */}
         <DeviceForm
+          deviceMode={deviceMode}
+          setDeviceMode={setDeviceMode}
           device={device}
           setDevice={setDevice}
+          fleet={fleet}
+          setFleet={setFleet}
           onConnectionStatusChange={handleConnectionStatusChange}
         />
 
         {/* Dynamic Page Views */}
         <section className="tab-viewport">
-          {activeTab === 'healthcheck' && <HealthCheckPage device={device} />}
+          {activeTab === 'healthcheck' && (
+            <HealthCheckPage
+              deviceMode={deviceMode}
+              device={device}
+              fleet={fleet}
+            />
+          )}
           {activeTab === 'troubleshoot' && <TroubleshootPage device={device} />}
           {activeTab === 'deploy' && <DeployConfigPage device={device} />}
         </section>

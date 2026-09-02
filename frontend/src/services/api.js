@@ -38,6 +38,14 @@ export const runHealthCheck = async (device, checkType = 'standard') => {
   return response.data;
 };
 
+export const runBatchHealthCheck = async (devices, checkType = 'standard') => {
+  const response = await apiClient.post('/healthcheck/run-batch', {
+    devices,
+    check_type: checkType,
+  });
+  return response.data;
+};
+
 export const executeTroubleshootCommand = async (device, command) => {
   const response = await apiClient.post('/troubleshoot/execute-command', {
     device,
