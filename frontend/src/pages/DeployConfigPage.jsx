@@ -414,6 +414,12 @@ export default function DeployConfigPage({
         return;
       }
 
+      if (validFleet.length > 10) {
+        setBackingUp(false);
+        handleLaunchAsyncFleetBackup();
+        return;
+      }
+
       try {
         const payloadDevices = validFleet.map((d) => ({
           host: d.host.trim(),
@@ -484,6 +490,13 @@ export default function DeployConfigPage({
       if (validFleet.length === 0) {
         setErrorMessage('Please add at least one device IP address in Target Device above.');
         setDeploying(false);
+        return;
+      }
+
+      // If fleet size > 10 devices, automatically route to Background Async Job with live progress stream
+      if (validFleet.length > 10) {
+        setDeploying(false);
+        handleLaunchAsyncFleetDeploy();
         return;
       }
 
@@ -2230,37 +2243,14 @@ export default function DeployConfigPage({
                 Cancel
               </button>
 
-              {deviceMode === 'multi' ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleConfirmDeploy}
-                    className="btn-deploy-confirm"
-                  >
-                    <Send className="h-4 w-4" />
-                    <span>Deploy Standard Batch</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleLaunchAsyncFleetDeploy}
-                    className="btn-deploy-confirm"
-                    style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8' }}
-                  >
-                    <Zap className="h-4 w-4 text-amber-300" />
-                    <span>Async Job (Live Stream)</span>
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleConfirmDeploy}
-                  className="btn-deploy-confirm"
-                >
-                  <Send className="h-4 w-4" />
-                  <span>Confirm & Push Configuration</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleConfirmDeploy}
+                className="btn-deploy-confirm"
+              >
+                <Send className="h-4 w-4" />
+                <span>Confirm & Push Configuration</span>
+              </button>
             </div>
           </div>
         </div>
@@ -2445,16 +2435,6 @@ export default function DeployConfigPage({
                   >
                     <Download className="h-4 w-4" />
                     <span>Download All ({manualBackupBatchResult.success_count} Files)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleLaunchAsyncFleetBackup}
-                    className="btn-primary"
-                    style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8' }}
-                  >
-                    <Zap className="h-4 w-4 text-amber-300" />
-                    <span>10,000+ Fleet Backup Job</span>
                   </button>
                 </>
               ) : (

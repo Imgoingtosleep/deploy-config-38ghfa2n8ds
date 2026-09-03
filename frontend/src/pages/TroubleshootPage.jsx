@@ -280,6 +280,12 @@ export default function TroubleshootPage({
         return;
       }
 
+      // If fleet size > 10 devices, automatically route to Background Async Job with live progress stream
+      if (validFleet.length > 10) {
+        handleLaunchAsyncFleetTroubleshoot(trimmed, vendorCommands);
+        return;
+      }
+
       try {
         const payloadDevices = validFleet.map((d) => ({
           host: d.host.trim(),
@@ -445,20 +451,6 @@ export default function TroubleshootPage({
                   <Send className="action-icon" />
                 )}
               </button>
-
-              {deviceMode === 'multi' && (
-                <button
-                  type="button"
-                  disabled={executing || !customCommand.trim()}
-                  onClick={() => handleLaunchAsyncFleetTroubleshoot(customCommand)}
-                  className="btn-send-cli"
-                  style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8', width: 'auto', padding: '0 0.85rem', gap: '0.35rem' }}
-                  title="Launch 10,000+ Devices Background Job with Live Progress Stream"
-                >
-                  <Zap className="h-3.5 w-3.5 text-amber-300" />
-                  <span className="text-xs font-bold font-mono">10k+ Fleet Job</span>
-                </button>
-              )}
             </div>
           </form>
 
