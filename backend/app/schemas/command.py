@@ -47,6 +47,20 @@ class BatchHealthCheckResponse(BaseModel):
     overall_time_seconds: float
     results: List[MultiCommandResponse]
 
+class BatchCommandRequest(BaseModel):
+    devices: List[DeviceCredentials]
+    command: Optional[str] = Field(None, description="Default command to execute across devices")
+    vendor_commands: Optional[Dict[str, str]] = Field(default_factory=dict, description="Vendor specific commands e.g. {'huawei': 'display ...', 'cisco_ios': 'show ...'}")
+    huawei_command: Optional[str] = Field(None, description="Command override for Huawei")
+    cisco_command: Optional[str] = Field(None, description="Command override for Cisco")
+
+class BatchCommandResponse(BaseModel):
+    devices_count: int
+    success_count: int
+    failed_count: int
+    overall_time_seconds: float
+    results: List[CommandResponse]
+
 class BackupConfigRequest(BaseModel):
     device: DeviceCredentials
 

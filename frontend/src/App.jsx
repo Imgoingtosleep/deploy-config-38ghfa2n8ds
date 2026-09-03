@@ -89,7 +89,13 @@ export default function App() {
               fleet={fleet}
             />
           )}
-          {activeTab === 'troubleshoot' && <TroubleshootPage device={device} />}
+          {activeTab === 'troubleshoot' && (
+            <TroubleshootPage
+              deviceMode={deviceMode}
+              device={device}
+              fleet={fleet}
+            />
+          )}
           {activeTab === 'deploy' && <DeployConfigPage device={device} />}
         </section>
       </main>

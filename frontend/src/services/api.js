@@ -54,6 +54,15 @@ export const executeTroubleshootCommand = async (device, command) => {
   return response.data;
 };
 
+export const executeBatchTroubleshootCommand = async (devices, command = '', vendorCommands = {}) => {
+  const response = await apiClient.post('/troubleshoot/execute-batch', {
+    devices,
+    command,
+    vendor_commands: vendorCommands,
+  });
+  return response.data;
+};
+
 export const deployConfiguration = async (device, configCommands, saveConfig = true) => {
   const response = await apiClient.post('/deploy/push', {
     device,

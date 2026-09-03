@@ -2,11 +2,13 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: 1.25rem;
+  min-width: 0;
+  width: 100%;
 }
 
 @media (min-width: 1024px) {
   .troubleshoot-page-container {
-    grid-template-columns: repeat(12, 1fr);
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
   .troubleshoot-left {
     grid-column: span 5 / span 5;
@@ -20,6 +22,13 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.troubleshoot-right {
+  min-width: 0;
+  width: 100%;
 }
 
 .troubleshoot-card {
@@ -28,16 +37,38 @@
   border-radius: 0.75rem;
   padding: 1.25rem;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.card-header-flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
 }
 
 .card-title {
   font-size: 0.875rem;
   font-weight: 600;
   color: #e2e8f0;
-  margin-bottom: 0.75rem;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.fleet-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: #a5b4fc;
+  background-color: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 0.2rem 0.5rem;
+  border-radius: 9999px;
 }
 
 .card-icon {
@@ -306,18 +337,26 @@
 
 .shortcuts-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .shortcut-btn {
-  padding: 0.625rem;
+  padding: 0.5rem 0.625rem;
   background-color: rgba(2, 6, 23, 0.7);
   border: 1px solid #1e293b;
   border-radius: 0.5rem;
   text-align: left;
   cursor: pointer;
   transition: all 0.2s ease;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .shortcut-btn:hover {
@@ -330,6 +369,10 @@
   font-weight: 500;
   color: #e2e8f0;
   display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 
 .shortcut-cmd {
@@ -340,4 +383,152 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin-top: 0.125rem;
+  width: 100%;
+}
+
+.shortcut-multi-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.cmd-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.cmd-tag-badge {
+  font-size: 0.5625rem;
+  font-weight: 700;
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.2rem;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+
+.cmd-tag-badge.hw {
+  background-color: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+}
+
+.cmd-tag-badge.cs {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.cmd-tag-text {
+  font-size: 0.625rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Multi-Troubleshoot Right Panel & Device Tabs */
+.multi-troubleshoot-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.batch-troubleshoot-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+}
+
+.stat-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  background-color: rgba(2, 6, 23, 0.6);
+  border: 1px solid #1e293b;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.375rem;
+}
+
+.stat-k {
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.stat-v {
+  color: #f1f5f9;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.device-tabs-row {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.device-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.device-tab-btn:hover {
+  border-color: #475569;
+  background-color: #1e293b;
+}
+
+.device-tab-btn.active {
+  background-color: rgba(79, 70, 229, 0.15);
+  border-color: #6366f1;
+  box-shadow: 0 0 0 1px #6366f1;
+}
+
+.device-tab-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.device-tab-host {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.device-tab-time {
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.device-tab-btn.device-failed {
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.device-tab-btn.device-failed.active {
+  border-color: #f43f5e;
+  box-shadow: 0 0 0 1px #f43f5e;
 }

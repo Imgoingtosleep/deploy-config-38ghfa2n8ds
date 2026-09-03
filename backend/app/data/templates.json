@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "id": "tpl-85303682",
+    "name": "Regex: ^.*\\bup\\b.*$",
+    "vendor": "all",
+    "description": "",
+    "author": "Level 2 Engineer",
+    "created_at": "2026-09-03 02:32:58",
+    "commands": [],
+    "regex": "^.*\\bup\\b.*$"
+  }
+]
