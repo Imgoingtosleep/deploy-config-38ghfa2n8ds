@@ -25,6 +25,17 @@ export const testDeviceConnection = async (device) => {
   return response.data;
 };
 
+export const detectSingleDeviceType = async (device) => {
+  const response = await apiClient.post('/devices/detect-type', device);
+  return response.data;
+};
+
+export const detectFleetTypes = async (devices) => {
+  const response = await apiClient.post('/devices/detect-fleet', devices);
+  return response.data;
+};
+
+
 export const getHealthCheckPresets = async () => {
   const response = await apiClient.get('/healthcheck/presets');
   return response.data;

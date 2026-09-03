@@ -5,6 +5,7 @@ from app.services.netmiko_service import NetmikoService
 router = APIRouter()
 
 SUPPORTED_DEVICE_TYPES = [
+    {"label": "Auto Detect (Recommended)", "value": "autodetect"},
     {"label": "Huawei VRP (SSH)", "value": "huawei"},
     {"label": "Huawei VRP (Telnet)", "value": "huawei_telnet"},
     {"label": "Cisco IOS / IOS-XE (SSH)", "value": "cisco_ios"},
@@ -12,11 +13,13 @@ SUPPORTED_DEVICE_TYPES = [
     {"label": "Cisco NX-OS", "value": "cisco_nxos"},
     {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
     {"label": "Juniper JunOS", "value": "juniper_junos"},
+    {"label": "HP / H3C Comware", "value": "hp_comware"},
     {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},
     {"label": "Linux / Cumulus", "value": "linux"},
     {"label": "Generic Telnet (No Auth / Lab Switch)", "value": "generic_termserver_telnet"},
     {"label": "Generic SSH / Paramiko", "value": "generic_termserver"},
 ]
+
 
 @router.get("/types")
 def get_supported_device_types():
@@ -52,6 +55,59 @@ def test_connection(device: DeviceCredentials):
         message=message,
         device_prompt=prompt if connected else None,
     )
+
+
+from concurrent.futures import ThreadPoolExecutor
+from typing import List
+from app.services.autodetect_service import AutoDetectService
+
+@router.post("/detect-type")
+def detect_single_device_type(device: DeviceCredentials):
+    """Auto-detect vendor/driver type for a single network device"""
+    detected_type, reason = AutoDetectService.detect_device_type(device)
+    return {
+        "host": device.host,
+        "device_type": detected_type,
+        "reason": reason,
+    }
+
+
+@router.post("/detect-fleet")
+def detect_fleet_types(devices: List[DeviceCredentials]):
+    """Auto-detect vendor/driver types concurrently across fleet devices"""
+    if not devices:
+        return {"results": []}
+
+    results = [None] * len(devices)
+
+    def _probe_dev(dev: DeviceCredentials, index: int):
+        d_type, reason = AutoDetectService.detect_device_type(dev)
+        dev_id = getattr(dev, "id", None) or f"dev-{index+1}"
+        return {
+            "id": dev_id,
+            "host": dev.host,
+            "device_type": d_type,
+            "reason": reason,
+        }
+
+    with ThreadPoolExecutor(max_workers=min(len(devices), 25)) as executor:
+        future_map = {executor.submit(_probe_dev, dev, idx): idx for idx, dev in enumerate(devices)}
+        for future in future_map:
+            idx = future_map[future]
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                dev_id = getattr(devices[idx], "id", None) or f"dev-{idx+1}"
+                results[idx] = {
+                    "id": dev_id,
+                    "host": devices[idx].host,
+                    "device_type": "huawei",
+                    "reason": f"Probe error: {str(e)}",
+                }
+
+    return {"results": results}
+
+
 
 
 from fastapi import File, UploadFile, Form, HTTPException

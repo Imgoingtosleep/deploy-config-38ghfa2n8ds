@@ -18,12 +18,15 @@ import {
   X,
   AlertCircle,
   Check,
+  Compass,
 } from 'lucide-react';
 import {
   testDeviceConnection,
   getSupportedDeviceTypes,
   importDevicesFromFile,
   downloadInventoryTemplate,
+  detectSingleDeviceType,
+  detectFleetTypes,
 } from '../services/api';
 import './DeviceForm.css';
 
@@ -38,9 +41,10 @@ export default function DeviceForm({
 }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
-  const [commonType, setCommonType] = useState('huawei');
+  const [commonType, setCommonType] = useState('autodetect');
   const [commonUser, setCommonUser] = useState('');
   const [commonPass, setCommonPass] = useState('');
+  const [detectingFleet, setDetectingFleet] = useState(false);
 
   // Import Modal State
   const [showImportModal, setShowImportModal] = useState(false);
@@ -52,7 +56,8 @@ export default function DeviceForm({
   const [parsedPreview, setParsedPreview] = useState(null);
 
   // Fallback credentials for import if missing in file
-  const [fallbackType, setFallbackType] = useState('huawei');
+  const [fallbackType, setFallbackType] = useState('autodetect');
+
   const [fallbackUser, setFallbackUser] = useState('');
   const [fallbackPass, setFallbackPass] = useState('');
   const [fallbackPort, setFallbackPort] = useState(22);
@@ -61,6 +66,7 @@ export default function DeviceForm({
   const fileInputRef = useRef(null);
 
   const [deviceTypes, setDeviceTypes] = useState([
+    { label: 'Auto Detect (Recommended)', value: 'autodetect' },
     { label: 'Huawei VRP (SSH)', value: 'huawei' },
     { label: 'Huawei VRP (Telnet)', value: 'huawei_telnet' },
     { label: 'Cisco IOS / IOS-XE (SSH)', value: 'cisco_ios' },
@@ -106,6 +112,12 @@ export default function DeviceForm({
     try {
       const res = await testDeviceConnection(device);
       setTestResult(res);
+      if (res.connected && res.message && res.message.includes('Auto-Detected:')) {
+        const match = res.message.match(/Auto-Detected:\s*([a-zA-Z0-9_\-]+)/);
+        if (match && match[1]) {
+          setDevice((prev) => ({ ...prev, device_type: match[1] }));
+        }
+      }
       if (onConnectionStatusChange) {
         onConnectionStatusChange(res.connected, device.host);
       }
@@ -137,13 +149,43 @@ export default function DeviceForm({
         id: newId,
         host: '',
         port: 22,
-        device_type: 'huawei',
+        device_type: commonType || 'autodetect',
         username: commonUser,
         password: commonPass,
         secret: '',
       },
     ]);
   };
+
+  const handleDetectFleet = async () => {
+    const validDevices = fleet.filter((d) => d.host && d.host.trim());
+    if (validDevices.length === 0) {
+      alert('Please enter at least one IP address in the fleet list.');
+      return;
+    }
+    setDetectingFleet(true);
+    try {
+      const res = await detectFleetTypes(validDevices);
+      if (res && res.results) {
+        const map = {};
+        res.results.forEach((r) => {
+          if (r.id) map[r.id] = r.device_type;
+          else if (r.host) map[r.host] = r.device_type;
+        });
+        setFleet((prev) =>
+          prev.map((d) => {
+            const detected = map[d.id] || map[d.host];
+            return detected ? { ...d, device_type: detected } : d;
+          })
+        );
+      }
+    } catch (err) {
+      console.error('Fleet type detection failed:', err);
+    } finally {
+      setDetectingFleet(false);
+    }
+  };
+
 
   const removeFleetDevice = (id) => {
     setFleet((prev) => prev.filter((d) => d.id !== id));
@@ -422,6 +464,7 @@ export default function DeviceForm({
                 className="quick-select"
                 title="Select device type to apply to all"
               >
+                <option value="autodetect">Auto Detect (Recommended)</option>
                 <option value="huawei">Huawei (VRP)</option>
                 <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
                 <option value="hp_comware">HP / H3C Comware</option>
@@ -449,6 +492,26 @@ export default function DeviceForm({
                 title="Apply Type, Username, and Password to all devices in list"
               >
                 Apply to All
+              </button>
+
+              <button
+                type="button"
+                disabled={detectingFleet || fleet.filter((d) => d.host).length === 0}
+                className="btn-detect-fleet"
+                onClick={handleDetectFleet}
+                title="Auto-detect vendor for all devices in list"
+              >
+                {detectingFleet ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
+                    <span>Detecting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Compass className="h-3.5 w-3.5 text-amber-300" />
+                    <span>Detect Types</span>
+                  </>
+                )}
               </button>
 
               <button
@@ -513,6 +576,7 @@ export default function DeviceForm({
                         onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
                         className="fleet-select"
                       >
+                        <option value="autodetect">Auto Detect</option>
                         <option value="huawei">Huawei (VRP)</option>
                         <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
                         <option value="hp_comware">HP / H3C Comware</option>
@@ -520,6 +584,7 @@ export default function DeviceForm({
                         <option value="juniper_junos">Juniper JunOS</option>
                       </select>
                     </td>
+
                     <td>
                       <input
                         type="text"

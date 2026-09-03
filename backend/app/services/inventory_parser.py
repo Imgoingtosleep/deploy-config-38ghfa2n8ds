@@ -8,8 +8,11 @@ import openpyxl
 
 # Normalization maps for device types/vendors
 DEVICE_TYPE_MAP = {
+    "auto": "autodetect",
+    "autodetect": "autodetect",
     "huawei": "huawei",
     "vrp": "huawei",
+
     "quidway": "huawei",
     "cloudengine": "huawei",
     "huawei_vrp": "huawei",
@@ -77,12 +80,13 @@ def clean_host_and_port(raw_host: Any, default_port: int = 22) -> Tuple[str, int
 def parse_record_to_device(
     item: Dict[str, Any],
     idx: int,
-    default_device_type: str = "huawei",
+    default_device_type: str = "autodetect",
     default_username: str = "",
     default_password: str = "",
     default_port: int = 22,
     default_secret: str = "",
 ) -> Optional[Dict[str, Any]]:
+
     """Convert any arbitrary dictionary row into a standardized Fleet Device object"""
     norm_dict = {normalize_key(k): v for k, v in item.items() if k is not None}
 

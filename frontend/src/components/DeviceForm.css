@@ -232,6 +232,33 @@
   transform: translateY(-1px);
 }
 
+.btn-detect-fleet {
+  background: rgba(217, 119, 6, 0.2);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+  font-size: 0.6875rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-detect-fleet:hover:not(:disabled) {
+  background: rgba(217, 119, 6, 0.35);
+  color: #fef3c7;
+  border-color: #f59e0b;
+}
+
+.btn-detect-fleet:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
 .btn-clear-fleet {
   background: rgba(244, 63, 94, 0.15);
   border: 1px solid rgba(244, 63, 94, 0.3);

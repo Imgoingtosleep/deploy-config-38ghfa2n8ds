@@ -90,9 +90,18 @@ def _execute_device_health_check(
     custom_commands: List[str] = None,
     vendor_commands: Dict[str, List[str]] = None,
 ) -> MultiCommandResponse:
-    """Helper function to execute health check on a single device with custom commands support"""
-    device_type = (device.device_type or "cisco_ios").lower()
+    device_type = (device.device_type or "").lower()
+    if not device_type or device_type in ["autodetect", "auto"]:
+        try:
+            from app.services.autodetect_service import AutoDetectService
+            detected_type, _ = AutoDetectService.detect_device_type(device)
+            device.device_type = detected_type
+            device_type = detected_type
+        except Exception:
+            from app.core.config import settings
+            device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
     driver_group = "huawei" if "huawei" in device_type else "cisco_ios"
+
 
     # 1. Determine commands to run
     if vendor_commands and driver_group in vendor_commands and vendor_commands[driver_group]:

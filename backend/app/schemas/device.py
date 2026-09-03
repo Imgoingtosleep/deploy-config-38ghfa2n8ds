@@ -2,8 +2,10 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 class DeviceCredentials(BaseModel):
+    id: Optional[str] = Field(None, description="Client-side unique device ID")
     name: Optional[str] = Field(None, description="Device friendly name e.g. SW-Huawei")
     # Connection mode: 'network' (SSH/Telnet) or 'serial' (Console Cable)
+
     connection_mode: str = Field("network", description="'network' or 'serial'")
     
     # Network fields (SSH / Telnet)

@@ -168,7 +168,16 @@ class NornirService:
         host_dict = {}
         for idx, dev in enumerate(devices):
             host_key = dev.host.strip() if dev.host and dev.host.strip() else f"device_{idx+1}"
+            raw = (dev.device_type or "").lower().strip()
+            if not raw or raw in ["autodetect", "auto"]:
+                try:
+                    from app.services.autodetect_service import AutoDetectService
+                    detected, _ = AutoDetectService.detect_device_type(dev)
+                    dev.device_type = detected
+                except Exception:
+                    dev.device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
             platform = cls._map_platform(dev.device_type)
+
             
             extras = {
                 "timeout": settings.DEFAULT_TIMEOUT,

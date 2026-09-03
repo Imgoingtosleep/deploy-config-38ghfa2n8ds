@@ -18,7 +18,7 @@ export default function App() {
     username: '',
     password: '',
     secret: '',
-    device_type: 'huawei',
+    device_type: 'autodetect',
     connection_mode: 'network',
   });
 
@@ -28,7 +28,7 @@ export default function App() {
       id: 'dev-1',
       host: '192.168.1.2',
       port: 22,
-      device_type: 'huawei',
+      device_type: 'autodetect',
       username: '',
       password: '',
       secret: '',
@@ -37,11 +37,12 @@ export default function App() {
       id: 'dev-2',
       host: '192.168.1.1',
       port: 22,
-      device_type: 'huawei',
+      device_type: 'autodetect',
       username: '',
       password: '',
       secret: '',
     },
+
     {
       id: 'dev-3',
       host: '10.0.0.2',

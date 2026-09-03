@@ -69,7 +69,16 @@ class NetmikoService:
             port = device.port if device.port and device.port > 0 else default_port
 
             # Ensure device_type is a valid Netmiko platform
-            raw_type = device.device_type or "cisco_ios"
+            raw_type = (device.device_type or "").lower().strip()
+            if not raw_type or raw_type in ["autodetect", "auto"]:
+                try:
+                    from app.services.autodetect_service import AutoDetectService
+                    detected_type, _ = AutoDetectService.detect_device_type(device)
+                    device.device_type = detected_type
+                    raw_type = detected_type
+                except Exception:
+                    raw_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
+
             if raw_type not in NETMIKO_PLATFORMS:
                 # Fallback to standard cisco_ios or cisco_ios_telnet
                 dev_type = "cisco_ios_telnet" if is_telnet else "cisco_ios"
@@ -112,13 +121,18 @@ class NetmikoService:
     @classmethod
     def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str]:
         """Test SSH or Serial connectivity and return (is_connected, message, prompt)"""
+        detected_info = ""
+        was_auto = (device.device_type or "").lower() in ["autodetect", "auto", ""]
         params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
+        if was_auto and device.device_type:
+            detected_info = f" (Auto-Detected: {device.device_type})"
+
         try:
             with ConnectHandler(**params) as net_connect:
                 cls._prepare_session(net_connect, device)
                 prompt = net_connect.find_prompt()
-                return True, f"Successfully connected to device on {target_name}", prompt
+                return True, f"Successfully connected to device on {target_name}{detected_info}", prompt
         except NetmikoAuthenticationException as e:
             return False, f"Authentication failed: {str(e)}", ""
         except NetmikoTimeoutException as e:
@@ -127,6 +141,7 @@ class NetmikoService:
             return False, f"SSH error: {str(e)}", ""
         except Exception as e:
             return False, f"Connection error: {str(e)}", ""
+
 
     @classmethod
     def send_command(cls, device: DeviceCredentials, command: str) -> Dict[str, Any]:

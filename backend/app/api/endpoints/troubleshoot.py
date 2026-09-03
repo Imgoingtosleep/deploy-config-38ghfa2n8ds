@@ -14,6 +14,14 @@ router = APIRouter()
 
 def _execute_device_command(device: DeviceCredentials, cmd: str) -> CommandResponse:
     """Helper function to execute command on a single device"""
+    dev_type = (device.device_type or "").lower()
+    if not dev_type or dev_type in ["autodetect", "auto"]:
+        try:
+            from app.services.autodetect_service import AutoDetectService
+            detected_type, _ = AutoDetectService.detect_device_type(device)
+            device.device_type = detected_type
+        except Exception:
+            pass
     result = NetmikoService.send_command(device, cmd)
     return CommandResponse(
         host=result.get("host", device.host or "Unknown"),
@@ -56,7 +64,15 @@ def execute_batch_command(request: BatchCommandRequest):
             )
 
         def _resolve_command_for_device(dev: DeviceCredentials) -> str:
-            dev_type = (dev.device_type or "cisco_ios").lower()
+            dev_type = (dev.device_type or "").lower()
+            if not dev_type or dev_type in ["autodetect", "auto"]:
+                try:
+                    from app.services.autodetect_service import AutoDetectService
+                    detected_type, _ = AutoDetectService.detect_device_type(dev)
+                    dev.device_type = detected_type
+                    dev_type = detected_type
+                except Exception:
+                    pass
             vendor = "huawei" if "huawei" in dev_type else "cisco_ios"
             if request.vendor_commands and vendor in request.vendor_commands and request.vendor_commands[vendor]:
                 return request.vendor_commands[vendor]
@@ -65,6 +81,7 @@ def execute_batch_command(request: BatchCommandRequest):
             if request.cisco_command and vendor == "cisco_ios":
                 return request.cisco_command
             return request.command or ""
+
 
         max_workers = min(max(len(devices), 1), 20)
         device_results = [None] * len(devices)
