@@ -414,37 +414,9 @@ export default function DeployConfigPage({
         return;
       }
 
-      if (validFleet.length > 10) {
-        setBackingUp(false);
-        handleLaunchAsyncFleetBackup();
-        return;
-      }
-
-      try {
-        const payloadDevices = validFleet.map((d) => ({
-          host: d.host.trim(),
-          port: parseInt(d.port, 10) || 22,
-          device_type: d.device_type || 'cisco_ios',
-          username: d.username || '',
-          password: d.password || '',
-          secret: d.secret || '',
-          connection_mode: 'network',
-        }));
-
-        const res = await backupBatchRunningConfig(payloadDevices);
-        setManualBackupBatchResult(res);
-        setSelectedBackupDeviceIdx(0);
-        setShowBackupModal(true);
-        if (res.failed_count === 0) {
-          setSuccessMessage(`Successfully fetched running configuration from all ${res.success_count} fleet devices (${res.overall_time_seconds}s)`);
-        } else {
-          setErrorMessage(`Fleet backup finished: ${res.success_count} succeeded, ${res.failed_count} failed.`);
-        }
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Failed to fetch fleet running config');
-      } finally {
-        setBackingUp(false);
-      }
+      setBackingUp(false);
+      handleLaunchAsyncFleetBackup();
+      return;
     } else {
       if (!device?.host) {
         setErrorMessage('Please fill in Device Host / IP Address above.');
@@ -493,64 +465,10 @@ export default function DeployConfigPage({
         return;
       }
 
-      // If fleet size > 10 devices, automatically route to Background Async Job with live progress stream
-      if (validFleet.length > 10) {
-        setDeploying(false);
-        handleLaunchAsyncFleetDeploy();
-        return;
-      }
-
-      try {
-        const payloadDevices = validFleet.map((d) => ({
-          host: d.host.trim(),
-          port: parseInt(d.port, 10) || 22,
-          device_type: d.device_type || 'cisco_ios',
-          username: d.username || '',
-          password: d.password || '',
-          secret: d.secret || '',
-          connection_mode: 'network',
-        }));
-
-        const data = await deployConfigurationBatch(
-          payloadDevices,
-          validCommands,
-          saveConfig,
-          preCmds,
-          postCmds,
-          enableBackup
-        );
-        setBatchResult(data);
-        setSelectedBatchDeviceIdx(0);
-        setActiveTab('results');
-        setResultTab('terminal');
-
-        if (data.results && data.results.length > 0) {
-          setResult(data.results[0]);
-        }
-
-        const historyItem = {
-          id: Date.now(),
-          timestamp: new Date().toLocaleTimeString(),
-          date: new Date().toLocaleDateString(),
-          host: `Fleet (${data.devices_count} devices)`,
-          device_type: 'Multi-Vendor Fleet',
-          commandCount: validCommands.length,
-          success: data.failed_count === 0,
-          executionTime: data.overall_time_seconds,
-          script: configText,
-          result: data,
-        };
-        setDeployHistory((prev) => [historyItem, ...prev.slice(0, 19)]);
-        if (data.failed_count === 0) {
-          setSuccessMessage(`Configuration successfully deployed across all ${data.success_count} devices (${data.overall_time_seconds}s)`);
-        } else {
-          setErrorMessage(`Fleet deployment finished: ${data.success_count} succeeded, ${data.failed_count} failed.`);
-        }
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Fleet config deployment failed');
-      } finally {
-        setDeploying(false);
-      }
+      // Route to Background Async Job with live progress stream & modal
+      setDeploying(false);
+      handleLaunchAsyncFleetDeploy();
+      return;
     } else {
       // Single Mode
       if (!device?.host) {

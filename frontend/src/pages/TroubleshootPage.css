@@ -1,22 +1,45 @@
 .troubleshoot-page-container {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Single Device Mode (Side-by-Side with Interactive Terminal) */
+.troubleshoot-page-container.single-mode {
   display: grid;
   grid-template-columns: 1fr;
   gap: 1.25rem;
-  min-width: 0;
-  width: 100%;
 }
 
 @media (min-width: 1024px) {
-  .troubleshoot-page-container {
+  .troubleshoot-page-container.single-mode {
     grid-template-columns: repeat(12, minmax(0, 1fr));
   }
-  .troubleshoot-left {
+  .troubleshoot-page-container.single-mode .troubleshoot-left {
     grid-column: span 5 / span 5;
   }
-  .troubleshoot-right {
+  .troubleshoot-page-container.single-mode .troubleshoot-right {
     grid-column: span 7 / span 7;
   }
 }
+
+/* Multi-Device Fleet Mode (Full Width Modern Layout) */
+.troubleshoot-page-container.multi-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  width: 100%;
+}
+
+.troubleshoot-page-container.multi-mode .troubleshoot-left {
+  width: 100%;
+}
+
+.troubleshoot-page-container.multi-mode .profiles-grid-ts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 0.85rem;
+}
+
 
 .troubleshoot-left {
   display: flex;
@@ -278,16 +301,21 @@
   margin-bottom: 0.5rem;
 }
 
-/* Shortcuts Card & Categories */
-.shortcuts-header {
+/* =========================================
+   SAVED COMMAND PROFILES (TROUBLESHOOT)
+   ========================================= */
+.profiles-header-flex {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
   margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.shortcuts-heading {
-  font-size: 0.75rem;
+.profiles-heading {
+  font-size: 0.78rem;
   font-weight: 600;
   color: #cbd5e1;
   text-transform: uppercase;
@@ -295,144 +323,185 @@
   margin: 0;
 }
 
-.device-vendor-badge {
-  font-size: 0.6875rem;
-  font-weight: 500;
-  padding: 0.15rem 0.5rem;
-  border-radius: 0.25rem;
-  background-color: rgba(99, 102, 241, 0.15);
-  color: #a5b4fc;
-  border: 1px solid rgba(99, 102, 241, 0.3);
+.btn-save-playbook {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px dashed rgba(16, 185, 129, 0.4);
+  font-size: 0.72rem;
+  color: #34d399;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.category-tabs-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-bottom: 0.75rem;
+.btn-save-playbook:hover {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: #34d399;
 }
 
-.cat-pill-btn {
-  background-color: rgba(2, 6, 23, 0.6);
-  border: 1px solid #1e293b;
-  color: #94a3b8;
-  font-size: 0.6875rem;
-  font-weight: 500;
-  padding: 0.25rem 0.5rem;
+
+
+.profiles-container-ts {
+  margin-top: 0.5rem;
+}
+
+.empty-profiles-box {
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1rem;
+  text-align: center;
+}
+
+.btn-create-first-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
   border-radius: 0.375rem;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #c7d2fe;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-create-first-profile:hover {
+  background: rgba(99, 102, 241, 0.35);
+  color: #ffffff;
+}
+
+.profiles-grid-ts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.625rem;
+}
+
+@media (min-width: 640px) {
+  .profiles-grid-ts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.profile-card-ts {
+  background: rgba(2, 6, 23, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.5rem;
+  transition: all 0.15s ease;
+}
+
+.profile-card-ts:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.profile-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.profile-card-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-cmd-count {
+  font-size: 0.65rem;
+  background: rgba(99, 102, 241, 0.2);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.btn-icon-ts {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.2rem;
+  border-radius: 0.25rem;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+
+.btn-icon-ts.edit:hover {
+  color: #818cf8;
+}
+
+.btn-icon-ts.delete:hover {
+  color: #f87171;
+}
+
+.profile-card-desc {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  margin: 0.25rem 0;
+  line-height: 1.4;
+  min-height: 2.4rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.profile-card-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 0.5rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+
+.btn-run-profile {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.375rem;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+  font-size: 0.72rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
-.cat-pill-btn:hover {
-  color: #e2e8f0;
-  border-color: #334155;
-}
-
-.cat-pill-btn.active {
-  background-color: #4f46e5;
-  border-color: #4f46e5;
+.btn-run-profile:hover:not(:disabled) {
+  background: #4f46e5;
+  border-color: #6366f1;
   color: #ffffff;
+  box-shadow: 0 2px 8px -1px rgba(79, 70, 229, 0.4);
 }
 
-.shortcuts-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-  width: 100%;
-  min-width: 0;
+.btn-run-profile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.shortcut-btn {
-  padding: 0.5rem 0.625rem;
-  background-color: rgba(2, 6, 23, 0.7);
-  border: 1px solid #1e293b;
-  border-radius: 0.5rem;
-  text-align: left;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.shortcut-btn:hover {
-  background-color: rgba(30, 41, 59, 0.6);
-  border-color: #4f46e5;
-}
-
-.shortcut-label {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: #e2e8f0;
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-}
-
-.shortcut-cmd {
-  font-size: 0.625rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 0.125rem;
-  width: 100%;
-}
-
-.shortcut-multi-cmds {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin-top: 0.25rem;
-  width: 100%;
-  min-width: 0;
-}
-
-.cmd-tag-row {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  width: 100%;
-  min-width: 0;
-}
-
-.cmd-tag-badge {
-  font-size: 0.5625rem;
-  font-weight: 700;
-  padding: 0.05rem 0.25rem;
-  border-radius: 0.2rem;
-  flex-shrink: 0;
-  line-height: 1.2;
-}
-
-.cmd-tag-badge.hw {
-  background-color: rgba(99, 102, 241, 0.2);
-  color: #a5b4fc;
-  border: 1px solid rgba(99, 102, 241, 0.35);
-}
-
-.cmd-tag-badge.cs {
-  background-color: rgba(16, 185, 129, 0.2);
-  color: #6ee7b7;
-  border: 1px solid rgba(16, 185, 129, 0.35);
-}
-
-.cmd-tag-text {
-  font-size: 0.625rem;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
 
 /* Multi-Troubleshoot Right Panel & Device Tabs */
 .multi-troubleshoot-container {

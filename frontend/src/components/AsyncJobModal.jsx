@@ -318,32 +318,32 @@ export default function AsyncJobModal({
                       const errorMsg = item.error || (item.output && item.output.includes('Error:') ? item.output : '');
                       return (
                         <tr key={idx} className={!isSuccess ? 'bg-rose-950/20' : ''}>
-                          <td className="font-mono text-xs text-slate-500">{itemIdx}</td>
-                          <td className="font-mono text-xs font-semibold text-white">
+                          <td className="font-mono text-xs text-slate-500 whitespace-nowrap">{itemIdx}</td>
+                          <td className="font-mono text-xs font-semibold text-white whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               <span>{item.host}</span>
                             </div>
                           </td>
-                          <td>
+                          <td className="whitespace-nowrap">
                             <div className="flex flex-col gap-1 items-start">
                               <span className={`status-tag ${isSuccess ? 'success' : 'failed'}`}>
                                 {isSuccess ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
                                 <span>{isSuccess ? 'Success' : 'Failed'}</span>
                               </span>
                               {!isSuccess && errorMsg && (
-                                <span className="text-[11px] font-mono text-rose-300 max-w-sm truncate" title={errorMsg}>
+                                <span className="text-[11px] font-mono text-rose-300 max-w-md truncate block" title={errorMsg}>
                                   Reason: {errorMsg}
                                 </span>
                               )}
                             </div>
                           </td>
-                          <td className="font-mono text-xs text-slate-300 max-w-xs truncate">
+                          <td className="font-mono text-xs text-slate-300 whitespace-nowrap">
                             {item.command || 'Batch Execution'}
                           </td>
-                          <td className="font-mono text-xs text-slate-400">
+                          <td className="font-mono text-xs text-slate-400 whitespace-nowrap">
                             {item.execution_time_seconds || 0}s
                           </td>
-                          <td className="text-right">
+                          <td className="text-right whitespace-nowrap">
                             <button
                               type="button"
                               onClick={() => setInspectedDevice(item)}
@@ -353,6 +353,7 @@ export default function AsyncJobModal({
                               <span>{isSuccess ? 'View Log' : 'View Error'}</span>
                             </button>
                           </td>
+
                         </tr>
                       );
                     })}

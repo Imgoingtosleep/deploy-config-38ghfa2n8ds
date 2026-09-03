@@ -1,4 +1,5 @@
 import time
+from typing import List, Dict, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter
 from app.schemas.command import (
@@ -83,14 +84,27 @@ HEALTH_CHECK_PRESETS = {
     },
 }
 
-def _execute_device_health_check(device: DeviceCredentials, check_type: str = "standard") -> MultiCommandResponse:
-    """Helper function to execute health check on a single device"""
+def _execute_device_health_check(
+    device: DeviceCredentials,
+    check_type: str = "standard",
+    custom_commands: List[str] = None,
+    vendor_commands: Dict[str, List[str]] = None,
+) -> MultiCommandResponse:
+    """Helper function to execute health check on a single device with custom commands support"""
     device_type = (device.device_type or "cisco_ios").lower()
     driver_group = "huawei" if "huawei" in device_type else "cisco_ios"
-    
-    presets_for_driver = HEALTH_CHECK_PRESETS.get(driver_group, HEALTH_CHECK_PRESETS["cisco_ios"])
-    commands = presets_for_driver.get(check_type, presets_for_driver["standard"])
-    
+
+    # 1. Determine commands to run
+    if vendor_commands and driver_group in vendor_commands and vendor_commands[driver_group]:
+        commands = vendor_commands[driver_group]
+    elif custom_commands and len(custom_commands) > 0:
+        # Resolve vendor commands if user supplied generic commands
+        from app.services.nornir_service import NornirService
+        commands = [NornirService.resolve_vendor_command(cmd, device_type) for cmd in custom_commands]
+    else:
+        presets_for_driver = HEALTH_CHECK_PRESETS.get(driver_group, HEALTH_CHECK_PRESETS["cisco_ios"])
+        commands = presets_for_driver.get(check_type, presets_for_driver["standard"])
+
     result = NetmikoService.send_multiple_commands(device, commands)
     command_results = result.get("results", [])
 
@@ -109,22 +123,63 @@ def _execute_device_health_check(device: DeviceCredentials, check_type: str = "s
 
 @router.get("/presets")
 def get_presets():
-    """Return available preset health check categories"""
+    """Return available preset health check categories with exact command lists per vendor"""
     return {
         "categories": [
-            {"id": "standard", "name": "Standard Health Check (System, Interface, Environment)"},
-            {"id": "interfaces", "name": "Interface & Port Status"},
-            {"id": "transceiver", "name": "Fiber Optic & Transceiver (SFP/SFP+ Tx/Rx Power)"},
-            {"id": "environment", "name": "Hardware, CPU, Memory & Power"},
-            {"id": "routing", "name": "Routing Table & ARP"},
-            {"id": "logs", "name": "Recent System Logs"},
+            {
+                "id": "standard",
+                "name": "Standard Overall Check",
+                "desc": "version, interface brief, device status, cpu-usage",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["standard"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["standard"],
+            },
+            {
+                "id": "interfaces",
+                "name": "Interface & Port Status",
+                "desc": "Port status, descriptions, speed/duplex, counters",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["interfaces"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["interfaces"],
+            },
+            {
+                "id": "transceiver",
+                "name": "Fiber & Transceiver (SFP/SFP+)",
+                "desc": "Optical Tx/Rx Power (dBm), transceiver alarms",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["transceiver"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["transceiver"],
+            },
+            {
+                "id": "environment",
+                "name": "Hardware, CPU, Memory & Power",
+                "desc": "CPU, Memory, Fan, Power Supply & Temperature",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["environment"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["environment"],
+            },
+            {
+                "id": "routing",
+                "name": "Routing Table & ARP",
+                "desc": "Routing table, protocols, ARP cache",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["routing"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["routing"],
+            },
+            {
+                "id": "logs",
+                "name": "System Logs (Syslog)",
+                "desc": "Recent log buffer and error messages",
+                "commands_cisco": HEALTH_CHECK_PRESETS["cisco_ios"]["logs"],
+                "commands_huawei": HEALTH_CHECK_PRESETS["huawei"]["logs"],
+            },
         ]
     }
 
 @router.post("/run", response_model=MultiCommandResponse)
 def run_health_check(request: HealthCheckRequest):
     """Execute a batch of health-check commands on the target device and parse metrics"""
-    return _execute_device_health_check(request.device, request.check_type or "standard")
+    return _execute_device_health_check(
+        device=request.device,
+        check_type=request.check_type or "standard",
+        custom_commands=request.commands,
+        vendor_commands=request.vendor_commands,
+    )
 
 @router.post("/run-batch", response_model=BatchHealthCheckResponse)
 def run_batch_health_check(request: BatchHealthCheckRequest):
@@ -142,13 +197,20 @@ def run_batch_health_check(request: BatchHealthCheckRequest):
 
     check_type = request.check_type or "standard"
     max_workers = min(len(devices), 10)
-    
+
     device_results = [None] * len(devices)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_index = {
-            executor.submit(_execute_device_health_check, dev, check_type): i
+            executor.submit(
+                _execute_device_health_check,
+                dev,
+                check_type,
+                request.commands,
+                request.vendor_commands,
+            ): i
             for i, dev in enumerate(devices)
         }
+
         for future in as_completed(future_to_index):
             idx = future_to_index[future]
             try:

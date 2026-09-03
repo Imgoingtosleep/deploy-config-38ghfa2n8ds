@@ -30,21 +30,26 @@ export const getHealthCheckPresets = async () => {
   return response.data;
 };
 
-export const runHealthCheck = async (device, checkType = 'standard') => {
+export const runHealthCheck = async (device, checkType = 'standard', commands = [], vendorCommands = {}) => {
   const response = await apiClient.post('/healthcheck/run', {
     device,
     check_type: checkType,
+    commands,
+    vendor_commands: vendorCommands,
   });
   return response.data;
 };
 
-export const runBatchHealthCheck = async (devices, checkType = 'standard') => {
+export const runBatchHealthCheck = async (devices, checkType = 'standard', commands = [], vendorCommands = {}) => {
   const response = await apiClient.post('/healthcheck/run-batch', {
     devices,
     check_type: checkType,
+    commands,
+    vendor_commands: vendorCommands,
   });
   return response.data;
 };
+
 
 export const executeTroubleshootCommand = async (device, command) => {
   const response = await apiClient.post('/troubleshoot/execute-command', {
@@ -205,6 +210,19 @@ export const submitBackupJob = async (devices) => {
   return response.data;
 };
 
+export const submitHealthCheckJob = async (devices, checkType = 'standard', commands = [], vendorCommands = {}, suiteName = null) => {
+  const response = await apiClient.post('/jobs/submit-healthcheck', {
+    devices,
+    check_type: checkType,
+    commands,
+    vendor_commands: vendorCommands,
+    suite_name: suiteName,
+  });
+  return response.data;
+};
+
+
+
 export const getJobStatus = async (jobId) => {
   const response = await apiClient.get(`/jobs/${jobId}/status`);
   return response.data;
@@ -228,8 +246,30 @@ export const cancelJob = async (jobId) => {
 };
 
 export const createJobEventSource = (jobId) => {
-  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4050/api/v1';
-  return new EventSource(`${baseUrl}/jobs/${jobId}/stream`);
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
+  return new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/stream`);
+};
+
+export const getPlaybooks = async () => {
+  const response = await apiClient.get('/playbooks');
+  return response.data;
+};
+
+export const createPlaybook = async (payload) => {
+  const response = await apiClient.post('/playbooks', payload);
+  return response.data;
+};
+
+export const updatePlaybook = async (id, payload) => {
+  const response = await apiClient.put(`/playbooks/${id}`, payload);
+  return response.data;
+};
+
+export const deletePlaybook = async (id) => {
+  const response = await apiClient.delete(`/playbooks/${id}`);
+  return response.data;
 };
 
 export default apiClient;
+
+

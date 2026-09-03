@@ -93,3 +93,8 @@ backend/logs/
 inventory/hosts.yaml.tmp
 nornir.log
 netmiko.log
+
+# Private Guides & Local Documentation
+NETWORK_SETUP_GUIDE.md
+NETWORK_SETUP_GUIDE*
+

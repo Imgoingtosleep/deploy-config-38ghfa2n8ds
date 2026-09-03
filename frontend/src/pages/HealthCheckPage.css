@@ -838,3 +838,545 @@
   gap: 0.25rem;
   font-weight: 600;
 }
+
+/* =========================================
+   PLAYBOOK SELECTOR BAR & PILLS
+   ========================================= */
+.playbook-selector-bar {
+  background: rgba(30, 41, 59, 0.4);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.playbook-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.playbook-pill:hover {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #ffffff;
+}
+
+.playbook-pill.active {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: #818cf8;
+  color: #ffffff;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+}
+
+.cmd-badge {
+  font-size: 0.65rem;
+  background: rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+  padding: 0.1rem 0.35rem;
+  border-radius: 9999px;
+  font-family: monospace;
+  font-weight: 700;
+}
+
+.del-pb-btn {
+  background: transparent;
+  border: none;
+  color: #f87171;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.del-pb-btn:hover {
+  color: #ef4444;
+}
+
+.btn-save-playbook {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: 9999px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px dashed rgba(16, 185, 129, 0.4);
+  font-size: 0.72rem;
+  color: #34d399;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-save-playbook:hover {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: #34d399;
+}
+
+/* =========================================
+   COMMAND CHECKLIST CONTAINER & ITEMS
+   ========================================= */
+.command-checklist-container {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.625rem;
+  padding: 1rem;
+}
+
+.checklist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.checklist-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin: 0;
+}
+
+.checklist-badge {
+  font-size: 0.7rem;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  font-weight: 600;
+}
+
+.checklist-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-checklist-action {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-checklist-action:hover {
+  color: #f1f5f9;
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.command-checkbox-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.command-check-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(2, 6, 23, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.command-check-item:hover {
+  background: rgba(30, 41, 59, 0.4);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.command-check-item.checked {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.checkbox-input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+
+.command-check-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #f8fafc;
+}
+
+.custom-tag {
+  font-size: 0.6rem;
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.command-syntax-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.syntax-pill {
+  font-size: 0.68rem;
+  font-family: monospace;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.syntax-pill.cisco {
+  background: rgba(56, 189, 248, 0.1);
+  color: #7dd3fc;
+}
+
+.syntax-pill.huawei {
+  background: rgba(244, 63, 94, 0.1);
+  color: #fda4af;
+}
+
+.btn-remove-cmd {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.btn-remove-cmd:hover {
+  color: #f87171;
+}
+
+/* =========================================
+   ADD CUSTOM COMMAND FORM
+   ========================================= */
+.add-custom-command-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.custom-cmd-input {
+  flex: 1;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.375rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  font-family: monospace;
+  color: #f8fafc;
+  outline: none;
+}
+
+.custom-cmd-input:focus {
+  border-color: #6366f1;
+}
+
+.btn-add-custom-cmd {
+  background: #312e81;
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.375rem;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-add-custom-cmd:hover:not(:disabled) {
+  background: #3730a3;
+  color: #ffffff;
+}
+
+.btn-add-custom-cmd:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* =========================================
+   SAVE PLAYBOOK MODAL
+   ========================================= */
+.save-playbook-box {
+  background: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 440px;
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+}
+
+.save-playbook-header {
+  padding: 1rem 1.25rem;
+  background: rgba(30, 41, 59, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.save-playbook-title {
+  font-size: 0.95rem;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.save-playbook-body {
+  padding: 1.25rem;
+}
+
+.save-pb-input {
+  width: 100%;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.375rem;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  color: #ffffff;
+  outline: none;
+}
+
+.save-pb-input:focus {
+  border-color: #6366f1;
+}
+
+.save-playbook-footer {
+  padding: 1rem 1.25rem;
+  background: rgba(11, 17, 32, 0.95);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.btn-modal-cancel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: 0.5rem;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-modal-cancel:hover {
+  background: rgba(51, 65, 85, 0.85);
+  border-color: rgba(148, 163, 184, 0.4);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.btn-modal-cancel:active {
+  transform: translateY(0);
+}
+
+.btn-modal-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 1.25rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  border: 1px solid rgba(165, 180, 252, 0.35);
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px -2px rgba(79, 70, 229, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-modal-save:hover:not(:disabled) {
+  background: linear-gradient(135deg, #4338ca 0%, #4f46e5 100%);
+  border-color: rgba(165, 180, 252, 0.6);
+  box-shadow: 0 6px 20px -2px rgba(79, 70, 229, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.btn-modal-save:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px -1px rgba(79, 70, 229, 0.4);
+}
+
+.btn-modal-save:disabled {
+  background: #1e293b;
+  border-color: rgba(255, 255, 255, 0.05);
+  color: #64748b;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+
+.success-alert {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+.edit-pb-btn {
+  background: transparent;
+  border: none;
+  color: #818cf8;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+
+.edit-pb-btn:hover {
+  color: #a5b4fc;
+}
+
+/* =========================================
+   FULL PROFILE EDITOR MODAL
+   ========================================= */
+.profile-editor-modal {
+  max-width: 720px;
+  width: 95%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-editor-modal .save-playbook-body {
+  overflow-y: auto;
+  max-height: calc(88vh - 140px);
+}
+
+.manufacturer-commands-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .manufacturer-commands-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.manufacturer-box {
+  background: rgba(2, 6, 23, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.cisco-box {
+  border-color: rgba(56, 189, 248, 0.3);
+  background: rgba(8, 47, 73, 0.15);
+}
+
+.huawei-box {
+  border-color: rgba(244, 63, 94, 0.3);
+  background: rgba(76, 5, 25, 0.15);
+}
+
+.manufacturer-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.vendor-badge-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+
+.vendor-badge-pill.cisco {
+  background: rgba(56, 189, 248, 0.2);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.vendor-badge-pill.huawei {
+  background: rgba(244, 63, 94, 0.2);
+  color: #fb7185;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+}
+
+.editor-textarea-commands {
+  width: 100%;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.375rem;
+  padding: 0.6rem 0.75rem;
+  font-family: 'SF Mono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.cisco-textarea {
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.cisco-textarea:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4);
+}
+
+.huawei-textarea {
+  color: #fda4af;
+  border-color: rgba(244, 63, 94, 0.3);
+}
+
+.huawei-textarea:focus {
+  border-color: #f43f5e;
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.4);
+}
+
+
+

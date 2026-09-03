@@ -139,6 +139,43 @@ class JobService:
         )
 
     @classmethod
+    def create_healthcheck_job(
+        cls,
+        devices: List[DeviceCredentials],
+        check_type: str = "standard",
+        commands: List[str] = None,
+        vendor_commands: Dict[str, List[str]] = None,
+        suite_name: str = None,
+    ) -> JobSubmitResponse:
+        job_id = str(uuid.uuid4())
+        job = JobRecord(
+            job_id=job_id,
+            job_type="healthcheck",
+            devices=devices,
+            payload={
+                "check_type": check_type,
+                "commands": commands or [],
+                "vendor_commands": vendor_commands or {},
+                "suite_name": suite_name or check_type.capitalize(),
+            }
+        )
+        with cls._lock:
+            cls._jobs[job_id] = job
+
+        threading.Thread(target=cls._run_healthcheck_worker, args=(job_id,), daemon=True).start()
+
+        label = suite_name or check_type
+        return JobSubmitResponse(
+            job_id=job_id,
+            job_type="healthcheck",
+            status="pending",
+            total_devices=len(devices),
+            created_at=job.created_at,
+            message=f"Fleet health check job {job_id} ({label}) submitted for {len(devices)} devices in background.",
+        )
+
+
+    @classmethod
     def _run_troubleshoot_worker(cls, job_id: str):
         job = cls._jobs.get(job_id)
         if not job:
@@ -290,6 +327,89 @@ class JobService:
 
         job.status = "completed"
         job.end_time = time.time()
+
+    @classmethod
+    def _run_healthcheck_worker(cls, job_id: str):
+        from app.api.endpoints.healthcheck import _execute_device_health_check
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        job = cls._jobs.get(job_id)
+        if not job:
+            return
+
+        job.status = "running"
+        job.start_time = time.time()
+        chunk_size = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
+        devices = job.devices
+        check_type = job.payload.get("check_type", "standard")
+        commands = job.payload.get("commands", [])
+        vendor_commands = job.payload.get("vendor_commands", {})
+        suite_name = job.payload.get("suite_name", check_type.capitalize())
+
+        for i in range(0, len(devices), chunk_size):
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.end_time = time.time()
+                return
+
+            chunk = devices[i : i + chunk_size]
+            chunk_results = [None] * len(chunk)
+
+            with ThreadPoolExecutor(max_workers=min(len(chunk), 50)) as executor:
+                future_to_idx = {
+                    executor.submit(
+                        _execute_device_health_check,
+                        dev,
+                        check_type,
+                        commands,
+                        vendor_commands,
+                    ): idx
+                    for idx, dev in enumerate(chunk)
+                }
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    dev = chunk[idx]
+                    try:
+                        res = future.result()
+                        combined_output = "\n".join([f"[{r.command}]\n{r.output}" for r in res.results if r.output])
+                        summary_str = ""
+                        if res.summary:
+                            perf = res.summary.get("performance", {})
+                            cpu = perf.get("cpu_percent")
+                            mem = perf.get("memory_percent")
+                            if cpu or mem:
+                                summary_str = f"(CPU: {cpu or 'N/A'}, Mem: {mem or 'N/A'})"
+                        chunk_results[idx] = CommandResponse(
+                            host=res.host or dev.host or "Unknown",
+                            command=f"[{suite_name}] {len(res.results)} cmd(s) {summary_str}".strip(),
+                            output=combined_output or "Health Check Completed",
+                            success=res.success,
+                            error=res.error,
+                            execution_time_seconds=res.overall_time_seconds or 0.0,
+                        )
+                    except Exception as e:
+                        chunk_results[idx] = CommandResponse(
+                            host=dev.host or "Unknown",
+                            command=f"[{suite_name}] Error",
+                            output="",
+                            success=False,
+                            error=str(e),
+                            execution_time_seconds=0.0,
+                        )
+
+            with cls._lock:
+                valid_results = [r for r in chunk_results if r is not None]
+                job.results.extend(valid_results)
+                job.completed_devices += len(chunk)
+                job.success_count += sum(1 for r in valid_results if r.success)
+
+                job.failed_count += sum(1 for r in valid_results if not r.success)
+
+            time.sleep(0.01)
+
+        job.status = "completed"
+        job.end_time = time.time()
+
 
     @classmethod
     def get_job_status(cls, job_id: str) -> Optional[JobStatusResponse]:

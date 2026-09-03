@@ -48,7 +48,10 @@ class ConfigDeployRequest(BaseModel):
 
 class HealthCheckRequest(BaseModel):
     device: DeviceCredentials
-    check_type: Optional[str] = Field("standard", description="standard, interfaces, environment, routing, all")
+    check_type: Optional[str] = Field("standard", description="standard, interfaces, transceiver, environment, routing, logs, custom")
+    commands: Optional[List[str]] = Field(default_factory=list, description="Optional custom list of CLI commands to execute")
+    vendor_commands: Optional[Dict[str, List[str]]] = Field(default_factory=dict, description="Optional vendor-specific command overrides")
+    suite_name: Optional[str] = Field(None, description="Optional custom test suite/playbook name")
 
 class CommandResponse(BaseModel):
     host: str
@@ -69,7 +72,11 @@ class MultiCommandResponse(BaseModel):
 
 class BatchHealthCheckRequest(BaseModel):
     devices: List[DeviceCredentials]
-    check_type: Optional[str] = Field("standard", description="standard, interfaces, environment, routing, logs, all")
+    check_type: Optional[str] = Field("standard", description="standard, interfaces, transceiver, environment, routing, logs, custom")
+    commands: Optional[List[str]] = Field(default_factory=list, description="Optional custom list of CLI commands to execute across fleet")
+    vendor_commands: Optional[Dict[str, List[str]]] = Field(default_factory=dict, description="Optional vendor-specific command lists")
+    suite_name: Optional[str] = Field(None, description="Optional custom test suite/playbook name")
+
 
 class BatchHealthCheckResponse(BaseModel):
     devices_count: int

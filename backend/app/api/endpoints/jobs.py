@@ -6,6 +6,7 @@ from app.schemas.command import (
     BatchCommandRequest,
     BatchDeployRequest,
     BatchBackupRequest,
+    BatchHealthCheckRequest,
     JobSubmitResponse,
     JobStatusResponse,
     JobPaginatedResultsResponse,
@@ -47,6 +48,21 @@ def submit_backup_job(request: BatchBackupRequest):
     if not request.devices:
         raise HTTPException(status_code=400, detail="No devices provided for backup job")
     return JobService.create_backup_job(request.devices)
+
+@router.post("/submit-healthcheck", response_model=JobSubmitResponse)
+def submit_healthcheck_job(request: BatchHealthCheckRequest):
+    """Submit background healthcheck job across fleet (up to 10,000+ devices)"""
+    if not request.devices:
+        raise HTTPException(status_code=400, detail="No devices provided for healthcheck job")
+    return JobService.create_healthcheck_job(
+        devices=request.devices,
+        check_type=request.check_type or "standard",
+        commands=request.commands,
+        vendor_commands=request.vendor_commands,
+        suite_name=request.suite_name,
+    )
+
+
 
 @router.get("/{job_id}/status", response_model=JobStatusResponse)
 def get_job_status(job_id: str):
