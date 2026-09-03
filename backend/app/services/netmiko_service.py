@@ -1,5 +1,19 @@
 import time
+import threading
+import paramiko
 from typing import List, Dict, Any, Tuple
+
+# --- SSH Algorithm Compatibility & Global Lock ---
+paramiko.Transport._preferred_kex = (
+    "diffie-hellman-group14-sha1",
+    "diffie-hellman-group1-sha1",
+    "diffie-hellman-group-exchange-sha256",
+)
+paramiko.common.pref_public_keys = ["rsa-sha2-512", "rsa-sha2-256", "rsa"]
+
+file_lock = threading.Lock()
+device_name_map = {}
+
 from netmiko import ConnectHandler
 from netmiko.ssh_dispatcher import platforms as NETMIKO_PLATFORMS
 from netmiko.exceptions import (

@@ -31,61 +31,73 @@ def execute_command(request: SingleCommandRequest):
 
 @router.post("/execute-batch", response_model=BatchCommandResponse)
 def execute_batch_command(request: BatchCommandRequest):
-    """Execute CLI / troubleshooting command concurrently across multiple devices"""
-    start_time = time.time()
-    devices = request.devices
-    if not devices:
-        return BatchCommandResponse(
-            devices_count=0,
-            success_count=0,
-            failed_count=0,
-            overall_time_seconds=0.0,
-            results=[],
+    """Execute CLI / troubleshooting command concurrently across multiple devices using Nornir Engine"""
+    try:
+        from app.services.nornir_service import NornirService
+        return NornirService.run_batch_command(
+            devices=request.devices,
+            command=request.command or "",
+            vendor_resolve=True,
+            vendor_commands=request.vendor_commands,
+            huawei_command=request.huawei_command,
+            cisco_command=request.cisco_command,
         )
+    except Exception:
+        # Fallback to ThreadPoolExecutor
+        start_time = time.time()
+        devices = request.devices
+        if not devices:
+            return BatchCommandResponse(
+                devices_count=0,
+                success_count=0,
+                failed_count=0,
+                overall_time_seconds=0.0,
+                results=[],
+            )
 
-    def _resolve_command_for_device(dev: DeviceCredentials) -> str:
-        dev_type = (dev.device_type or "cisco_ios").lower()
-        vendor = "huawei" if "huawei" in dev_type else "cisco_ios"
-        if request.vendor_commands and vendor in request.vendor_commands and request.vendor_commands[vendor]:
-            return request.vendor_commands[vendor]
-        if request.huawei_command and vendor == "huawei":
-            return request.huawei_command
-        if request.cisco_command and vendor == "cisco_ios":
-            return request.cisco_command
-        return request.command or ""
+        def _resolve_command_for_device(dev: DeviceCredentials) -> str:
+            dev_type = (dev.device_type or "cisco_ios").lower()
+            vendor = "huawei" if "huawei" in dev_type else "cisco_ios"
+            if request.vendor_commands and vendor in request.vendor_commands and request.vendor_commands[vendor]:
+                return request.vendor_commands[vendor]
+            if request.huawei_command and vendor == "huawei":
+                return request.huawei_command
+            if request.cisco_command and vendor == "cisco_ios":
+                return request.cisco_command
+            return request.command or ""
 
-    max_workers = min(len(devices), 10)
-    device_results = [None] * len(devices)
+        max_workers = min(max(len(devices), 1), 20)
+        device_results = [None] * len(devices)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {}
-        for i, dev in enumerate(devices):
-            cmd = _resolve_command_for_device(dev)
-            future_to_index[executor.submit(_execute_device_command, dev, cmd)] = i
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {}
+            for i, dev in enumerate(devices):
+                cmd = _resolve_command_for_device(dev)
+                future_to_index[executor.submit(_execute_device_command, dev, cmd)] = i
 
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            try:
-                device_results[idx] = future.result()
-            except Exception as e:
-                dev = devices[idx]
-                device_results[idx] = CommandResponse(
-                    host=dev.host or "Unknown",
-                    command=request.command or "",
-                    output="",
-                    success=False,
-                    error=str(e),
-                    execution_time_seconds=0.0,
-                )
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    device_results[idx] = future.result()
+                except Exception as e:
+                    dev = devices[idx]
+                    device_results[idx] = CommandResponse(
+                        host=dev.host or "Unknown",
+                        command=request.command or "",
+                        output="",
+                        success=False,
+                        error=str(e),
+                        execution_time_seconds=0.0,
+                    )
 
-    success_count = sum(1 for r in device_results if r and r.success)
-    failed_count = len(devices) - success_count
-    elapsed = round(time.time() - start_time, 2)
+        success_count = sum(1 for r in device_results if r and r.success)
+        failed_count = len(devices) - success_count
+        elapsed = round(time.time() - start_time, 2)
 
-    return BatchCommandResponse(
-        devices_count=len(devices),
-        success_count=success_count,
-        failed_count=failed_count,
-        overall_time_seconds=elapsed,
-        results=device_results,
-    )
+        return BatchCommandResponse(
+            devices_count=len(devices),
+            success_count=success_count,
+            failed_count=failed_count,
+            overall_time_seconds=elapsed,
+            results=device_results,
+        )

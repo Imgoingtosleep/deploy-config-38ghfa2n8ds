@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     DEFAULT_SSH_PORT: int = int(os.getenv("DEFAULT_SSH_PORT", 22))
     DEFAULT_TELNET_PORT: int = int(os.getenv("DEFAULT_TELNET_PORT", 23))
     DEFAULT_TIMEOUT: int = int(os.getenv("DEFAULT_TIMEOUT", 30))
+    DEFAULT_NUM_WORKERS: int = int(os.getenv("DEFAULT_NUM_WORKERS", 100))
     GLOBAL_DELAY_FACTOR: int = int(os.getenv("GLOBAL_DELAY_FACTOR", 1))
 
     class Config:

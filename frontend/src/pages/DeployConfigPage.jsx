@@ -41,8 +41,11 @@ import {
   backupRunningConfig,
   backupBatchRunningConfig,
   executeTroubleshootCommand,
+  submitDeployJob,
+  submitBackupJob,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from '../components/TerminalOutput';
+import AsyncJobModal from '../components/AsyncJobModal';
 import './DeployConfigPage.css';
 
 // Multi-vendor battle-tested configuration templates
@@ -278,6 +281,7 @@ export default function DeployConfigPage({
   const [selectedBatchDeviceIdx, setSelectedBatchDeviceIdx] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id: string, title: string }
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
 
@@ -579,6 +583,81 @@ export default function DeployConfigPage({
       } finally {
         setDeploying(false);
       }
+    }
+  };
+
+  // Launch Massive Fleet Background Job (10,000+ Scale with live SSE Progress Stream & Pagination)
+  const handleLaunchAsyncFleetDeploy = async () => {
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device IP address in Target Device above.');
+      return;
+    }
+    if (validCommands.length === 0) {
+      setErrorMessage('Please enter configuration commands to deploy.');
+      return;
+    }
+
+    const preCmds = enablePreCheck && preCheckCmd.trim() ? preCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
+    const postCmds = enablePostCheck && postCheckCmd.trim() ? postCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
+
+    try {
+      setDeploying(true);
+      const payloadDevices = validFleet.map((d) => ({
+        host: d.host.trim(),
+        port: parseInt(d.port, 10) || 22,
+        device_type: d.device_type || 'cisco_ios',
+        username: d.username || '',
+        password: d.password || '',
+        secret: d.secret || '',
+        connection_mode: 'network',
+      }));
+
+      const res = await submitDeployJob(
+        payloadDevices,
+        validCommands,
+        saveConfig,
+        preCmds,
+        postCmds,
+        enableBackup
+      );
+      setShowConfirmModal(false);
+      setActiveAsyncJob({
+        id: res.job_id,
+        title: `Massive Fleet Deploy (${validFleet.length.toLocaleString()} Devices)`,
+      });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit massive fleet job');
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleLaunchAsyncFleetBackup = async () => {
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device in Target Device above.');
+      return;
+    }
+    try {
+      setBackingUp(true);
+      const payloadDevices = validFleet.map((d) => ({
+        host: d.host.trim(),
+        port: parseInt(d.port, 10) || 22,
+        device_type: d.device_type || 'cisco_ios',
+        username: d.username || '',
+        password: d.password || '',
+        secret: d.secret || '',
+        connection_mode: 'network',
+      }));
+      const res = await submitBackupJob(payloadDevices);
+      setShowBackupModal(false);
+      setActiveAsyncJob({
+        id: res.job_id,
+        title: `Massive Fleet Backup (${validFleet.length.toLocaleString()} Devices)`,
+      });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit fleet backup job');
+    } finally {
+      setBackingUp(false);
     }
   };
 
@@ -2150,14 +2229,38 @@ export default function DeployConfigPage({
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={handleConfirmDeploy}
-                className="btn-deploy-confirm"
-              >
-                <Send className="h-4 w-4" />
-                <span>Confirm & Push Configuration</span>
-              </button>
+
+              {deviceMode === 'multi' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleConfirmDeploy}
+                    className="btn-deploy-confirm"
+                  >
+                    <Send className="h-4 w-4" />
+                    <span>Deploy Standard Batch</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLaunchAsyncFleetDeploy}
+                    className="btn-deploy-confirm"
+                    style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8' }}
+                  >
+                    <Zap className="h-4 w-4 text-amber-300" />
+                    <span>Async Job (Live Stream)</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConfirmDeploy}
+                  className="btn-deploy-confirm"
+                >
+                  <Send className="h-4 w-4" />
+                  <span>Confirm & Push Configuration</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2343,6 +2446,16 @@ export default function DeployConfigPage({
                     <Download className="h-4 w-4" />
                     <span>Download All ({manualBackupBatchResult.success_count} Files)</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLaunchAsyncFleetBackup}
+                    className="btn-primary"
+                    style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8' }}
+                  >
+                    <Zap className="h-4 w-4 text-amber-300" />
+                    <span>10,000+ Fleet Backup Job</span>
+                  </button>
                 </>
               ) : (
                 <button
@@ -2373,6 +2486,15 @@ export default function DeployConfigPage({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ASYNC FLEET JOB MODAL (10,000+ Devices Scale) */}
+      {activeAsyncJob && (
+        <AsyncJobModal
+          jobId={activeAsyncJob.id}
+          title={activeAsyncJob.title}
+          onClose={() => setActiveAsyncJob(null)}
+        />
       )}
     </div>
   );

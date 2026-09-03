@@ -161,4 +161,75 @@ export const executeTemplate = async (device, templateId, commands = null) => {
   return response.data;
 };
 
+// Async Fleet Job APIs (10,000+ Devices Scale)
+export const submitTroubleshootJob = async (
+  devices,
+  command,
+  vendorCommands = null,
+  huaweiCommand = null,
+  ciscoCommand = null
+) => {
+  const response = await apiClient.post('/jobs/submit-troubleshoot', {
+    devices,
+    command,
+    vendor_commands: vendorCommands,
+    huawei_command: huaweiCommand,
+    cisco_command: ciscoCommand,
+  });
+  return response.data;
+};
+
+export const submitDeployJob = async (
+  devices,
+  configCommands,
+  saveConfig = true,
+  preCheckCommands = [],
+  postCheckCommands = [],
+  backupBeforeDeploy = false
+) => {
+  const response = await apiClient.post('/jobs/submit-deploy', {
+    devices,
+    config_commands: configCommands,
+    save_config: saveConfig,
+    pre_check_commands: preCheckCommands,
+    post_check_commands: postCheckCommands,
+    backup_before_deploy: backupBeforeDeploy,
+  });
+  return response.data;
+};
+
+export const submitBackupJob = async (devices) => {
+  const response = await apiClient.post('/jobs/submit-backup', {
+    devices,
+  });
+  return response.data;
+};
+
+export const getJobStatus = async (jobId) => {
+  const response = await apiClient.get(`/jobs/${jobId}/status`);
+  return response.data;
+};
+
+export const getJobResults = async (jobId, page = 1, pageSize = 50, search = '', statusFilter = 'all') => {
+  const response = await apiClient.get(`/jobs/${jobId}/results`, {
+    params: {
+      page,
+      page_size: pageSize,
+      search,
+      status_filter: statusFilter,
+    },
+  });
+  return response.data;
+};
+
+export const cancelJob = async (jobId) => {
+  const response = await apiClient.post(`/jobs/${jobId}/cancel`);
+  return response.data;
+};
+
+export const createJobEventSource = (jobId) => {
+  const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:4050/api/v1';
+  return new EventSource(`${baseUrl}/jobs/${jobId}/stream`);
+};
+
 export default apiClient;

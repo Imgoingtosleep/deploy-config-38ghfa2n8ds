@@ -2,6 +2,37 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from app.schemas.device import DeviceCredentials
 
+class JobSubmitResponse(BaseModel):
+    job_id: str
+    job_type: str
+    status: str
+    total_devices: int
+    created_at: str
+    message: str
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    job_type: str
+    status: str
+    total_devices: int
+    completed_devices: int
+    success_count: int
+    failed_count: int
+    progress_percent: float
+    elapsed_seconds: float
+    is_completed: bool
+    error: Optional[str] = None
+
+class JobPaginatedResultsResponse(BaseModel):
+    job_id: str
+    total_items: int
+    page: int
+    page_size: int
+    total_pages: int
+    success_count: int
+    failed_count: int
+    results: List[Any]
+
 class SingleCommandRequest(BaseModel):
     device: DeviceCredentials
     command: str = Field(..., description="Single CLI command e.g. 'show ip int brief'")

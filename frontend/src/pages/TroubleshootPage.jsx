@@ -16,8 +16,13 @@ import {
   ChevronRight,
   Server,
 } from 'lucide-react';
-import { executeTroubleshootCommand, executeBatchTroubleshootCommand } from '../services/api';
+import {
+  executeTroubleshootCommand,
+  executeBatchTroubleshootCommand,
+  submitTroubleshootJob,
+} from '../services/api';
 import TerminalOutput from '../components/TerminalOutput';
+import AsyncJobModal from '../components/AsyncJobModal';
 import './TroubleshootPage.css';
 
 const SHORTCUT_CATEGORIES = [
@@ -201,6 +206,7 @@ export default function TroubleshootPage({
   const [history, setHistory] = useState([]);
   const [executing, setExecuting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id, title }
 
   // Single Device Result State
   const [currentResult, setCurrentResult] = useState(null);
@@ -219,6 +225,40 @@ export default function TroubleshootPage({
   const filteredShortcuts = activeCategory === 'all'
     ? shortcutsList
     : shortcutsList.filter((c) => c.category === activeCategory);
+
+  // Launch Massive Fleet Background Job (10,000+ Scale with live stream & pagination)
+  const handleLaunchAsyncFleetTroubleshoot = async (commandString, vendorCommands = null) => {
+    const trimmed = (commandString || '').trim();
+    if (!trimmed && (!vendorCommands || Object.keys(vendorCommands).length === 0)) return;
+
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device in the Target Device fleet list above.');
+      return;
+    }
+
+    try {
+      setExecuting(true);
+      const payloadDevices = validFleet.map((d) => ({
+        host: d.host.trim(),
+        port: parseInt(d.port, 10) || 22,
+        device_type: d.device_type || 'cisco_ios',
+        username: d.username || '',
+        password: d.password || '',
+        secret: d.secret || '',
+        connection_mode: 'network',
+      }));
+
+      const res = await submitTroubleshootJob(payloadDevices, trimmed, vendorCommands);
+      setActiveAsyncJob({
+        id: res.job_id,
+        title: `Fleet Diagnostic: ${trimmed || 'Multi-Vendor Task'} (${validFleet.length.toLocaleString()} Devices)`,
+      });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit fleet troubleshoot job');
+    } finally {
+      setExecuting(false);
+    }
+  };
 
   // Run execution for Single or Multi Mode
   const runExecution = async (commandString, vendorCommands = null) => {
@@ -405,6 +445,20 @@ export default function TroubleshootPage({
                   <Send className="action-icon" />
                 )}
               </button>
+
+              {deviceMode === 'multi' && (
+                <button
+                  type="button"
+                  disabled={executing || !customCommand.trim()}
+                  onClick={() => handleLaunchAsyncFleetTroubleshoot(customCommand)}
+                  className="btn-send-cli"
+                  style={{ background: 'linear-gradient(135deg, #6366f1 0%, #3b82f6 100%)', borderColor: '#818cf8', width: 'auto', padding: '0 0.85rem', gap: '0.35rem' }}
+                  title="Launch 10,000+ Devices Background Job with Live Progress Stream"
+                >
+                  <Zap className="h-3.5 w-3.5 text-amber-300" />
+                  <span className="text-xs font-bold font-mono">10k+ Fleet Job</span>
+                </button>
+              )}
             </div>
           </form>
 
@@ -657,6 +711,15 @@ export default function TroubleshootPage({
           </div>
         )}
       </div>
+
+      {/* ASYNC FLEET JOB MODAL (10,000+ Devices Scale) */}
+      {activeAsyncJob && (
+        <AsyncJobModal
+          jobId={activeAsyncJob.id}
+          title={activeAsyncJob.title}
+          onClose={() => setActiveAsyncJob(null)}
+        />
+      )}
     </div>
   );
 }

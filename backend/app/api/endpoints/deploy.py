@@ -113,83 +113,75 @@ def deploy_config_advanced(request: AdvancedDeployRequest):
 
 @router.post("/push-batch", response_model=BatchDeployResponse)
 def deploy_config_batch(request: BatchDeployRequest):
-    """Deploy configuration concurrently across multiple devices in fleet with pre/post checks and backups"""
-    start_time = time.time()
-    devices = request.devices
-    if not devices:
-        return BatchDeployResponse(
-            devices_count=0,
-            success_count=0,
-            failed_count=0,
-            overall_time_seconds=0.0,
-            results=[],
+    """Deploy configuration concurrently across multiple devices in fleet using Nornir Automation Engine"""
+    try:
+        from app.services.nornir_service import NornirService
+        return NornirService.run_batch_deploy(
+            devices=request.devices,
+            config_commands=request.config_commands,
+            save_config=request.save_config,
+            pre_check_commands=request.pre_check_commands or [],
+            post_check_commands=request.post_check_commands or [],
+            backup_before_deploy=request.backup_before_deploy,
         )
+    except Exception as nornir_err:
+        # Fallback to ThreadPoolExecutor if Nornir encounters environment-specific exceptions
+        start_time = time.time()
+        devices = request.devices
+        clean_commands = [
+            line.strip()
+            for line in request.config_commands
+            if line.strip() and not line.strip().startswith("!") and not line.strip().startswith("#")
+        ]
+        max_workers = min(max(len(devices), 1), 20)
+        device_results = [None] * len(devices)
 
-    clean_commands = [
-        line.strip()
-        for line in request.config_commands
-        if line.strip() and not line.strip().startswith("!") and not line.strip().startswith("#")
-    ]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(
+                    _execute_single_device_deploy,
+                    dev,
+                    clean_commands,
+                    request.save_config,
+                    request.pre_check_commands or [],
+                    request.post_check_commands or [],
+                    request.backup_before_deploy,
+                ): i
+                for i, dev in enumerate(devices)
+            }
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    device_results[idx] = future.result()
+                except Exception as e:
+                    dev = devices[idx]
+                    device_results[idx] = AdvancedDeployResponse(
+                        host=dev.host or "Unknown",
+                        command="Batch Config Deployment",
+                        output="",
+                        success=False,
+                        error=str(e),
+                        execution_time_seconds=0.0,
+                        commands_deployed=clean_commands,
+                        save_output=None,
+                        backup_config=None,
+                        pre_check_results=[],
+                        post_check_results=[],
+                        rollback_commands=[],
+                        step_logs=[],
+                    )
 
-    if not clean_commands:
+        success_count = sum(1 for r in device_results if r and r.success)
+        failed_count = len(devices) - success_count
+        elapsed = round(time.time() - start_time, 2)
+
         return BatchDeployResponse(
             devices_count=len(devices),
-            success_count=0,
-            failed_count=len(devices),
-            overall_time_seconds=0.0,
-            results=[],
+            success_count=success_count,
+            failed_count=failed_count,
+            overall_time_seconds=elapsed,
+            results=device_results,
         )
-
-    max_workers = min(len(devices), 10)
-    device_results = [None] * len(devices)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {
-            executor.submit(
-                _execute_single_device_deploy,
-                dev,
-                clean_commands,
-                request.save_config,
-                request.pre_check_commands or [],
-                request.post_check_commands or [],
-                request.backup_before_deploy,
-            ): i
-            for i, dev in enumerate(devices)
-        }
-
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            try:
-                device_results[idx] = future.result()
-            except Exception as e:
-                dev = devices[idx]
-                device_results[idx] = AdvancedDeployResponse(
-                    host=dev.host or "Unknown",
-                    command="Batch Config Deployment",
-                    output="",
-                    success=False,
-                    error=str(e),
-                    execution_time_seconds=0.0,
-                    commands_deployed=clean_commands,
-                    save_output=None,
-                    backup_config=None,
-                    pre_check_results=[],
-                    post_check_results=[],
-                    rollback_commands=[],
-                    step_logs=[],
-                )
-
-    success_count = sum(1 for r in device_results if r and r.success)
-    failed_count = len(devices) - success_count
-    elapsed = round(time.time() - start_time, 2)
-
-    return BatchDeployResponse(
-        devices_count=len(devices),
-        success_count=success_count,
-        failed_count=failed_count,
-        overall_time_seconds=elapsed,
-        results=device_results,
-    )
 
 @router.post("/backup", response_model=CommandResponse)
 def backup_running_config(request: BackupConfigRequest):
@@ -217,50 +209,54 @@ def _execute_single_device_backup(device: DeviceCredentials) -> CommandResponse:
 
 @router.post("/backup-batch", response_model=BatchBackupResponse)
 def backup_batch_running_config(request: BatchBackupRequest):
-    """Fetch running configuration concurrently across all devices in fleet"""
-    start_time = time.time()
-    devices = request.devices
-    if not devices:
+    """Fetch running configuration concurrently across all devices in fleet using Nornir Engine"""
+    try:
+        from app.services.nornir_service import NornirService
+        return NornirService.run_batch_backup(request.devices)
+    except Exception:
+        # Fallback to ThreadPoolExecutor
+        start_time = time.time()
+        devices = request.devices
+        if not devices:
+            return BatchBackupResponse(
+                devices_count=0,
+                success_count=0,
+                failed_count=0,
+                overall_time_seconds=0.0,
+                results=[],
+            )
+
+        max_workers = min(max(len(devices), 1), 20)
+        device_results = [None] * len(devices)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_index = {
+                executor.submit(_execute_single_device_backup, dev): i
+                for i, dev in enumerate(devices)
+            }
+            for future in as_completed(future_to_index):
+                idx = future_to_index[future]
+                try:
+                    device_results[idx] = future.result()
+                except Exception as e:
+                    dev = devices[idx]
+                    device_results[idx] = CommandResponse(
+                        host=dev.host or "Unknown",
+                        command="Backup Running Config",
+                        output="",
+                        success=False,
+                        error=str(e),
+                        execution_time_seconds=0.0,
+                    )
+
+        success_count = sum(1 for r in device_results if r and r.success)
+        failed_count = len(devices) - success_count
+        elapsed = round(time.time() - start_time, 2)
+
         return BatchBackupResponse(
-            devices_count=0,
-            success_count=0,
-            failed_count=0,
-            overall_time_seconds=0.0,
-            results=[],
+            devices_count=len(devices),
+            success_count=success_count,
+            failed_count=failed_count,
+            overall_time_seconds=elapsed,
+            results=device_results,
         )
-
-    max_workers = min(len(devices), 10)
-    device_results = [None] * len(devices)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_index = {
-            executor.submit(_execute_single_device_backup, dev): i
-            for i, dev in enumerate(devices)
-        }
-
-        for future in as_completed(future_to_index):
-            idx = future_to_index[future]
-            try:
-                device_results[idx] = future.result()
-            except Exception as e:
-                dev = devices[idx]
-                device_results[idx] = CommandResponse(
-                    host=dev.host or "Unknown",
-                    command="Backup Running Config",
-                    output="",
-                    success=False,
-                    error=str(e),
-                    execution_time_seconds=0.0,
-                )
-
-    success_count = sum(1 for r in device_results if r and r.success)
-    failed_count = len(devices) - success_count
-    elapsed = round(time.time() - start_time, 2)
-
-    return BatchBackupResponse(
-        devices_count=len(devices),
-        success_count=success_count,
-        failed_count=failed_count,
-        overall_time_seconds=elapsed,
-        results=device_results,
-    )

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.endpoints import devices, healthcheck, troubleshoot, deploy, templates
+from app.api.endpoints import devices, healthcheck, troubleshoot, deploy, templates, jobs
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -24,6 +24,7 @@ app.include_router(healthcheck.router, prefix=f"{settings.API_V1_STR}/healthchec
 app.include_router(troubleshoot.router, prefix=f"{settings.API_V1_STR}/troubleshoot", tags=["Troubleshoot"])
 app.include_router(deploy.router, prefix=f"{settings.API_V1_STR}/deploy", tags=["Deploy Config"])
 app.include_router(templates.router, prefix=f"{settings.API_V1_STR}/templates", tags=["Templates"])
+app.include_router(jobs.router, prefix=f"{settings.API_V1_STR}/jobs", tags=["Jobs & Async Fleet (10k+)"])
 
 @app.get("/")
 def root():
