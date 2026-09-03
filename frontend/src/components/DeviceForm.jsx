@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Network,
   CheckCircle2,
@@ -9,8 +9,22 @@ import {
   Plus,
   Trash2,
   KeyRound,
+  FileUp,
+  Download,
+  UploadCloud,
+  FileSpreadsheet,
+  FileCode,
+  FileText,
+  X,
+  AlertCircle,
+  Check,
 } from 'lucide-react';
-import { testDeviceConnection, getSupportedDeviceTypes } from '../services/api';
+import {
+  testDeviceConnection,
+  getSupportedDeviceTypes,
+  importDevicesFromFile,
+  downloadInventoryTemplate,
+} from '../services/api';
 import './DeviceForm.css';
 
 export default function DeviceForm({
@@ -27,6 +41,24 @@ export default function DeviceForm({
   const [commonType, setCommonType] = useState('huawei');
   const [commonUser, setCommonUser] = useState('');
   const [commonPass, setCommonPass] = useState('');
+
+  // Import Modal State
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importMode, setImportMode] = useState('replace'); // 'replace' | 'append'
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importSuccess, setImportSuccess] = useState('');
+  const [parsedPreview, setParsedPreview] = useState(null);
+
+  // Fallback credentials for import if missing in file
+  const [fallbackType, setFallbackType] = useState('huawei');
+  const [fallbackUser, setFallbackUser] = useState('');
+  const [fallbackPass, setFallbackPass] = useState('');
+  const [fallbackPort, setFallbackPort] = useState(22);
+  const [fallbackSecret, setFallbackSecret] = useState('');
+
+  const fileInputRef = useRef(null);
 
   const [deviceTypes, setDeviceTypes] = useState([
     { label: 'Huawei VRP (SSH)', value: 'huawei' },
@@ -117,6 +149,12 @@ export default function DeviceForm({
     setFleet((prev) => prev.filter((d) => d.id !== id));
   };
 
+  const clearAllFleetDevices = () => {
+    if (window.confirm('Are you sure you want to clear all devices from the fleet?')) {
+      setFleet([]);
+    }
+  };
+
   const applyCredentialsToAll = () => {
     setFleet((prev) =>
       prev.map((d) => ({
@@ -126,6 +164,84 @@ export default function DeviceForm({
         ...(commonPass !== '' ? { password: commonPass } : {}),
       }))
     );
+  };
+
+  // File Import Logic
+  const handleOpenImportModal = () => {
+    setImportFile(null);
+    setParsedPreview(null);
+    setImportError('');
+    setImportSuccess('');
+    setFallbackType(commonType || 'huawei');
+    setFallbackUser(commonUser || '');
+    setFallbackPass(commonPass || '');
+    setFallbackPort(22);
+    setFallbackSecret('');
+    setShowImportModal(true);
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processSelectedFile(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    processSelectedFile(file);
+  };
+
+  const processSelectedFile = async (file) => {
+    setImportFile(file);
+    setImportError('');
+    setImportSuccess('');
+    setImportLoading(true);
+
+    try {
+      const data = await importDevicesFromFile(file, {
+        default_device_type: fallbackType,
+        default_username: fallbackUser,
+        default_password: fallbackPass,
+        default_port: fallbackPort,
+        default_secret: fallbackSecret,
+      });
+
+      setParsedPreview(data);
+    } catch (err) {
+      setImportError(err.response?.data?.detail || err.message || 'Failed to parse file.');
+      setParsedPreview(null);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleReParseWithFallbacks = async () => {
+    if (!importFile) return;
+    processSelectedFile(importFile);
+  };
+
+  const handleConfirmImport = () => {
+    if (!parsedPreview || !parsedPreview.devices || parsedPreview.devices.length === 0) {
+      setImportError('No valid devices to import.');
+      return;
+    }
+
+    const newDevices = parsedPreview.devices;
+    if (importMode === 'replace') {
+      setFleet(newDevices);
+    } else {
+      // Append mode, ensure unique IDs
+      const timestamp = Date.now();
+      const mapped = newDevices.map((d, i) => ({
+        ...d,
+        id: `dev-${timestamp}-${i}`,
+      }));
+      setFleet((prev) => [...prev.filter((d) => d.host && d.host.trim()), ...mapped]);
+    }
+
+    setShowImportModal(false);
   };
 
   return (
@@ -201,6 +317,7 @@ export default function DeviceForm({
                 type="submit"
                 disabled={testing || !device.host}
                 className="btn-test"
+                title="Test SSH/Telnet connectivity to this device"
               >
                 {testing ? (
                   <>
@@ -210,41 +327,54 @@ export default function DeviceForm({
                 ) : (
                   <>
                     <RefreshCw className="h-4 w-4" />
-                    <span>Test Connect</span>
+                    <span>Test</span>
                   </>
                 )}
               </button>
             </div>
 
+            {/* Port */}
+            <div className="form-group col-span-1">
+              <label className="form-label">Port</label>
+              <input
+                type="number"
+                name="port"
+                value={device.port}
+                onChange={handleSingleChange}
+                placeholder="22"
+                className="form-input font-mono"
+              />
+            </div>
+
             {/* Username */}
             <div className="form-group col-span-2">
-              <label className="form-label">Username (Optional)</label>
+              <label className="form-label">Username</label>
               <input
                 type="text"
                 name="username"
                 value={device.username}
                 onChange={handleSingleChange}
-                placeholder="Leave blank if no user"
+                placeholder="admin"
                 className="form-input"
               />
             </div>
 
             {/* Password */}
             <div className="form-group col-span-2">
-              <label className="form-label">Password (Optional)</label>
+              <label className="form-label">Password</label>
               <input
                 type="password"
                 name="password"
                 value={device.password}
                 onChange={handleSingleChange}
-                placeholder="Leave blank if no password"
+                placeholder="Password"
                 className="form-input"
               />
             </div>
 
-            {/* Enable / Secret */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Enable Secret (Optional)</label>
+            {/* Secret */}
+            <div className="form-group col-span-1">
+              <label className="form-label">Secret (Enable)</label>
               <input
                 type="password"
                 name="secret"
@@ -283,7 +413,7 @@ export default function DeviceForm({
               <span className="fleet-title">Fleet Device List ({fleet.filter((d) => d.host).length} Devices)</span>
             </div>
 
-            {/* Quick Credentials Filler */}
+            {/* Quick Credentials Filler & Actions */}
             <div className="quick-creds-bar">
               <span className="quick-creds-label">Batch Setup:</span>
               <select
@@ -320,14 +450,37 @@ export default function DeviceForm({
               >
                 Apply to All
               </button>
+
               <button
                 type="button"
                 className="btn-add-device"
                 onClick={addFleetDevice}
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>Add Device</span>
+                <span>Add Row</span>
               </button>
+
+              {/* Import Fleet Button (CSV, XLSX, JSON, YAML) */}
+              <button
+                type="button"
+                className="btn-import-fleet"
+                onClick={handleOpenImportModal}
+                title="Import devices from CSV, Excel (XLSX), JSON, or YAML"
+              >
+                <FileUp className="h-3.5 w-3.5" />
+                <span>Import Fleet</span>
+              </button>
+
+              {fleet.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-clear-fleet"
+                  onClick={clearAllFleetDevices}
+                  title="Clear all devices from the list"
+                >
+                  <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                </button>
+              )}
             </div>
           </div>
 
@@ -402,7 +555,215 @@ export default function DeviceForm({
           </div>
         </div>
       )}
+
+      {/* ========================================================================= */}
+      {/* IMPORT FLEET MODAL (CSV, XLSX, JSON, YAML)                                */}
+      {/* ========================================================================= */}
+      {showImportModal && (
+        <div className="modal-backdrop">
+          <div className="save-playbook-box import-fleet-modal">
+            <div className="save-playbook-header">
+              <div className="flex items-center gap-2">
+                <FileUp className="h-4 w-4 text-emerald-400" />
+                <h3 className="save-playbook-title font-semibold">
+                  Import IP List (CSV, Excel, JSON, YAML, TXT)
+                </h3>
+              </div>
+              <button onClick={() => setShowImportModal(false)} className="modal-close-btn">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="save-playbook-body">
+              {/* File Dropzone */}
+              <div
+                className="import-dropzone"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xlsm,.xls,.json,.yaml,.yml,.txt"
+                  onChange={handleFileChange}
+                  style={{ display: 'none' }}
+                />
+                <UploadCloud className="h-9 w-9 text-indigo-400 mb-2" />
+                <p className="text-sm font-medium text-slate-200">
+                  {importFile ? importFile.name : 'Click to browse or drag & drop IP file here'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Requires only IP addresses (1 IP per row). Formats: <strong className="text-indigo-300">CSV</strong>, <strong className="text-emerald-300">Excel (.xlsx)</strong>, <strong className="text-amber-300">JSON</strong>, <strong className="text-sky-300">YAML</strong>, <strong className="text-slate-300">TXT</strong>
+                </p>
+              </div>
+
+              {/* Sample Templates Bar */}
+              <div className="templates-download-bar">
+                <span className="text-xs text-slate-400 flex items-center gap-1">
+                  <Download className="h-3 w-3" /> Sample IP Templates:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => downloadInventoryTemplate('csv')}
+                  className="btn-template-dl"
+                  title="Download CSV containing only IP column"
+                >
+                  <FileText className="h-3 w-3 text-indigo-300" />
+                  <span>CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadInventoryTemplate('xlsx')}
+                  className="btn-template-dl"
+                  title="Download Excel XLSX containing only IP column"
+                >
+                  <FileSpreadsheet className="h-3 w-3 text-emerald-300" />
+                  <span>Excel (XLSX)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadInventoryTemplate('json')}
+                  className="btn-template-dl"
+                  title="Download JSON array of IPs"
+                >
+                  <FileCode className="h-3 w-3 text-amber-300" />
+                  <span>JSON</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadInventoryTemplate('yaml')}
+                  className="btn-template-dl"
+                  title="Download YAML list of IPs"
+                >
+                  <FileCode className="h-3 w-3 text-sky-300" />
+                  <span>YAML</span>
+                </button>
+              </div>
+
+              {/* Inherited Batch Setup Credentials Notice */}
+              <div className="import-batch-notice">
+                <span className="text-xs text-slate-300 font-semibold block mb-0.5">
+                  Applied Batch Setup Credentials:
+                </span>
+                <div className="flex items-center gap-3 text-xs text-slate-400">
+                  <span>Vendor: <strong className="text-indigo-300">{commonType || 'huawei'}</strong></span>
+                  <span>User: <strong className="text-slate-200">{commonUser || '(blank)'}</strong></span>
+                  <span>Password: <strong className="text-slate-200">{commonPass ? '••••••' : '(blank)'}</strong></span>
+                  <span>Port: <strong className="text-slate-200">22</strong></span>
+                </div>
+              </div>
+
+              {/* Import Mode: Replace vs Append */}
+              <div className="import-mode-row">
+                <label className="text-xs text-slate-300 font-semibold">Import Mode:</label>
+                <div className="flex gap-4">
+                  <label className="import-radio-label">
+                    <input
+                      type="radio"
+                      name="importMode"
+                      value="replace"
+                      checked={importMode === 'replace'}
+                      onChange={() => setImportMode('replace')}
+                    />
+                    <span>Replace Current Fleet</span>
+                  </label>
+                  <label className="import-radio-label">
+                    <input
+                      type="radio"
+                      name="importMode"
+                      value="append"
+                      checked={importMode === 'append'}
+                      onChange={() => setImportMode('append')}
+                    />
+                    <span>Append to Existing Fleet</span>
+                  </label>
+                </div>
+              </div>
+
+
+              {/* Status and Error Messages */}
+              {importLoading && (
+                <div className="py-3 text-center text-xs text-indigo-300 flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Parsing file...</span>
+                </div>
+              )}
+
+              {importError && (
+                <div className="alert-box mt-2">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  <span>{importError}</span>
+                </div>
+              )}
+
+              {/* Preview Table */}
+              {parsedPreview && parsedPreview.devices && (
+                <div className="import-preview-section">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Successfully parsed {parsedPreview.count} device(s)
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      Showing preview (first {Math.min(parsedPreview.devices.length, 5)} rows)
+                    </span>
+                  </div>
+
+                  <div className="preview-table-container">
+                    <table className="preview-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Host / IP</th>
+                          <th>Type</th>
+                          <th>Port</th>
+                          <th>Username</th>
+                          <th>Password</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parsedPreview.devices.slice(0, 5).map((d, i) => (
+                          <tr key={i}>
+                            <td className="font-mono text-slate-500">{i + 1}</td>
+                            <td className="font-mono font-semibold text-white">{d.host}</td>
+                            <td className="text-slate-300">{d.device_type}</td>
+                            <td className="font-mono text-slate-400">{d.port}</td>
+                            <td className="text-slate-300">{d.username || '-'}</td>
+                            <td className="text-slate-400">{d.password ? '••••••' : '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="save-playbook-footer">
+              <button
+                type="button"
+                onClick={() => setShowImportModal(false)}
+                className="btn-modal-cancel"
+              >
+                <X className="h-4 w-4" />
+                <span>Cancel</span>
+              </button>
+              <button
+                type="button"
+                disabled={!parsedPreview || !parsedPreview.devices || parsedPreview.devices.length === 0}
+                onClick={handleConfirmImport}
+                className="btn-modal-save"
+              >
+                <Check className="h-4 w-4" />
+                <span>
+                  Confirm Import ({parsedPreview?.count || 0} Devices)
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-

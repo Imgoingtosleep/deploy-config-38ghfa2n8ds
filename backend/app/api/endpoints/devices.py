@@ -52,3 +52,167 @@ def test_connection(device: DeviceCredentials):
         message=message,
         device_prompt=prompt if connected else None,
     )
+
+
+from fastapi import File, UploadFile, Form, HTTPException
+from fastapi.responses import Response
+from app.services.inventory_parser import InventoryParser
+
+@router.post("/import")
+async def import_devices(
+    file: UploadFile = File(...),
+    default_device_type: str = Form("huawei"),
+    default_username: str = Form(""),
+    default_password: str = Form(""),
+    default_port: int = Form(22),
+    default_secret: str = Form(""),
+):
+    """
+    Import device inventory from CSV, XLSX, JSON, or YAML files.
+    Extracts IP/host, port, device_type, username, password, and secret with intelligent column matching.
+    """
+    filename = file.filename or "unknown"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    content_bytes = await file.read()
+    if not content_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    devices = []
+    try:
+        if ext in ["csv", "txt"]:
+            devices = InventoryParser.parse_csv(
+                content_bytes,
+                default_device_type=default_device_type,
+                default_username=default_username,
+                default_password=default_password,
+                default_port=default_port,
+                default_secret=default_secret,
+            )
+        elif ext in ["xlsx", "xlsm", "xls"]:
+            devices = InventoryParser.parse_xlsx(
+                content_bytes,
+                default_device_type=default_device_type,
+                default_username=default_username,
+                default_password=default_password,
+                default_port=default_port,
+                default_secret=default_secret,
+            )
+        elif ext == "json":
+            devices = InventoryParser.parse_json(
+                content_bytes,
+                default_device_type=default_device_type,
+                default_username=default_username,
+                default_password=default_password,
+                default_port=default_port,
+                default_secret=default_secret,
+            )
+        elif ext in ["yaml", "yml"]:
+            devices = InventoryParser.parse_yaml(
+                content_bytes,
+                default_device_type=default_device_type,
+                default_username=default_username,
+                default_password=default_password,
+                default_port=default_port,
+                default_secret=default_secret,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format '{ext}'. Please upload a CSV, XLSX, JSON, or YAML file.",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to parse {filename}: {str(e)}",
+        )
+
+    if not devices:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid IP addresses or host records found in the uploaded file.",
+        )
+
+    return {
+        "success": True,
+        "filename": filename,
+        "format": ext,
+        "count": len(devices),
+        "devices": devices,
+    }
+
+
+@router.get("/templates/{format_name}")
+def download_inventory_template(format_name: str):
+    """Download ready-to-use sample IP list template (csv, xlsx, json, yaml) containing only IP addresses"""
+    fmt = format_name.lower().strip()
+
+    if fmt == "csv":
+        csv_data = (
+            "ip\n"
+            "192.168.1.1\n"
+            "192.168.1.2\n"
+            "10.0.0.1\n"
+            "10.0.0.2\n"
+        )
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=fleet_ip_template.csv"},
+        )
+
+    elif fmt in ["yaml", "yml"]:
+        yaml_data = (
+            "# Fleet IP List YAML\n"
+            "- 192.168.1.1\n"
+            "- 192.168.1.2\n"
+            "- 10.0.0.1\n"
+            "- 10.0.0.2\n"
+        )
+        return Response(
+            content=yaml_data,
+            media_type="application/x-yaml",
+            headers={"Content-Disposition": "attachment; filename=fleet_ip_template.yaml"},
+        )
+
+    elif fmt == "json":
+        json_data = [
+            "192.168.1.1",
+            "192.168.1.2",
+            "10.0.0.1",
+            "10.0.0.2",
+        ]
+        import json as json_lib
+        return Response(
+            content=json_lib.dumps(json_data, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=fleet_ip_template.json"},
+        )
+
+    elif fmt == "xlsx":
+        import io
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Fleet_IP_List"
+        ws.append(["ip"])
+        ws.append(["192.168.1.1"])
+        ws.append(["192.168.1.2"])
+        ws.append(["10.0.0.1"])
+        ws.append(["10.0.0.2"])
+
+        stream = io.BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+        return Response(
+            content=stream.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=fleet_ip_template.xlsx"},
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail="Supported template formats: csv, xlsx, json, yaml")
+
+

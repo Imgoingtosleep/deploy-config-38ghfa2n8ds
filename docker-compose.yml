@@ -5,14 +5,20 @@ services:
       dockerfile: Dockerfile
     container_name: net-auto-backend
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "${BACKEND_PORT:-4050}:4050"
     environment:
-      - BACKEND_PORT=4050
-      - BACKEND_HOST=0.0.0.0
-      - ALLOWED_ORIGINS=http://localhost:4000,http://127.0.0.1:4000,http://localhost:${FRONTEND_PORT:-4000}
+      - BACKEND_PORT=${BACKEND_PORT:-4050}
+      - BACKEND_HOST=${BACKEND_HOST:-0.0.0.0}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:4000,http://127.0.0.1:4000}
+      - DEFAULT_DEVICE_TYPE=${DEFAULT_DEVICE_TYPE:-huawei}
+      - DEFAULT_SSH_PORT=${DEFAULT_SSH_PORT:-22}
       - DEFAULT_TIMEOUT=${DEFAULT_TIMEOUT:-30}
       - GLOBAL_DELAY_FACTOR=${GLOBAL_DELAY_FACTOR:-1}
+      - SECRET_KEY=${SECRET_KEY:-supersecret-network-automation-key-change-me}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./backend/app:/app/app
     # privileged: true allows backend to directly access USB-to-Serial Console cables (/dev/ttyUSB0, /dev/ttyACM0)
@@ -26,13 +32,15 @@ services:
       dockerfile: Dockerfile.dev
     container_name: net-auto-frontend
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "${FRONTEND_PORT:-4000}:4000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
     environment:
-      - VITE_API_BASE_URL=http://localhost:${BACKEND_PORT:-4050}
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:4050}
     depends_on:
       - backend
     networks:

@@ -270,6 +270,39 @@ export const deletePlaybook = async (id) => {
   return response.data;
 };
 
+export const importDevicesFromFile = async (file, defaultOptions = {}) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (defaultOptions.default_device_type) {
+    formData.append('default_device_type', defaultOptions.default_device_type);
+  }
+  if (defaultOptions.default_username) {
+    formData.append('default_username', defaultOptions.default_username);
+  }
+  if (defaultOptions.default_password) {
+    formData.append('default_password', defaultOptions.default_password);
+  }
+  if (defaultOptions.default_port) {
+    formData.append('default_port', defaultOptions.default_port);
+  }
+  if (defaultOptions.default_secret) {
+    formData.append('default_secret', defaultOptions.default_secret);
+  }
+
+  const response = await apiClient.post('/devices/import', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+export const downloadInventoryTemplate = (formatName) => {
+  const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
+  window.open(`${baseUrl}/api/v1/devices/templates/${formatName}`, '_blank');
+};
+
 export default apiClient;
+
 
 
