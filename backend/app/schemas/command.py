@@ -64,6 +64,16 @@ class BatchCommandResponse(BaseModel):
 class BackupConfigRequest(BaseModel):
     device: DeviceCredentials
 
+class BatchBackupRequest(BaseModel):
+    devices: List[DeviceCredentials]
+
+class BatchBackupResponse(BaseModel):
+    devices_count: int
+    success_count: int
+    failed_count: int
+    overall_time_seconds: float
+    results: List[CommandResponse]
+
 class AdvancedDeployRequest(BaseModel):
     device: DeviceCredentials
     config_commands: List[str] = Field(..., description="List of configuration lines to deploy")
@@ -86,3 +96,18 @@ class AdvancedDeployResponse(BaseModel):
     post_check_results: List[CommandResponse] = Field(default_factory=list)
     rollback_commands: List[str] = Field(default_factory=list)
     step_logs: List[Dict[str, Any]] = Field(default_factory=list)
+
+class BatchDeployRequest(BaseModel):
+    devices: List[DeviceCredentials]
+    config_commands: List[str] = Field(..., description="List of configuration lines to deploy across fleet")
+    save_config: bool = Field(True, description="Save running-config to startup-config after deploy")
+    pre_check_commands: Optional[List[str]] = Field(default_factory=list, description="Commands to run prior to deployment")
+    post_check_commands: Optional[List[str]] = Field(default_factory=list, description="Commands to run after deployment for verification")
+    backup_before_deploy: Optional[bool] = Field(False, description="Backup running configuration prior to deploying changes")
+
+class BatchDeployResponse(BaseModel):
+    devices_count: int
+    success_count: int
+    failed_count: int
+    overall_time_seconds: float
+    results: List[AdvancedDeployResponse]

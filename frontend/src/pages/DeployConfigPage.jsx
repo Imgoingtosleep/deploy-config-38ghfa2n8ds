@@ -37,7 +37,9 @@ import {
 } from 'lucide-react';
 import {
   deployConfigurationAdvanced,
+  deployConfigurationBatch,
   backupRunningConfig,
+  backupBatchRunningConfig,
   executeTroubleshootCommand,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from '../components/TerminalOutput';
@@ -249,7 +251,11 @@ const WARNING_KEYWORDS = [
   'no service password-encryption',
 ];
 
-export default function DeployConfigPage({ device }) {
+export default function DeployConfigPage({
+  deviceMode = 'multi',
+  device,
+  fleet = [],
+}) {
   // Main Script Editor State
   const [configText, setConfigText] = useState('');
   const [activeVendor, setActiveVendor] = useState('huawei');
@@ -268,8 +274,12 @@ export default function DeployConfigPage({ device }) {
   const [deploying, setDeploying] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [result, setResult] = useState(null);
+  const [batchResult, setBatchResult] = useState(null);
+  const [selectedBatchDeviceIdx, setSelectedBatchDeviceIdx] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
 
   // UI Navigation & View Modes
   const [activeTab, setActiveTab] = useState('editor'); // 'editor', 'builder', 'results', 'history'
@@ -285,6 +295,8 @@ export default function DeployConfigPage({ device }) {
 
   // Quick Standalone Backup State
   const [manualBackupResult, setManualBackupResult] = useState(null);
+  const [manualBackupBatchResult, setManualBackupBatchResult] = useState(null);
+  const [selectedBackupDeviceIdx, setSelectedBackupDeviceIdx] = useState(0);
   const [showBackupModal, setShowBackupModal] = useState(false);
 
   // Deployment Session History
@@ -387,35 +399,69 @@ export default function DeployConfigPage({ device }) {
 
   // Handle standalone backup of running config
   const handleManualBackup = async () => {
-    if (!device.host) {
-      setErrorMessage('Please fill in Device Host / IP Address above.');
-      return;
-    }
     setBackingUp(true);
     setErrorMessage('');
-    try {
-      const res = await backupRunningConfig(device);
-      setManualBackupResult(res);
-      setShowBackupModal(true);
-      if (res.success) {
-        setSuccessMessage(`Successfully fetched running configuration from ${device.host}`);
-      } else {
-        setErrorMessage(res.error || 'Backup command returned an error');
+    setSuccessMessage('');
+
+    if (deviceMode === 'multi') {
+      if (validFleet.length === 0) {
+        setErrorMessage('Please add at least one device IP in Target Device above.');
+        setBackingUp(false);
+        return;
       }
-    } catch (err) {
-      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to fetch running config');
-    } finally {
-      setBackingUp(false);
+
+      try {
+        const payloadDevices = validFleet.map((d) => ({
+          host: d.host.trim(),
+          port: parseInt(d.port, 10) || 22,
+          device_type: d.device_type || 'cisco_ios',
+          username: d.username || '',
+          password: d.password || '',
+          secret: d.secret || '',
+          connection_mode: 'network',
+        }));
+
+        const res = await backupBatchRunningConfig(payloadDevices);
+        setManualBackupBatchResult(res);
+        setSelectedBackupDeviceIdx(0);
+        setShowBackupModal(true);
+        if (res.failed_count === 0) {
+          setSuccessMessage(`Successfully fetched running configuration from all ${res.success_count} fleet devices (${res.overall_time_seconds}s)`);
+        } else {
+          setErrorMessage(`Fleet backup finished: ${res.success_count} succeeded, ${res.failed_count} failed.`);
+        }
+      } catch (err) {
+        setErrorMessage(err.response?.data?.detail || err.message || 'Failed to fetch fleet running config');
+      } finally {
+        setBackingUp(false);
+      }
+    } else {
+      if (!device?.host) {
+        setErrorMessage('Please fill in Device Host / IP Address above.');
+        setBackingUp(false);
+        return;
+      }
+      try {
+        const res = await backupRunningConfig(device);
+        setManualBackupResult(res);
+        setShowBackupModal(true);
+        if (res.success) {
+          setSuccessMessage(`Successfully fetched running configuration from ${device.host} (${res.execution_time_seconds}s)`);
+        } else {
+          setErrorMessage(res.error || 'Backup command returned an error');
+        }
+      } catch (err) {
+        setErrorMessage(err.response?.data?.detail || err.message || 'Failed to fetch running config');
+      } finally {
+        setBackingUp(false);
+      }
     }
   };
 
   // Trigger Advanced Deployment
   const handleConfirmDeploy = async () => {
     setShowConfirmModal(false);
-    if (!device.host) {
-      setErrorMessage('Please fill in Device Host / IP Address above.');
-      return;
-    }
+
     if (validCommands.length === 0) {
       setErrorMessage('Please enter at least one valid configuration command.');
       return;
@@ -425,46 +471,114 @@ export default function DeployConfigPage({ device }) {
     setErrorMessage('');
     setSuccessMessage('');
     setResult(null);
+    setBatchResult(null);
 
     const preCmds = enablePreCheck && preCheckCmd.trim() ? [preCheckCmd.trim()] : [];
     const postCmds = enablePostCheck && postCheckCmd.trim() ? [postCheckCmd.trim()] : [];
 
-    try {
-      const data = await deployConfigurationAdvanced(
-        device,
-        validCommands,
-        saveConfig,
-        preCmds,
-        postCmds,
-        enableBackup
-      );
-      setResult(data);
-      setActiveTab('results');
-      setResultTab('terminal');
-
-      // Record in session history
-      const historyItem = {
-        id: Date.now(),
-        timestamp: new Date().toLocaleTimeString(),
-        date: new Date().toLocaleDateString(),
-        host: device.host,
-        device_type: device.device_type,
-        commandCount: validCommands.length,
-        success: data.success,
-        executionTime: data.execution_time_seconds,
-        script: configText,
-        result: data,
-      };
-      setDeployHistory((prev) => [historyItem, ...prev.slice(0, 19)]); // Keep last 20
-      if (data.success) {
-        setSuccessMessage(`Configuration successfully deployed to ${device.host} (${data.execution_time_seconds}s)`);
-      } else {
-        setErrorMessage(data.error || 'Deployment failed on device');
+    if (deviceMode === 'multi') {
+      if (validFleet.length === 0) {
+        setErrorMessage('Please add at least one device IP address in Target Device above.');
+        setDeploying(false);
+        return;
       }
-    } catch (err) {
-      setErrorMessage(err.response?.data?.detail || err.message || 'Config deployment failed');
-    } finally {
-      setDeploying(false);
+
+      try {
+        const payloadDevices = validFleet.map((d) => ({
+          host: d.host.trim(),
+          port: parseInt(d.port, 10) || 22,
+          device_type: d.device_type || 'cisco_ios',
+          username: d.username || '',
+          password: d.password || '',
+          secret: d.secret || '',
+          connection_mode: 'network',
+        }));
+
+        const data = await deployConfigurationBatch(
+          payloadDevices,
+          validCommands,
+          saveConfig,
+          preCmds,
+          postCmds,
+          enableBackup
+        );
+        setBatchResult(data);
+        setSelectedBatchDeviceIdx(0);
+        setActiveTab('results');
+        setResultTab('terminal');
+
+        if (data.results && data.results.length > 0) {
+          setResult(data.results[0]);
+        }
+
+        const historyItem = {
+          id: Date.now(),
+          timestamp: new Date().toLocaleTimeString(),
+          date: new Date().toLocaleDateString(),
+          host: `Fleet (${data.devices_count} devices)`,
+          device_type: 'Multi-Vendor Fleet',
+          commandCount: validCommands.length,
+          success: data.failed_count === 0,
+          executionTime: data.overall_time_seconds,
+          script: configText,
+          result: data,
+        };
+        setDeployHistory((prev) => [historyItem, ...prev.slice(0, 19)]);
+        if (data.failed_count === 0) {
+          setSuccessMessage(`Configuration successfully deployed across all ${data.success_count} devices (${data.overall_time_seconds}s)`);
+        } else {
+          setErrorMessage(`Fleet deployment finished: ${data.success_count} succeeded, ${data.failed_count} failed.`);
+        }
+      } catch (err) {
+        setErrorMessage(err.response?.data?.detail || err.message || 'Fleet config deployment failed');
+      } finally {
+        setDeploying(false);
+      }
+    } else {
+      // Single Mode
+      if (!device?.host) {
+        setErrorMessage('Please fill in Device Host / IP Address above.');
+        setDeploying(false);
+        return;
+      }
+
+      try {
+        const data = await deployConfigurationAdvanced(
+          device,
+          validCommands,
+          saveConfig,
+          preCmds,
+          postCmds,
+          enableBackup
+        );
+        setResult(data);
+        setActiveTab('results');
+        setResultTab('terminal');
+
+        // Record in session history
+        const historyItem = {
+          id: Date.now(),
+          timestamp: new Date().toLocaleTimeString(),
+          date: new Date().toLocaleDateString(),
+          host: device.host,
+          device_type: device.device_type,
+          commandCount: validCommands.length,
+          success: data.success,
+          executionTime: data.execution_time_seconds,
+          script: configText,
+          result: data,
+        };
+        setDeployHistory((prev) => [historyItem, ...prev.slice(0, 19)]); // Keep last 20
+        if (data.success) {
+          setSuccessMessage(`Configuration successfully deployed to ${device.host} (${data.execution_time_seconds}s)`);
+        } else {
+          setErrorMessage(data.error || 'Deployment failed on device');
+        }
+      } catch (err) {
+        setErrorMessage(err.response?.data?.detail || err.message || 'Config deployment failed');
+      } finally {
+        setDeploying(false);
+      }
     }
   };
 
@@ -580,14 +694,24 @@ export default function DeployConfigPage({ device }) {
       {/* Top Device Header & Quick Actions */}
       <div className="deploy-top-banner">
         <div className="deploy-banner-left">
-          <div className="deploy-target-badge">
-            <span className="badge-dot" />
-            <span className="badge-host">{device.host || 'No Host Specified'}</span>
-            <span className="badge-type">({device.device_type || 'Unknown Driver'})</span>
-            <span className="badge-port">Port {device.port || (device.device_type?.includes('telnet') ? 23 : 22)}</span>
-          </div>
+          {deviceMode === 'multi' ? (
+            <div className="deploy-target-badge fleet-mode">
+              <span className="badge-dot" />
+              <span className="badge-host">Fleet Deployment ({validFleet.length} Devices)</span>
+              <span className="badge-type">Multi-Device SSH</span>
+            </div>
+          ) : (
+            <div className="deploy-target-badge">
+              <span className="badge-dot" />
+              <span className="badge-host">{device.host || 'No Host Specified'}</span>
+              <span className="badge-type">({device.device_type || 'Unknown Driver'})</span>
+              <span className="badge-port">Port {device.port || (device.device_type?.includes('telnet') ? 23 : 22)}</span>
+            </div>
+          )}
           <p className="deploy-banner-hint">
-            Direct CLI push with automated pre/post verification checks, running-config backups, and safety validation.
+            {deviceMode === 'multi'
+              ? `Direct CLI push across all ${validFleet.length} devices configured in Target Device above with automated verification & backups.`
+              : 'Direct CLI push with automated pre/post verification checks, running-config backups, and safety validation.'}
           </p>
         </div>
 
@@ -595,19 +719,34 @@ export default function DeployConfigPage({ device }) {
           <button
             type="button"
             onClick={handleManualBackup}
-            disabled={backingUp || !device.host}
+            disabled={
+              backingUp ||
+              (deviceMode === 'multi' ? validFleet.length === 0 : !device?.host)
+            }
             className="btn-backup-quick"
-            title="Fetch and view current device running configuration"
+            title={
+              deviceMode === 'multi'
+                ? `Fetch and preview running configuration from all ${validFleet.length} devices`
+                : 'Fetch and view current device running configuration'
+            }
           >
             {backingUp ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-                <span>Fetching Backup...</span>
+                <span>
+                  {deviceMode === 'multi'
+                    ? `Fetching Fleet Backup (${validFleet.length})...`
+                    : 'Fetching Backup...'}
+                </span>
               </>
             ) : (
               <>
                 <HardDrive className="h-4 w-4 text-indigo-400" />
-                <span>Backup Running Config</span>
+                <span>
+                  {deviceMode === 'multi'
+                    ? `Backup Fleet Config (${validFleet.length} Devices)`
+                    : 'Backup Running Config'}
+                </span>
               </>
             )}
           </button>
@@ -916,6 +1055,8 @@ export default function DeployConfigPage({ device }) {
                     <span>
                       {validCommands.length === 0
                         ? 'Add commands above to proceed'
+                        : deviceMode === 'multi'
+                        ? `Ready to push ${validCommands.length} command(s) across ${validFleet.length} device(s)`
                         : `Ready to push ${validCommands.length} command(s) to ${device.host}`}
                     </span>
                   </div>
@@ -923,18 +1064,30 @@ export default function DeployConfigPage({ device }) {
                   <button
                     type="button"
                     onClick={() => setShowConfirmModal(true)}
-                    disabled={deploying || validCommands.length === 0 || !device.host}
+                    disabled={
+                      deploying ||
+                      validCommands.length === 0 ||
+                      (deviceMode === 'multi' ? validFleet.length === 0 : !device.host)
+                    }
                     className="btn-deploy-main"
                   >
                     {deploying ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Deploying to {device.host}...</span>
+                        <span>
+                          {deviceMode === 'multi'
+                            ? `Deploying across ${validFleet.length} Devices...`
+                            : `Deploying to ${device.host}...`}
+                        </span>
                       </>
                     ) : (
                       <>
                         <Send className="h-4 w-4" />
-                        <span>Review & Deploy ({validCommands.length})</span>
+                        <span>
+                          {deviceMode === 'multi'
+                            ? `Review & Deploy to Fleet (${validFleet.length} Devices)`
+                            : `Review & Deploy (${validCommands.length})`}
+                        </span>
                       </>
                     )}
                   </button>
@@ -1468,289 +1621,366 @@ export default function DeployConfigPage({ device }) {
       )}
 
       {/* TAB 3: DEPLOYMENT RESULTS & ANALYTICS */}
-      {activeTab === 'results' && (
-        <div className="deploy-results-container">
-          {!result ? (
-            <div className="empty-results-box">
-              <TerminalIcon className="h-12 w-12 text-slate-600 mb-3" />
-              <h4 className="text-base font-semibold text-slate-300">No Deployment Run Yet</h4>
-              <p className="text-xs text-slate-500 max-w-md text-center mt-1">
-                Compose your script in the Script Editor and click "Review & Deploy" to see live execution results,
-                step-by-step logs, pre/post diffs, and rollback scripts here.
-              </p>
-              <button
-                type="button"
-                onClick={() => setActiveTab('editor')}
-                className="btn-primary mt-4"
-              >
-                Go to Script Editor
-              </button>
+      {activeTab === 'results' && (() => {
+        const activeResult = (deviceMode === 'multi' && batchResult)
+          ? batchResult.results?.[selectedBatchDeviceIdx]
+          : result;
+
+        if (!activeResult && !batchResult) {
+          return (
+            <div className="deploy-results-container">
+              <div className="empty-results-box">
+                <TerminalIcon className="h-12 w-12 text-slate-600 mb-3" />
+                <h4 className="text-base font-semibold text-slate-300">No Deployment Run Yet</h4>
+                <p className="text-xs text-slate-500 max-w-md text-center mt-1">
+                  Compose your script in the Script Editor and click "Review & Deploy" to see live execution results,
+                  step-by-step logs, pre/post diffs, and rollback scripts here.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('editor')}
+                  className="btn-primary mt-4"
+                >
+                  Go to Script Editor
+                </button>
+              </div>
             </div>
-          ) : (
+          );
+        }
+
+        return (
+          <div className="deploy-results-container">
             <div className="results-wrapper">
-              {/* Executive Summary Card */}
-              <div className={`results-summary-card ${result.success ? 'success' : 'failed'}`}>
-                <div className="summary-status-left">
-                  {result.success ? (
-                    <CheckCircle2 className="h-8 w-8 text-emerald-400" />
-                  ) : (
-                    <XCircle className="h-8 w-8 text-rose-400" />
-                  )}
-                  <div>
-                    <h3 className="summary-title">
-                      {result.success ? 'Deployment Successful' : 'Deployment Failed'}
-                    </h3>
-                    <p className="summary-subtitle">
-                      Target Host: <span className="font-mono text-white">{result.host}</span> &bull; Executed in{' '}
-                      <span className="font-mono text-white">{result.execution_time_seconds || 0}s</span>
-                    </p>
+              {/* Batch Fleet Summary Stats & Device Selector */}
+              {deviceMode === 'multi' && batchResult && (
+                <div className="batch-deploy-overview-card">
+                  <div className="batch-stats-bar">
+                    <div className="batch-stat-item">
+                      <span className="stat-label">Total Fleet:</span>
+                      <span className="stat-value">{batchResult.devices_count} Devices</span>
+                    </div>
+                    <div className="batch-stat-item">
+                      <span className="stat-label">Success:</span>
+                      <span className="stat-value text-emerald-400">{batchResult.success_count}</span>
+                    </div>
+                    <div className="batch-stat-item">
+                      <span className="stat-label">Failed:</span>
+                      <span className="stat-value text-rose-400">{batchResult.failed_count}</span>
+                    </div>
+                    <div className="batch-stat-item">
+                      <span className="stat-label">Overall Time:</span>
+                      <span className="stat-value text-indigo-400">{batchResult.overall_time_seconds}s</span>
+                    </div>
                   </div>
-                </div>
 
-                <div className="summary-metrics-right">
-                  <div className="metric-box">
-                    <span className="metric-label">Commands Deployed</span>
-                    <span className="metric-value font-mono">
-                      {result.commands_deployed?.length || validCommands.length}
-                    </span>
+                  {/* Device Tabs Selector */}
+                  <div className="batch-device-tabs-row">
+                    {batchResult.results?.map((devRes, idx) => {
+                      const isSelected = selectedBatchDeviceIdx === idx;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setSelectedBatchDeviceIdx(idx)}
+                          className={`batch-dev-btn ${isSelected ? 'active' : ''} ${
+                            devRes.success ? 'success' : 'failed'
+                          }`}
+                        >
+                          <div className="flex flex-col items-start text-left">
+                            <span className="font-mono text-xs font-semibold text-white">{devRes.host}</span>
+                            <span className="text-[10px] text-slate-400">{devRes.execution_time_seconds}s</span>
+                          </div>
+                          {devRes.success ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div className="metric-box">
-                    <span className="metric-label">NVRAM Save</span>
-                    <span className="metric-value font-mono">
-                      {saveConfig ? (result.save_output ? 'Saved' : 'OK') : 'Skipped'}
-                    </span>
-                  </div>
-                  <div className="metric-box">
-                    <span className="metric-label">Rollback Available</span>
-                    <span className="metric-value font-mono text-indigo-400">
-                      {result.rollback_commands?.length || 0} cmds
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Result View Mode Tabs */}
-              <div className="result-subtabs-nav">
-                <button
-                  onClick={() => setResultTab('terminal')}
-                  className={`result-nav-btn ${resultTab === 'terminal' ? 'active' : ''}`}
-                >
-                  <TerminalIcon className="h-4 w-4" />
-                  <span>Terminal Console Log</span>
-                </button>
-
-                <button
-                  onClick={() => setResultTab('steps')}
-                  className={`result-nav-btn ${resultTab === 'steps' ? 'active' : ''}`}
-                >
-                  <CheckSquare className="h-4 w-4 text-emerald-400" />
-                  <span>Step-by-Step Execution</span>
-                  <span className="counter-pill">{result.commands_deployed?.length || 0}</span>
-                </button>
-
-                {(result.pre_check_results?.length > 0 || result.post_check_results?.length > 0) && (
-                  <button
-                    onClick={() => setResultTab('prepost')}
-                    className={`result-nav-btn ${resultTab === 'prepost' ? 'active' : ''}`}
-                  >
-                    <Eye className="h-4 w-4 text-sky-400" />
-                    <span>Pre vs Post Verification</span>
-                  </button>
-                )}
-
-                {result.rollback_commands?.length > 0 && (
-                  <button
-                    onClick={() => setResultTab('rollback')}
-                    className={`result-nav-btn ${resultTab === 'rollback' ? 'active' : ''}`}
-                  >
-                    <Undo2 className="h-4 w-4 text-amber-400" />
-                    <span>Rollback Script Helper</span>
-                    <span className="counter-pill">{result.rollback_commands.length}</span>
-                  </button>
-                )}
-
-                {result.backup_config && (
-                  <button
-                    onClick={() => setResultTab('backup')}
-                    className={`result-nav-btn ${resultTab === 'backup' ? 'active' : ''}`}
-                  >
-                    <HardDrive className="h-4 w-4 text-indigo-400" />
-                    <span>Backup Snapshot</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Sub-Tab 1: Terminal Console */}
-              {resultTab === 'terminal' && (
-                <div style={{ height: '520px' }}>
-                  <TerminalOutput
-                    title={`Deployment Console Output - ${result.host}`}
-                    command={maskSensitiveCli(result.command || 'send_config_set')}
-                    output={maskSensitiveCli(result.output || result.error)}
-                    executionTime={result.execution_time_seconds}
-                    onClear={() => setResult(null)}
-                    isError={!result.success}
-                  />
                 </div>
               )}
 
-              {/* Sub-Tab 2: Step-by-Step Command Table */}
-              {resultTab === 'steps' && (
-                <div className="steps-container-card">
-                  <div className="steps-table-header">
-                    <span className="w-12">#</span>
-                    <span className="flex-1">Command Sent to Switch</span>
-                    <span className="w-24 text-right">Status</span>
-                  </div>
+              {activeResult && (
+                <>
+                  {/* Executive Summary Card for Active Device */}
+                  <div className={`results-summary-card ${activeResult.success ? 'success' : 'failed'}`}>
+                    <div className="summary-status-left">
+                      {activeResult.success ? (
+                        <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+                      ) : (
+                        <XCircle className="h-8 w-8 text-rose-400" />
+                      )}
+                      <div>
+                        <h3 className="summary-title">
+                          {activeResult.success ? 'Deployment Successful' : 'Deployment Failed'}
+                        </h3>
+                        <p className="summary-subtitle">
+                          Target Host: <span className="font-mono text-white">{activeResult.host}</span> &bull; Executed in{' '}
+                          <span className="font-mono text-white">{activeResult.execution_time_seconds || 0}s</span>
+                        </p>
+                      </div>
+                    </div>
 
-                  <div className="steps-list">
-                    {(result.commands_deployed || validCommands).map((cmd, idx) => (
-                      <div key={idx} className="step-row">
-                        <span className="step-index font-mono">{idx + 1}</span>
-                        <span className="step-command font-mono">{maskSensitiveCli(cmd)}</span>
-                        <span className="step-badge success">
-                          <Check className="h-3 w-3" />
-                          <span>Pushed</span>
+                    <div className="summary-metrics-right">
+                      <div className="metric-box">
+                        <span className="metric-label">Commands Deployed</span>
+                        <span className="metric-value font-mono">
+                          {activeResult.commands_deployed?.length || validCommands.length}
                         </span>
                       </div>
-                    ))}
-                  </div>
-
-                  {result.save_output && (
-                    <div className="save-status-box">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 mb-1">
-                        <CheckCircle2 className="h-3.5 w-3.5" />
-                        <span>Startup-Config Save Status:</span>
+                      <div className="metric-box">
+                        <span className="metric-label">NVRAM Save</span>
+                        <span className="metric-value font-mono">
+                          {saveConfig ? (activeResult.save_output ? 'Saved' : 'OK') : 'Skipped'}
+                        </span>
                       </div>
-                      <pre className="font-mono text-xs text-slate-300">{maskSensitiveCli(result.save_output)}</pre>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Sub-Tab 3: Pre vs Post Verification */}
-              {resultTab === 'prepost' && (
-                <div className="prepost-grid">
-                  <div className="prepost-col">
-                    <div className="prepost-col-header">
-                      <Clock className="h-4 w-4 text-sky-400" />
-                      <span>Pre-Check State (Before Deploy)</span>
-                    </div>
-                    <div className="prepost-content font-mono">
-                      {result.pre_check_results?.map((res, i) => (
-                        <div key={i} className="mb-4">
-                          <div className="text-xs text-sky-300 font-semibold mb-1">$ {maskSensitiveCli(res.command)}</div>
-                          <pre className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800 overflow-x-auto">
-                            {maskSensitiveCli(res.output || res.error || 'No output')}
-                          </pre>
-                        </div>
-                      ))}
+                      <div className="metric-box">
+                        <span className="metric-label">Rollback Available</span>
+                        <span className="metric-value font-mono text-indigo-400">
+                          {activeResult.rollback_commands?.length || 0} cmds
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="prepost-col">
-                    <div className="prepost-col-header">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      <span>Post-Check State (After Deploy)</span>
-                    </div>
-                    <div className="prepost-content font-mono">
-                      {result.post_check_results?.map((res, i) => (
-                        <div key={i} className="mb-4">
-                          <div className="text-xs text-emerald-300 font-semibold mb-1">$ {maskSensitiveCli(res.command)}</div>
-                          <pre className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800 overflow-x-auto">
-                            {maskSensitiveCli(res.output || res.error || 'No output')}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Sub-Tab 4: Rollback Script Helper */}
-              {resultTab === 'rollback' && (
-                <div className="rollback-container-card">
-                  <div className="rollback-header">
-                    <div>
-                      <h4 className="rollback-title">
-                        <Undo2 className="h-4 w-4 text-amber-400" />
-                        <span>Auto-Generated Rollback Configuration</span>
-                      </h4>
-                      <p className="rollback-subtitle">
-                        Inverse commands to revert the modifications applied during this deployment.
-                      </p>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleCopyRollback}
-                        className="btn-rollback-action"
-                      >
-                        {copiedRollback ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        <span>{copiedRollback ? 'Copied' : 'Copy Rollback'}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleLoadRollbackToEditor}
-                        className="btn-rollback-action primary"
-                      >
-                        <FileCode className="h-3.5 w-3.5" />
-                        <span>Load into Editor</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rollback-code-box font-mono">
-                    <pre className="text-xs text-amber-200 leading-relaxed">
-                      {result.rollback_commands?.join('\n')}
-                    </pre>
-                  </div>
-                </div>
-              )}
-
-              {/* Sub-Tab 5: Pre-Deployment Backup Snapshot */}
-              {resultTab === 'backup' && (
-                <div className="backup-snapshot-card">
-                  <div className="backup-header">
-                    <div>
-                      <h4 className="backup-title">
-                        <HardDrive className="h-4 w-4 text-indigo-400" />
-                        <span>Pre-Deployment Running-Config Snapshot</span>
-                      </h4>
-                      <p className="backup-subtitle">
-                        Captured from {result.host} before configuration changes were applied.
-                      </p>
-                    </div>
+                  {/* Result View Mode Tabs */}
+                  <div className="result-subtabs-nav">
+                    <button
+                      onClick={() => setResultTab('terminal')}
+                      className={`result-nav-btn ${resultTab === 'terminal' ? 'active' : ''}`}
+                    >
+                      <TerminalIcon className="h-4 w-4" />
+                      <span>Terminal Console Log</span>
+                    </button>
 
                     <button
-                      type="button"
-                      onClick={() => {
-                        const blob = new Blob([result.backup_config], { type: 'text/plain;charset=utf-8' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `backup_before_deploy_${result.host}_${Date.now()}.cfg`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="btn-backup-download"
+                      onClick={() => setResultTab('steps')}
+                      className={`result-nav-btn ${resultTab === 'steps' ? 'active' : ''}`}
                     >
-                      <Download className="h-3.5 w-3.5" />
-                      <span>Download .cfg</span>
+                      <CheckSquare className="h-4 w-4 text-emerald-400" />
+                      <span>Step-by-Step Execution</span>
+                      <span className="counter-pill">{activeResult.commands_deployed?.length || 0}</span>
                     </button>
+
+                    {(activeResult.pre_check_results?.length > 0 || activeResult.post_check_results?.length > 0) && (
+                      <button
+                        onClick={() => setResultTab('prepost')}
+                        className={`result-nav-btn ${resultTab === 'prepost' ? 'active' : ''}`}
+                      >
+                        <Eye className="h-4 w-4 text-sky-400" />
+                        <span>Pre vs Post Verification</span>
+                      </button>
+                    )}
+
+                    {activeResult.rollback_commands?.length > 0 && (
+                      <button
+                        onClick={() => setResultTab('rollback')}
+                        className={`result-nav-btn ${resultTab === 'rollback' ? 'active' : ''}`}
+                      >
+                        <Undo2 className="h-4 w-4 text-amber-400" />
+                        <span>Rollback Script Helper</span>
+                        <span className="counter-pill">{activeResult.rollback_commands.length}</span>
+                      </button>
+                    )}
+
+                    {activeResult.backup_config && (
+                      <button
+                        onClick={() => setResultTab('backup')}
+                        className={`result-nav-btn ${resultTab === 'backup' ? 'active' : ''}`}
+                      >
+                        <HardDrive className="h-4 w-4 text-indigo-400" />
+                        <span>Backup Snapshot</span>
+                      </button>
+                    )}
                   </div>
 
-                  <pre className="backup-code-box font-mono text-xs text-slate-300">
-                    {result.backup_config}
-                  </pre>
-                </div>
+                  {/* Sub-Tab 1: Terminal Console */}
+                  {resultTab === 'terminal' && (
+                    <div style={{ height: '520px' }}>
+                      <TerminalOutput
+                        title={`Deployment Console Output - ${activeResult.host}`}
+                        command={maskSensitiveCli(activeResult.command || 'send_config_set')}
+                        output={maskSensitiveCli(activeResult.output || activeResult.error)}
+                        executionTime={activeResult.execution_time_seconds}
+                        onClear={() => {
+                          setResult(null);
+                          setBatchResult(null);
+                        }}
+                        isError={!activeResult.success}
+                      />
+                    </div>
+                  )}
+
+                  {/* Sub-Tab 2: Step-by-Step Command Table */}
+                  {resultTab === 'steps' && (
+                    <div className="steps-container-card">
+                      <div className="steps-table-header">
+                        <span className="w-12">#</span>
+                        <span className="flex-1">Command Sent to Switch</span>
+                        <span className="w-24 text-right">Status</span>
+                      </div>
+
+                      <div className="steps-list">
+                        {(activeResult.commands_deployed || validCommands).map((cmd, idx) => (
+                          <div key={idx} className="step-row">
+                            <span className="step-index font-mono">{idx + 1}</span>
+                            <span className="step-command font-mono">{maskSensitiveCli(cmd)}</span>
+                            <span className="step-badge success">
+                              <Check className="h-3 w-3" />
+                              <span>Pushed</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {activeResult.save_output && (
+                        <div className="save-status-box">
+                          <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 mb-1">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>Startup-Config Save Status:</span>
+                          </div>
+                          <pre className="font-mono text-xs text-slate-300">{maskSensitiveCli(activeResult.save_output)}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Sub-Tab 3: Pre vs Post Verification */}
+                  {resultTab === 'prepost' && (
+                    <div className="prepost-grid">
+                      <div className="prepost-col">
+                        <div className="prepost-col-header">
+                          <Clock className="h-4 w-4 text-sky-400" />
+                          <span>Pre-Check State (Before Deploy)</span>
+                        </div>
+                        <div className="prepost-content font-mono">
+                          {activeResult.pre_check_results?.map((res, i) => (
+                            <div key={i} className="mb-4">
+                              <div className="text-xs text-sky-300 font-semibold mb-1">$ {maskSensitiveCli(res.command)}</div>
+                              <pre className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800 overflow-x-auto">
+                                {maskSensitiveCli(res.output || res.error || 'No output')}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="prepost-col">
+                        <div className="prepost-col-header">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          <span>Post-Check State (After Deploy)</span>
+                        </div>
+                        <div className="prepost-content font-mono">
+                          {activeResult.post_check_results?.map((res, i) => (
+                            <div key={i} className="mb-4">
+                              <div className="text-xs text-emerald-300 font-semibold mb-1">$ {maskSensitiveCli(res.command)}</div>
+                              <pre className="text-xs text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800 overflow-x-auto">
+                                {maskSensitiveCli(res.output || res.error || 'No output')}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sub-Tab 4: Rollback Script Helper */}
+                  {resultTab === 'rollback' && (
+                    <div className="rollback-container-card">
+                      <div className="rollback-header">
+                        <div>
+                          <h4 className="rollback-title">
+                            <Undo2 className="h-4 w-4 text-amber-400" />
+                            <span>Auto-Generated Rollback Configuration</span>
+                          </h4>
+                          <p className="rollback-subtitle">
+                            Inverse commands to revert the modifications applied during this deployment on {activeResult.host}.
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!activeResult?.rollback_commands?.length) return;
+                              navigator.clipboard.writeText(activeResult.rollback_commands.join('\n'));
+                              setCopiedRollback(true);
+                              setTimeout(() => setCopiedRollback(false), 2000);
+                            }}
+                            className="btn-rollback-action"
+                          >
+                            {copiedRollback ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                            <span>{copiedRollback ? 'Copied' : 'Copy Rollback'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!activeResult?.rollback_commands?.length) return;
+                              setConfigText(activeResult.rollback_commands.join('\n'));
+                              setActiveTab('editor');
+                            }}
+                            className="btn-rollback-action primary"
+                          >
+                            <FileCode className="h-3.5 w-3.5" />
+                            <span>Load into Editor</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="rollback-code-box font-mono">
+                        <pre className="text-xs text-amber-200 leading-relaxed">
+                          {activeResult.rollback_commands?.join('\n')}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sub-Tab 5: Pre-Deployment Backup Snapshot */}
+                  {resultTab === 'backup' && (
+                    <div className="backup-snapshot-card">
+                      <div className="backup-header">
+                        <div>
+                          <h4 className="backup-title">
+                            <HardDrive className="h-4 w-4 text-indigo-400" />
+                            <span>Pre-Deployment Running-Config Snapshot</span>
+                          </h4>
+                          <p className="backup-subtitle">
+                            Captured from {activeResult.host} before configuration changes were applied.
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([activeResult.backup_config], { type: 'text/plain;charset=utf-8' });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `backup_before_deploy_${activeResult.host}_${Date.now()}.cfg`;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="btn-backup-download"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span>Download .cfg</span>
+                        </button>
+                      </div>
+
+                      <pre className="backup-code-box font-mono text-xs text-slate-300">
+                        {activeResult.backup_config}
+                      </pre>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        );
+      })()}
 
       {/* TAB 4: SESSION DEPLOYMENT HISTORY */}
       {activeTab === 'history' && (
@@ -1843,7 +2073,11 @@ export default function DeployConfigPage({ device }) {
             <div className="confirm-modal-header">
               <div className="flex items-center gap-2">
                 <Send className="h-5 w-5 text-indigo-400" />
-                <h3 className="confirm-modal-title">Confirm Configuration Deployment</h3>
+                <h3 className="confirm-modal-title">
+                  {deviceMode === 'multi'
+                    ? `Confirm Fleet Deployment (${validFleet.length} Devices)`
+                    : 'Confirm Configuration Deployment'}
+                </h3>
               </div>
               <button onClick={() => setShowConfirmModal(false)} className="modal-close-btn">
                 ×
@@ -1854,12 +2088,18 @@ export default function DeployConfigPage({ device }) {
               {/* Summary Stats Grid */}
               <div className="confirm-stats-grid">
                 <div className="confirm-stat-card">
-                  <span className="confirm-stat-label">Target Device</span>
-                  <span className="confirm-stat-val font-mono">{device.host}</span>
+                  <span className="confirm-stat-label">
+                    {deviceMode === 'multi' ? 'Fleet Targets' : 'Target Device'}
+                  </span>
+                  <span className="confirm-stat-val font-mono">
+                    {deviceMode === 'multi' ? `${validFleet.length} Devices` : device.host}
+                  </span>
                 </div>
                 <div className="confirm-stat-card">
-                  <span className="confirm-stat-label">Device Driver</span>
-                  <span className="confirm-stat-val font-mono">{device.device_type}</span>
+                  <span className="confirm-stat-label">Mode / Driver</span>
+                  <span className="confirm-stat-val font-mono">
+                    {deviceMode === 'multi' ? 'Multi-Device SSH' : device.device_type}
+                  </span>
                 </div>
                 <div className="confirm-stat-card">
                   <span className="confirm-stat-label">Commands</span>
@@ -1986,14 +2226,16 @@ export default function DeployConfigPage({ device }) {
       )}
 
       {/* STANDALONE BACKUP MODAL */}
-      {showBackupModal && manualBackupResult && (
+      {showBackupModal && (manualBackupResult || manualBackupBatchResult) && (
         <div className="modal-backdrop">
           <div className="backup-modal-box">
             <div className="confirm-modal-header">
               <div className="flex items-center gap-2">
                 <HardDrive className="h-4 w-4 text-indigo-400" />
                 <h3 className="confirm-modal-title">
-                  Running Configuration Backup &bull; {device.host}
+                  {deviceMode === 'multi' && manualBackupBatchResult
+                    ? `Fleet Running Configuration Backup (${manualBackupBatchResult.success_count}/${manualBackupBatchResult.devices_count} Succeeded)`
+                    : `Running Configuration Backup • ${device?.host}`}
                 </h3>
               </div>
               <button onClick={() => setShowBackupModal(false)} className="modal-close-btn">
@@ -2001,29 +2243,126 @@ export default function DeployConfigPage({ device }) {
               </button>
             </div>
 
-            <div className="p-4">
-              <pre className="backup-modal-code font-mono text-xs">
-                {manualBackupResult.output || manualBackupResult.error || 'No content returned'}
-              </pre>
+            {/* In Multi Mode, render device tabs */}
+            {deviceMode === 'multi' && manualBackupBatchResult && (
+              <div className="p-4 pb-0">
+                <div className="batch-device-tabs-row mb-1">
+                  {manualBackupBatchResult.results?.map((devRes, idx) => {
+                    const isSelected = selectedBackupDeviceIdx === idx;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setSelectedBackupDeviceIdx(idx)}
+                        className={`batch-dev-btn ${isSelected ? 'active' : ''} ${
+                          devRes.success ? 'success' : 'failed'
+                        }`}
+                      >
+                        <div className="flex flex-col items-start text-left">
+                          <span className="font-mono text-xs font-semibold text-white">{devRes.host}</span>
+                          <span className="text-[10px] text-slate-400">{devRes.execution_time_seconds}s</span>
+                        </div>
+                        {devRes.success ? (
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+                        ) : (
+                          <XCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="p-4 pt-2">
+              {(() => {
+                const currentRes =
+                  deviceMode === 'multi' && manualBackupBatchResult
+                    ? manualBackupBatchResult.results?.[selectedBackupDeviceIdx]
+                    : manualBackupResult;
+
+                if (!currentRes) {
+                  return <div className="text-xs text-slate-400 p-4">No backup content available.</div>;
+                }
+
+                return (
+                  <div>
+                    <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5 font-mono">
+                      <span>Host: <strong className="text-white">{currentRes.host}</strong></span>
+                      <span>Execution Time: {currentRes.execution_time_seconds || 0}s</span>
+                    </div>
+                    <pre className="backup-modal-code font-mono text-xs">
+                      {currentRes.output || currentRes.error || 'No content returned'}
+                    </pre>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="confirm-modal-footer">
-              <button
-                type="button"
-                onClick={() => {
-                  const blob = new Blob([manualBackupResult.output || ''], { type: 'text/plain;charset=utf-8' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `running_config_${device.host}_${Date.now()}.cfg`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-                className="btn-primary"
-              >
-                <Download className="h-4 w-4" />
-                <span>Download .cfg File</span>
-              </button>
+              {deviceMode === 'multi' && manualBackupBatchResult ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentRes = manualBackupBatchResult.results?.[selectedBackupDeviceIdx];
+                      if (!currentRes?.output) return;
+                      const blob = new Blob([currentRes.output], { type: 'text/plain;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `running_config_${currentRes.host}_${Date.now()}.cfg`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="btn-secondary"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download Selected ({manualBackupBatchResult.results?.[selectedBackupDeviceIdx]?.host})</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const successfulResults = manualBackupBatchResult.results?.filter((r) => r.success && r.output) || [];
+                      const timestamp = Date.now();
+                      successfulResults.forEach((res, i) => {
+                        setTimeout(() => {
+                          const blob = new Blob([res.output], { type: 'text/plain;charset=utf-8' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `running_config_${res.host}_${timestamp}.cfg`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }, i * 200);
+                      });
+                    }}
+                    className="btn-primary"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download All ({manualBackupBatchResult.success_count} Files)</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const blob = new Blob([manualBackupResult?.output || ''], { type: 'text/plain;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `running_config_${device?.host}_${Date.now()}.cfg`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="btn-primary"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Download .cfg File</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setShowBackupModal(false)}

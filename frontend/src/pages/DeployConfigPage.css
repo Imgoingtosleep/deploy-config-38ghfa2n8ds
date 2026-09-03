@@ -1475,3 +1475,57 @@
   color: #38bdf8;
   white-space: pre-wrap;
 }
+
+/* Batch Fleet Deploy Overview & Device Tabs */
+.deploy-target-badge.fleet-mode {
+  background-color: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.35);
+  color: #c7d2fe;
+}
+
+.batch-deploy-overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.batch-device-tabs-row {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.batch-dev-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background-color: #0f172a;
+  border: 1px solid #1e293b;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.batch-dev-btn:hover {
+  border-color: #475569;
+  background-color: #1e293b;
+}
+
+.batch-dev-btn.active {
+  background-color: rgba(79, 70, 229, 0.15);
+  border-color: #6366f1;
+  box-shadow: 0 0 0 1px #6366f1;
+}
+
+.batch-dev-btn.failed {
+  border-color: rgba(244, 63, 94, 0.4);
+}
+
+.batch-dev-btn.failed.active {
+  border-color: #f43f5e;
+  box-shadow: 0 0 0 1px #f43f5e;
+}

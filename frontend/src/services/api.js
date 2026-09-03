@@ -91,9 +91,35 @@ export const deployConfigurationAdvanced = async (
   return response.data;
 };
 
+export const deployConfigurationBatch = async (
+  devices,
+  configCommands,
+  saveConfig = true,
+  preCheckCommands = [],
+  postCheckCommands = [],
+  backupBeforeDeploy = false
+) => {
+  const response = await apiClient.post('/deploy/push-batch', {
+    devices,
+    config_commands: configCommands,
+    save_config: saveConfig,
+    pre_check_commands: preCheckCommands,
+    post_check_commands: postCheckCommands,
+    backup_before_deploy: backupBeforeDeploy,
+  });
+  return response.data;
+};
+
 export const backupRunningConfig = async (device) => {
   const response = await apiClient.post('/deploy/backup', {
     device,
+  });
+  return response.data;
+};
+
+export const backupBatchRunningConfig = async (devices) => {
+  const response = await apiClient.post('/deploy/backup-batch', {
+    devices,
   });
   return response.data;
 };
