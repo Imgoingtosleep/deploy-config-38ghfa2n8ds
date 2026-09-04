@@ -136,7 +136,10 @@ class NetmikoService:
         except NetmikoAuthenticationException as e:
             return False, f"Authentication failed: {str(e)}", ""
         except NetmikoTimeoutException as e:
-            return False, f"Connection timed out on {target_name}: {str(e)}", ""
+            err_str = str(e)
+            if "terminal width 511" in err_str.lower():
+                return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", ""
+            return False, f"Connection timed out on {target_name}: {err_str}", ""
         except SSHException as e:
             return False, f"SSH error: {str(e)}", ""
         except Exception as e:

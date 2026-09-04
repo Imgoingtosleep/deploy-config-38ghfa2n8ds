@@ -119,6 +119,8 @@ class NornirService:
         err_lower = err_str.lower()
         if "authentication failed" in err_lower or "auth fail" in err_lower or "bad authentication" in err_lower or "authentication to device failed" in err_lower:
             return f"Authentication Failed on {host_name}: Username, password, or enable secret is incorrect."
+        elif "terminal width 511" in err_lower or "pattern not detected: 'terminal width 511'" in err_lower:
+            return f"Device Type Mismatch on {host_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco switch (e.g. Huawei VRP, HP, Linux). Please select the correct Device Type (e.g. Huawei VRP) or run Auto Detect."
         elif "tcp connection to device failed" in err_lower or "timed-out" in err_lower or "timed out" in err_lower or "timeout" in err_lower:
             return f"Connection Timeout on {host_name}: Device did not respond within timeout (Switch is down, IP unreachable, or firewall is dropping port 22/23)."
         elif "connection refused" in err_lower:
