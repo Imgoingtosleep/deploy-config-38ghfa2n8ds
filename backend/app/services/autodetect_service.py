@@ -74,7 +74,16 @@ class AutoDetectService:
         except Exception:
             pass
 
-        # --- Stage 2 & 3: SSH Banner, Prompt Signature & Command Probe ---
+        # --- Stage 2: Pre-Auth Raw SSH Greeting Banner (< 0.1s, Zero Credentials Needed) ---
+        try:
+            detected_raw, reason_raw = cls._probe_raw_ssh_banner(host, port=port, timeout=0.8)
+            if detected_raw:
+                cls._cache[host] = detected_raw
+                return detected_raw, reason_raw
+        except Exception:
+            pass
+
+        # --- Stage 3 & 4: Authenticated SSH Banner, Prompt Signature & Command Probe ---
         is_unreachable = False
         is_auth_failure = False
         try:
@@ -178,6 +187,34 @@ class AutoDetectService:
                         conn.close()
                     except Exception:
                         pass
+        return None, ""
+
+    @classmethod
+    def _probe_raw_ssh_banner(cls, host: str, port: int = 22, timeout: float = 0.8) -> Tuple[Optional[str], str]:
+        """Read initial SSH greeting string via raw TCP socket without needing credentials"""
+        s = socket.socket()
+        s.settimeout(timeout)
+        try:
+            s.connect((host, port))
+            banner = s.recv(1024).decode("utf-8", errors="ignore").strip()
+            b_lower = banner.lower()
+            if re.search(r"huawei|vrp|quidway", b_lower):
+                return "huawei", f"Detected Huawei from pre-auth SSH greeting: {banner}"
+            if re.search(r"cisco", b_lower):
+                return "cisco_ios", f"Detected Cisco from pre-auth SSH greeting: {banner}"
+            if re.search(r"aruba|procurve", b_lower):
+                return "aruba_os", f"Detected Aruba from pre-auth SSH greeting: {banner}"
+            if re.search(r"juniper|junos", b_lower):
+                return "juniper_junos", f"Detected Juniper JunOS from pre-auth SSH greeting: {banner}"
+            if re.search(r"mikrotik|routeros", b_lower):
+                return "mikrotik_routeros", f"Detected MikroTik from pre-auth SSH greeting: {banner}"
+        except Exception:
+            pass
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
         return None, ""
 
     @classmethod
@@ -309,10 +346,14 @@ class AutoDetectService:
                 cmd_cleaned2 = clean_ansi(cmd_out2)
                 client.close()
 
-                if re.search(r"Cisco|IOS|Nexus", cmd_cleaned2, re.I):
+                if re.search(r"NX-OS|Nexus", cmd_cleaned2, re.I):
+                    return "cisco_nxos", "Confirmed Cisco NX-OS via 'show version' probe"
+                elif re.search(r"Cisco|IOS-XE|Cisco IOS", cmd_cleaned2, re.I):
                     return "cisco_ios", "Confirmed Cisco IOS via 'show version' probe"
                 elif re.search(r"Aruba|ProCurve", cmd_cleaned2, re.I):
-                    return "aruba_os", "Confirmed Aruba via 'show version' probe"
+                    return "aruba_os", "Confirmed Aruba/ProCurve via 'show version' probe"
+                elif re.search(r"JUNOS|Juniper", cmd_cleaned2, re.I):
+                    return "juniper_junos", "Confirmed Juniper JunOS via 'show version' probe"
                 elif re.search(r"Huawei|VRP", cmd_cleaned2, re.I):
                     return "huawei", "Detected Huawei VRP from command output"
                 else:
@@ -332,16 +373,20 @@ class AutoDetectService:
     def _probe_prioritized_cli(cls, device: DeviceCredentials) -> Tuple[Optional[str], str]:
         """
         Fast prioritized probe testing the top enterprise network vendors
-        in direct priority (Huawei, Cisco, Aruba, Juniper) without looping 40+ vendors.
+        in direct priority (Huawei, Cisco IOS, Cisco NX-OS, Aruba, HP Comware, Juniper, MikroTik)
+        without looping 40+ vendors.
         """
         from netmiko import ConnectHandler
 
         # Priority test sequence: (vendor_driver, probe_command, match_pattern)
         test_profiles = [
             ("huawei", "display version", r"Huawei|VRP \(R\)|CloudEngine"),
+            ("cisco_nxos", "show version", r"NX-OS|Nexus"),
             ("cisco_ios", "show version", r"Cisco IOS Software|Cisco Systems|IOS-XE"),
             ("aruba_os", "show version", r"ArubaOS|ProCurve"),
+            ("hp_comware", "display version", r"H3C|Comware|HPE Comware"),
             ("juniper_junos", "show version", r"JUNOS"),
+            ("mikrotik_routeros", "/system resource print", r"RouterOS|MikroTik"),
         ]
 
         for vendor, cmd, pattern in test_profiles:

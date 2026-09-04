@@ -76,37 +76,42 @@ except Exception:
 class NornirService:
     @staticmethod
     def _map_platform(device_type: str) -> str:
-        dev_type = (device_type or "cisco_ios").lower()
-        if "huawei" in dev_type:
-            return "huawei"
+        dev_type = (device_type or "cisco_ios").lower().strip()
+        if "cisco_nxos" in dev_type or "nxos" in dev_type:
+            return "cisco_nxos"
+        elif "cisco_ios_telnet" in dev_type or ("cisco" in dev_type and "telnet" in dev_type):
+            return "cisco_ios_telnet"
         elif "cisco" in dev_type:
-            return "cisco_ios_telnet" if "telnet" in dev_type else "cisco_ios"
-        elif "aruba" in dev_type or "hp" in dev_type:
+            return "cisco_ios"
+        elif "huawei" in dev_type:
+            return "huawei_telnet" if "telnet" in dev_type else "huawei"
+        elif "hp_comware" in dev_type or "comware" in dev_type:
+            return "hp_comware"
+        elif "aruba" in dev_type or "procurve" in dev_type:
             return "aruba_os"
-        elif "juniper" in dev_type:
+        elif "juniper" in dev_type or "junos" in dev_type:
             return "juniper_junos"
+        elif "mikrotik" in dev_type or "routeros" in dev_type:
+            return "mikrotik_routeros"
+        elif "linux" in dev_type:
+            return "linux"
         return dev_type
 
     @staticmethod
     def _get_show_run_cmd(platform: str) -> str:
         dev = (platform or "").lower()
-        if "huawei" in dev:
+        if "huawei" in dev or "comware" in dev:
             return "display current-configuration"
         elif "juniper" in dev:
             return "show configuration"
+        elif "mikrotik" in dev:
+            return "/export"
         else:
             return "show running-config"
 
     @staticmethod
     def _extract_exception(multi_result: Any) -> Any:
-        """Extract the exact underlying exception from Nornir MultiResult subtasks"""
         if hasattr(multi_result, "__iter__"):
-            for r in multi_result:
-                exc = getattr(r, "exception", None)
-                if exc:
-                    s = str(exc)
-                    if "Subtask" not in s and s.strip():
-                        return exc
             for r in multi_result:
                 if getattr(r, "exception", None):
                     return r.exception
@@ -135,13 +140,14 @@ class NornirService:
 
     @classmethod
     def resolve_vendor_command(cls, command: str, device_type: str) -> str:
-        """Resolve generic commands to vendor-specific syntax"""
+        """Resolve generic commands to vendor-specific syntax across major vendors"""
         cmd = command.strip()
         dev_type = (device_type or "").lower()
-        is_huawei = "huawei" in dev_type
+        is_huawei = "huawei" in dev_type or "comware" in dev_type
+        is_juniper = "juniper" in dev_type or "junos" in dev_type
+        is_mikrotik = "mikrotik" in dev_type or "routeros" in dev_type
 
         if is_huawei:
-            # Map Cisco show commands to Huawei display commands
             cisco_to_huawei = {
                 "show ip interface brief": "display ip interface brief",
                 "show ip int brief": "display ip interface brief",
@@ -158,6 +164,39 @@ class NornirService:
                 "show logging": "display logbuffer",
             }
             return cisco_to_huawei.get(cmd.lower(), cmd)
+
+        if is_juniper:
+            cisco_to_juniper = {
+                "show ip interface brief": "show interfaces terse",
+                "show ip int brief": "show interfaces terse",
+                "show interfaces brief": "show interfaces terse",
+                "show int brief": "show interfaces terse",
+                "show running-config": "show configuration",
+                "show run": "show configuration",
+                "show version": "show version",
+                "show ver": "show version",
+                "show ip route": "show route",
+                "show arp": "show arp",
+                "show logging": "show log messages",
+            }
+            return cisco_to_juniper.get(cmd.lower(), cmd)
+
+        if is_mikrotik:
+            cisco_to_mikrotik = {
+                "show ip interface brief": "/ip address print",
+                "show ip int brief": "/ip address print",
+                "show interfaces brief": "/interface print",
+                "show int brief": "/interface print",
+                "show running-config": "/export",
+                "show run": "/export",
+                "show version": "/system resource print",
+                "show ver": "/system resource print",
+                "show ip route": "/ip route print",
+                "show arp": "/ip arp print",
+                "show logging": "/log print",
+            }
+            return cisco_to_mikrotik.get(cmd.lower(), cmd)
+
         return cmd
 
     @classmethod
