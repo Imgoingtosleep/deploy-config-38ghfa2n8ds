@@ -1378,5 +1378,217 @@
   box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.4);
 }
 
+.juniper-textarea {
+  color: #6ee7b7;
+  border-color: rgba(16, 185, 129, 0.3);
+}
 
+.juniper-textarea:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+}
 
+.aruba-textarea {
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.aruba-textarea:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.4);
+}
+
+.mikrotik-textarea {
+  color: #d8b4fe;
+  border-color: rgba(168, 85, 247, 0.3);
+}
+
+.mikrotik-textarea:focus {
+  border-color: #a855f7;
+  box-shadow: 0 0 0 1px rgba(168, 85, 247, 0.4);
+}
+
+/* Vendor Tabs Bar */
+.vendor-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+  overflow-x: auto;
+}
+
+.vendor-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: rgba(15, 23, 42, 0.6);
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.vendor-tab-btn:hover {
+  background: rgba(30, 41, 59, 0.8);
+  color: #f1f5f9;
+}
+
+.vendor-tab-btn.active-huawei {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: rgba(244, 63, 94, 0.5);
+  color: #fb7185;
+}
+
+.vendor-tab-btn.active-cisco {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #38bdf8;
+}
+
+.vendor-tab-btn.active-juniper {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: #34d399;
+}
+
+.vendor-tab-btn.active-aruba {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fbbf24;
+}
+
+.vendor-tab-btn.active-mikrotik {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.5);
+  color: #c084fc;
+}
+
+.btn-auto-translate {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(99, 102, 241, 0.25));
+  border: 1px solid rgba(244, 63, 94, 0.4);
+  color: #fca5a5;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-auto-translate:hover {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.35), rgba(99, 102, 241, 0.4));
+  border-color: rgba(244, 63, 94, 0.7);
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.3);
+}
+
+.btn-close-all-vendors {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  background: rgba(100, 116, 139, 0.15);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-close-all-vendors:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.vendor-count-pill {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Add Vendor Toolbar & Action Buttons */
+.add-vendor-toolbar {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.btn-add-vendor {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+}
+
+.btn-add-vendor:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.2);
+}
+
+.btn-add-vendor.cisco {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+}
+
+.btn-add-vendor.juniper {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.btn-add-vendor.aruba {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.btn-add-vendor.mikrotik {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.35);
+  color: #c084fc;
+}
+
+.btn-remove-vendor {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-remove-vendor:hover {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(248, 113, 113, 0.1);
+}

@@ -14,8 +14,8 @@ class ParserService:
         if not raw_output:
             return info
 
-        # --- HUAWEI PARSER ---
-        if "huawei" in device_type.lower():
+        # --- HUAWEI / COMWARE PARSER ---
+        if "huawei" in device_type.lower() or "comware" in device_type.lower():
             # Model e.g. "HUAWEI S5720-28P-SI-AC Routing Switch" or "S5700-28P-LI-AC"
             model_match = re.search(r"HUAWEI\s+([\w\-]+)\s+(?:Routing\s+)?Switch", raw_output, re.IGNORECASE)
             if not model_match:
@@ -27,6 +27,8 @@ class ParserService:
 
             # Version e.g. "VRP (R) software, Version 5.170 (V200R019C00SPC500)"
             ver_match = re.search(r"VRP\s*\(R\)\s*software,\s*Version\s*([\w\.\(\)]+)", raw_output, re.IGNORECASE)
+            if not ver_match:
+                ver_match = re.search(r"Comware\s+Software,\s+Version\s+([\w\.\(\)]+)", raw_output, re.IGNORECASE)
             if ver_match:
                 info["version"] = ver_match.group(1)
 
@@ -35,21 +37,62 @@ class ParserService:
             if uptime_match:
                 info["uptime"] = uptime_match.group(1).strip()
 
-        # --- CISCO PARSER ---
-        else:
-            # Model e.g. "cisco WS-C2960X-24TD-L" or "Model number : WS-C3850-24T"
-            model_match = re.search(r"[Cc]isco\s+([\w\-]+)\s+\(revision", raw_output)
-            if not model_match:
-                model_match = re.search(r"Model\s+(?:Number|number)\s*:\s*([\w\-]+)", raw_output)
+        # --- JUNIPER PARSER ---
+        elif "juniper" in device_type.lower() or "junos" in device_type.lower():
+            model_match = re.search(r"Model:\s*([\w\-]+)", raw_output, re.IGNORECASE)
             if model_match:
-                info["model"] = model_match.group(1)
-
-            # Version e.g. "Cisco IOS Software ... Version 15.2(2)E7"
-            ver_match = re.search(r"Version\s+([\w\.\(\)\:]+),", raw_output)
+                info["model"] = f"Juniper {model_match.group(1).upper()}"
+            
+            ver_match = re.search(r"Junos:\s*([\w\.\-]+)", raw_output, re.IGNORECASE)
+            if not ver_match:
+                ver_match = re.search(r"JUNOS\s+Software\s+Release\s*\[?([\w\.\-]+)\]?", raw_output, re.IGNORECASE)
             if ver_match:
                 info["version"] = ver_match.group(1)
 
-            # Uptime e.g. "Switch uptime is 2 weeks, 3 days, 4 hours, 12 minutes"
+            uptime_match = re.search(r"(?:System booted:|uptime is)\s*([^\r\n]+)", raw_output, re.IGNORECASE)
+            if uptime_match:
+                info["uptime"] = uptime_match.group(1).strip()
+
+        # --- ARUBA / PROCURVE PARSER ---
+        elif "aruba" in device_type.lower() or "procurve" in device_type.lower():
+            model_match = re.search(r"(?:ArubaOS-CX|Aruba|ProCurve|HPE)\s+([\w\-]+)", raw_output, re.IGNORECASE)
+            if model_match:
+                info["model"] = f"Aruba {model_match.group(1)}"
+            ver_match = re.search(r"(?:version|revision|release)\s+([A-Z0-9\.\_]+)", raw_output, re.IGNORECASE)
+            if ver_match:
+                info["version"] = ver_match.group(1)
+            uptime_match = re.search(r"uptime\s+is\s+([^\r\n]+)", raw_output, re.IGNORECASE)
+            if uptime_match:
+                info["uptime"] = uptime_match.group(1).strip()
+
+        # --- MIKROTIK PARSER ---
+        elif "mikrotik" in device_type.lower() or "routeros" in device_type.lower():
+            model_match = re.search(r"(?:board-name|model):\s*([\w\-]+)", raw_output, re.IGNORECASE)
+            if model_match:
+                info["model"] = f"MikroTik {model_match.group(1)}"
+            ver_match = re.search(r"version:\s*([\w\.\-]+)", raw_output, re.IGNORECASE)
+            if ver_match:
+                info["version"] = ver_match.group(1)
+            uptime_match = re.search(r"uptime:\s*([^\r\n]+)", raw_output, re.IGNORECASE)
+            if uptime_match:
+                info["uptime"] = uptime_match.group(1).strip()
+
+        # --- CISCO IOS / NX-OS PARSER ---
+        else:
+            model_match = re.search(r"[Cc]isco\s+([\w\-]+)\s+\(revision", raw_output)
+            if not model_match:
+                model_match = re.search(r"Model\s+(?:Number|number)\s*:\s*([\w\-]+)", raw_output)
+            if not model_match:
+                model_match = re.search(r"cisco\s+Nexus\s*([\w\-]+)", raw_output, re.IGNORECASE)
+            if model_match:
+                info["model"] = model_match.group(1)
+
+            ver_match = re.search(r"Version\s+([\w\.\(\)\:]+),", raw_output)
+            if not ver_match:
+                ver_match = re.search(r"system:\s+version\s+([\w\.\(\)]+)", raw_output, re.IGNORECASE)
+            if ver_match:
+                info["version"] = ver_match.group(1)
+
             uptime_match = re.search(r"uptime\s+is\s+([^\r\n]+)", raw_output, re.IGNORECASE)
             if uptime_match:
                 info["uptime"] = uptime_match.group(1).strip()
@@ -69,11 +112,24 @@ class ParserService:
 
         # --- Parse CPU ---
         if cpu_output:
-            # Huawei format: "CPU Usage : 12% Max: 45%" or "CPU utilization : 8%"
+            # Huawei / Comware format: "CPU Usage : 12% Max: 45%"
             huawei_cpu = re.search(r"CPU\s+Usage\s*:\s*(\d+)%(?:.*?Max\s*:\s*(\d+)%)?", cpu_output, re.IGNORECASE)
             if not huawei_cpu:
                 huawei_cpu = re.search(r"CPU\s+(?:Usage|utilization)\s*(?:is)?\s*:\s*(\d+)%", cpu_output, re.IGNORECASE)
             
+            # Juniper format: "CPU utilization: 12 percent" or "User 8 percent"
+            juniper_cpu = re.search(r"CPU\s+utilization\s*:\s*(\d+)%", cpu_output, re.IGNORECASE)
+            if not juniper_cpu:
+                juniper_cpu = re.search(r"CPU\s+utilization\s+(\d+)\s+percent", cpu_output, re.IGNORECASE)
+            if not juniper_cpu:
+                juniper_cpu = re.search(r"User\s+(\d+)\s*%", cpu_output, re.IGNORECASE)
+
+            # Aruba format: "12% busy" or "CPU utilization: 12%"
+            aruba_cpu = re.search(r"(\d+)%\s+busy", cpu_output, re.IGNORECASE)
+
+            # MikroTik format: "cpu-load: 12%"
+            mikrotik_cpu = re.search(r"cpu-load:\s*(\d+)%", cpu_output, re.IGNORECASE)
+
             # Cisco format: "five seconds: 12%/0%; one minute: 8%; five minutes: 6%"
             cisco_cpu = re.search(r"five\s+seconds\s*:\s*(\d+)%", cpu_output, re.IGNORECASE)
 
@@ -83,20 +139,55 @@ class ParserService:
                     data["cpu_max_percent"] = float(huawei_cpu.group(2))
                 else:
                     data["cpu_max_percent"] = data["cpu_percent"]
+            elif juniper_cpu:
+                data["cpu_percent"] = float(juniper_cpu.group(1))
+                data["cpu_max_percent"] = data["cpu_percent"]
+            elif aruba_cpu:
+                data["cpu_percent"] = float(aruba_cpu.group(1))
+                data["cpu_max_percent"] = data["cpu_percent"]
+            elif mikrotik_cpu:
+                data["cpu_percent"] = float(mikrotik_cpu.group(1))
+                data["cpu_max_percent"] = data["cpu_percent"]
             elif cisco_cpu:
                 data["cpu_percent"] = float(cisco_cpu.group(1))
                 data["cpu_max_percent"] = data["cpu_percent"]
 
         # --- Parse Memory ---
         if mem_output:
-            # Huawei format: "Memory Using Percentage Is: 32%" or "Memory Using Percentage : 32%"
+            # Huawei / Comware: "Memory Using Percentage Is: 32%"
             huawei_mem = re.search(r"Memory\s+Using\s+Percentage\s*(?:Is)?\s*:\s*(\d+)%", mem_output, re.IGNORECASE)
             
+            # Juniper format: "Memory utilization 35 percent" or "Memory utilization: 35%"
+            juniper_mem = re.search(r"Memory\s+utilization\s*(?:is)?\s*:\s*(\d+)%", mem_output, re.IGNORECASE)
+            if not juniper_mem:
+                juniper_mem = re.search(r"Memory\s+utilization\s+(\d+)\s+percent", mem_output, re.IGNORECASE)
+
+            # Aruba format: "Memory : 45% used" or "Total Memory : ... Free Memory : ..."
+            aruba_mem = re.search(r"Memory\s*:\s*(\d+)%\s+used", mem_output, re.IGNORECASE)
+
+            # MikroTik format: "total-memory: ... free-memory: ..."
+            mikrotik_total = re.search(r"total-memory:\s*([\d\.]+)\s*(?:MiB|KiB|MB|KB|B)?", mem_output, re.IGNORECASE)
+            mikrotik_free = re.search(r"free-memory:\s*([\d\.]+)\s*(?:MiB|KiB|MB|KB|B)?", mem_output, re.IGNORECASE)
+
             # Cisco format: "Processor Pool Total: 12345678 Used: 4567890 Free: 7777788"
             cisco_mem = re.search(r"Total\s*:\s*(\d+)\s+Used\s*:\s*(\d+)", mem_output, re.IGNORECASE)
 
             if huawei_mem:
                 data["memory_percent"] = float(huawei_mem.group(1))
+            elif juniper_mem:
+                data["memory_percent"] = float(juniper_mem.group(1))
+            elif aruba_mem:
+                data["memory_percent"] = float(aruba_mem.group(1))
+            elif mikrotik_total and mikrotik_free:
+                try:
+                    tot = float(mikrotik_total.group(1))
+                    fre = float(mikrotik_free.group(1))
+                    if tot > 0:
+                        data["memory_percent"] = round(((tot - fre) / tot) * 100, 1)
+                        data["memory_total_mb"] = round(tot, 1)
+                        data["memory_used_mb"] = round(tot - fre, 1)
+                except Exception:
+                    pass
             elif cisco_mem:
                 total_bytes = float(cisco_mem.group(1))
                 used_bytes = float(cisco_mem.group(2))
@@ -122,9 +213,29 @@ class ParserService:
         lines = raw_output.splitlines()
         for line in lines:
             line_str = line.strip()
-            # Match physical interfaces e.g. GigabitEthernet0/0/1, GE0/0/1, FastEthernet0/1, Eth0/1, XGE0/0/1
+
+            # 1. Juniper JunOS interfaces e.g. "ge-0/0/0.0   up   up" or "xe-0/1/0   up   down"
+            m_junos = re.search(r"^((?:ge|xe|et|fe|so|lo|ae|irb|vlan)\-?\d+[\/\d\.]*)\s+(up|down)\s+(up|down)", line_str, re.I)
+            if m_junos:
+                port_name = m_junos.group(1)
+                admin_stat = m_junos.group(2).upper()
+                link_stat = m_junos.group(3).upper()
+                is_up = (admin_stat == "UP" and link_stat == "UP")
+                summary["total_ports"] += 1
+                if is_up:
+                    summary["up_count"] += 1
+                else:
+                    summary["down_count"] += 1
+                summary["ports"].append({
+                    "port": port_name,
+                    "status": "UP" if is_up else "DOWN",
+                    "raw_status": f"{admin_stat}/{link_stat}",
+                })
+                continue
+
+            # 2. Cisco / Huawei physical interfaces e.g. GigabitEthernet0/0/1, GE0/0/1, Eth0/1
             match_iface = re.search(
-                r"^((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|GE|XGE|Eth|FE|Gi|Te|Fa)\d+(?:/\d+)*)\s+(\S+)\s+(\S+)",
+                r"^((?:GigabitEthernet|FastEthernet|TenGigabitEthernet|GE|XGE|Eth|FE|Gi|Te|Fa|Ethernet)\d+(?:/\d+)*)\s+(\S+)\s+(\S+)",
                 line_str,
                 re.IGNORECASE
             )
@@ -146,6 +257,24 @@ class ParserService:
                     "status": "UP" if is_up else "DOWN",
                     "raw_status": status_raw,
                 })
+                continue
+
+            # 3. ArubaOS-CX / ProCurve e.g. "1/1/1   Up   Yes" or "A1  1000T  Up  Yes"
+            m_aruba = re.search(r"^(\d+(?:/\d+)*|[A-Z]\d+)\s+.*?\s+(Up|Down)\s+(Yes|No|Enabled)", line_str, re.I)
+            if m_aruba:
+                port_name = m_aruba.group(1)
+                is_up = m_aruba.group(2).upper() == "UP"
+                summary["total_ports"] += 1
+                if is_up:
+                    summary["up_count"] += 1
+                else:
+                    summary["down_count"] += 1
+                summary["ports"].append({
+                    "port": port_name,
+                    "status": "UP" if is_up else "DOWN",
+                    "raw_status": m_aruba.group(2),
+                })
+                continue
 
         return summary
 
@@ -206,15 +335,15 @@ class ParserService:
             if not out:
                 continue
 
-            if "version" in cmd:
+            if "version" in cmd or "system status" in cmd:
                 version_text = out
-            elif "cpu" in cmd:
+            elif "cpu" in cmd or "routing-engine" in cmd or "resource" in cmd:
                 cpu_text = out
-            elif "memory" in cmd or "mem" in cmd:
+            elif "memory" in cmd or "mem" in cmd or "storage" in cmd:
                 mem_text = out
-            elif "interface" in cmd or "int brief" in cmd or "status" in cmd:
+            elif "interface" in cmd or "int brief" in cmd or "status" in cmd or "terse" in cmd:
                 interface_text += "\n" + out
-            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd or "temp" in cmd or "transceiver" in cmd or "optic" in cmd:
+            elif "device" in cmd or "env" in cmd or "power" in cmd or "fan" in cmd or "temp" in cmd or "transceiver" in cmd or "optic" in cmd or "chassis" in cmd or "hardware" in cmd or "health" in cmd:
                 hw_text += "\n" + out
 
         # If memory text was not in a separate command, check if it's in cpu or version output

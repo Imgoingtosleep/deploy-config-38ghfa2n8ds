@@ -81,50 +81,5 @@
     ],
     "created_at": "2026-09-03 07:41:59",
     "updated_at": null
-  },
-  {
-    "id": "pb-0c7e27c4",
-    "name": "5245 225",
-    "description": "",
-    "category": "custom",
-    "commands": [
-      {
-        "id": "cmd-1",
-        "name": "show version",
-        "cisco": "show version",
-        "huawei": "display version",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-2",
-        "name": "show ip interface brief",
-        "cisco": "show ip interface brief",
-        "huawei": "display ip interface brief",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-3",
-        "name": "show inventory",
-        "cisco": "show inventory",
-        "huawei": "display device",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-4",
-        "name": "show processes cpu",
-        "cisco": "show processes cpu",
-        "huawei": "display cpu-usage",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-5",
-        "name": "show cdp neighbors",
-        "cisco": "show cdp neighbors",
-        "huawei": "display lldp neighbor brief",
-        "isCustom": false
-      }
-    ],
-    "created_at": "2026-09-04 02:26:14",
-    "updated_at": null
   }
 ]

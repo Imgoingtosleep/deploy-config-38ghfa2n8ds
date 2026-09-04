@@ -82,6 +82,154 @@ HEALTH_CHECK_PRESETS = {
             "display trapbuffer",
         ],
     },
+    "juniper_junos": {
+        "standard": [
+            "show version",
+            "show interfaces terse",
+            "show chassis routing-engine",
+            "show chassis environment",
+            "show lldp neighbors",
+            "show system storage",
+        ],
+        "interfaces": [
+            "show interfaces terse",
+            "show interfaces descriptions",
+            "show interfaces extensive",
+        ],
+        "transceiver": [
+            "show interfaces diagnostics optics",
+        ],
+        "environment": [
+            "show chassis environment",
+            "show chassis routing-engine",
+            "show chassis hardware",
+            "show system storage",
+        ],
+        "routing": [
+            "show route summary",
+            "show route",
+            "show arp",
+            "show bfd session",
+        ],
+        "logs": [
+            "show log messages | last 50",
+        ],
+    },
+    "cisco_nxos": {
+        "standard": [
+            "show version",
+            "show ip interface brief",
+            "show interface status",
+            "show cdp neighbors",
+            "show system resources",
+            "show environment",
+        ],
+        "interfaces": [
+            "show ip interface brief",
+            "show interface status",
+            "show interface description",
+        ],
+        "transceiver": [
+            "show interface transceiver details",
+        ],
+        "environment": [
+            "show environment",
+            "show system resources",
+            "show module",
+        ],
+        "routing": [
+            "show ip route",
+            "show ip arp",
+        ],
+        "logs": [
+            "show logging last 50",
+        ],
+    },
+    "aruba_os": {
+        "standard": [
+            "show version",
+            "show interface brief",
+            "show system",
+            "show cpu",
+            "show lldp info remote-device",
+        ],
+        "interfaces": [
+            "show interface brief",
+            "show interface status",
+            "show interface custom",
+        ],
+        "transceiver": [
+            "show interface transceiver",
+        ],
+        "environment": [
+            "show system temperature",
+            "show system fan",
+            "show system power-supply",
+        ],
+        "routing": [
+            "show ip route",
+            "show arp",
+        ],
+        "logs": [
+            "show logging -r | include 50",
+        ],
+    },
+    "hp_comware": {
+        "standard": [
+            "display version",
+            "display interface brief",
+            "display device",
+            "display cpu-usage",
+            "display lldp neighbor list",
+        ],
+        "interfaces": [
+            "display interface brief",
+            "display ip interface brief",
+        ],
+        "transceiver": [
+            "display transceiver verbose",
+            "display transceiver diagnosis interface",
+        ],
+        "environment": [
+            "display device",
+            "display environment",
+            "display cpu-usage",
+            "display memory",
+        ],
+        "routing": [
+            "display ip routing-table",
+            "display arp all",
+        ],
+        "logs": [
+            "display logbuffer",
+        ],
+    },
+    "mikrotik_routeros": {
+        "standard": [
+            "/system resource print",
+            "/interface print brief",
+            "/system health print",
+            "/ip address print",
+        ],
+        "interfaces": [
+            "/interface print",
+            "/ip address print",
+        ],
+        "transceiver": [
+            "/interface ethernet monitor [find] once",
+        ],
+        "environment": [
+            "/system health print",
+            "/system resource print",
+        ],
+        "routing": [
+            "/ip route print",
+            "/ip arp print",
+        ],
+        "logs": [
+            "/log print",
+        ],
+    },
 }
 
 def _execute_device_health_check(
@@ -100,15 +248,35 @@ def _execute_device_health_check(
         except Exception:
             from app.core.config import settings
             device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
-    driver_group = "huawei" if "huawei" in device_type else "cisco_ios"
+    
+    # Resolve vendor driver group for presets
+    from app.services.command_translator import CommandTranslator
+    driver_group = CommandTranslator._normalize_driver_group(device_type)
 
+    short_aliases = {
+        "cisco_ios": "cisco",
+        "cisco_nxos": "nxos",
+        "juniper_junos": "juniper",
+        "aruba_os": "aruba",
+        "hp_comware": "comware",
+        "mikrotik_routeros": "mikrotik",
+        "huawei": "huawei",
+    }
+    short = short_aliases.get(driver_group, "")
 
-    # 1. Determine commands to run
-    if vendor_commands and driver_group in vendor_commands and vendor_commands[driver_group]:
-        commands = vendor_commands[driver_group]
+    v_cmds = None
+    if vendor_commands:
+        v_cmds = (
+            vendor_commands.get(driver_group)
+            or vendor_commands.get(device_type)
+            or vendor_commands.get(short)
+        )
+
+    from app.services.nornir_service import NornirService
+    if v_cmds and len(v_cmds) > 0:
+        commands = [NornirService.resolve_vendor_command(cmd, device_type) for cmd in v_cmds]
     elif custom_commands and len(custom_commands) > 0:
-        # Resolve vendor commands if user supplied generic commands
-        from app.services.nornir_service import NornirService
+        # Resolve vendor commands if user supplied generic/Huawei commands
         commands = [NornirService.resolve_vendor_command(cmd, device_type) for cmd in custom_commands]
     else:
         presets_for_driver = HEALTH_CHECK_PRESETS.get(driver_group, HEALTH_CHECK_PRESETS["cisco_ios"])

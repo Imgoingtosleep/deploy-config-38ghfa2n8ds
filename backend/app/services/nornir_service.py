@@ -139,65 +139,14 @@ class NornirService:
         return f"Execution Error on {host_name}: {err_str}"
 
     @classmethod
-    def resolve_vendor_command(cls, command: str, device_type: str) -> str:
-        """Resolve generic commands to vendor-specific syntax across major vendors"""
+    def resolve_vendor_command(cls, command: str, device_type: str, source_vendor: str = "auto") -> str:
+        """Resolve generic, Huawei, or Cisco commands to vendor-specific syntax across major vendors"""
+        from app.services.command_translator import CommandTranslator
         cmd = command.strip()
-        dev_type = (device_type or "").lower()
-        is_huawei = "huawei" in dev_type or "comware" in dev_type
-        is_juniper = "juniper" in dev_type or "junos" in dev_type
-        is_mikrotik = "mikrotik" in dev_type or "routeros" in dev_type
+        if not cmd:
+            return ""
+        return CommandTranslator.translate_command(cmd, source_vendor=source_vendor, target_vendor=device_type)
 
-        if is_huawei:
-            cisco_to_huawei = {
-                "show ip interface brief": "display ip interface brief",
-                "show ip int brief": "display ip interface brief",
-                "show interfaces brief": "display interface brief",
-                "show int brief": "display interface brief",
-                "show running-config": "display current-configuration",
-                "show run": "display current-configuration",
-                "show version": "display version",
-                "show ver": "display version",
-                "show vlan": "display vlan",
-                "show ip route": "display ip routing-table",
-                "show mac address-table": "display mac-address",
-                "show arp": "display arp",
-                "show logging": "display logbuffer",
-            }
-            return cisco_to_huawei.get(cmd.lower(), cmd)
-
-        if is_juniper:
-            cisco_to_juniper = {
-                "show ip interface brief": "show interfaces terse",
-                "show ip int brief": "show interfaces terse",
-                "show interfaces brief": "show interfaces terse",
-                "show int brief": "show interfaces terse",
-                "show running-config": "show configuration",
-                "show run": "show configuration",
-                "show version": "show version",
-                "show ver": "show version",
-                "show ip route": "show route",
-                "show arp": "show arp",
-                "show logging": "show log messages",
-            }
-            return cisco_to_juniper.get(cmd.lower(), cmd)
-
-        if is_mikrotik:
-            cisco_to_mikrotik = {
-                "show ip interface brief": "/ip address print",
-                "show ip int brief": "/ip address print",
-                "show interfaces brief": "/interface print",
-                "show int brief": "/interface print",
-                "show running-config": "/export",
-                "show run": "/export",
-                "show version": "/system resource print",
-                "show ver": "/system resource print",
-                "show ip route": "/ip route print",
-                "show arp": "/ip arp print",
-                "show logging": "/log print",
-            }
-            return cisco_to_mikrotik.get(cmd.lower(), cmd)
-
-        return cmd
 
     @classmethod
     def init_nornir(cls, devices: List[DeviceCredentials], num_workers: int = None) -> Any:
@@ -283,19 +232,38 @@ class NornirService:
         def _nornir_cmd_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
             dev_type = task.host.platform or "cisco_ios"
-            vendor = "huawei" if "huawei" in dev_type else "cisco_ios"
+            from app.services.command_translator import CommandTranslator
+            driver_group = CommandTranslator._normalize_driver_group(dev_type)
+
+            short_aliases = {
+                "cisco_ios": "cisco",
+                "cisco_nxos": "nxos",
+                "juniper_junos": "juniper",
+                "aruba_os": "aruba",
+                "hp_comware": "comware",
+                "mikrotik_routeros": "mikrotik",
+                "huawei": "huawei",
+            }
+            short = short_aliases.get(driver_group, "")
 
             # Check if specific vendor override was given
-            if vendor_commands and vendor in vendor_commands and vendor_commands[vendor]:
-                actual_cmd = vendor_commands[vendor]
-            elif huawei_command and vendor == "huawei":
-                actual_cmd = huawei_command
-            elif cisco_command and vendor == "cisco_ios":
-                actual_cmd = cisco_command
-            elif vendor_resolve:
-                actual_cmd = cls.resolve_vendor_command(command, dev_type)
-            else:
-                actual_cmd = command or ""
+            actual_cmd = None
+            if vendor_commands:
+                actual_cmd = (
+                    vendor_commands.get(driver_group)
+                    or vendor_commands.get(dev_type)
+                    or vendor_commands.get(short)
+                )
+
+            if not actual_cmd:
+                if huawei_command and driver_group == "huawei":
+                    actual_cmd = huawei_command
+                elif cisco_command and driver_group == "cisco_ios":
+                    actual_cmd = cisco_command
+                elif vendor_resolve:
+                    actual_cmd = cls.resolve_vendor_command(command, dev_type)
+                else:
+                    actual_cmd = command or ""
 
             res = task.run(
                 task=netmiko_send_command,
@@ -424,11 +392,12 @@ class NornirService:
             # 2. Pre-Checks
             for cmd in (pre_check_commands or []):
                 cmd_st = time.time()
+                actual_pre = cls.resolve_vendor_command(cmd, dev_type)
                 try:
-                    c_res = task.run(task=netmiko_send_command, command_string=cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                    c_res = task.run(task=netmiko_send_command, command_string=actual_pre, read_timeout=settings.DEFAULT_TIMEOUT)
                     pre_res_list.append(CommandResponse(
                         host=task.host.name,
-                        command=cmd,
+                        command=actual_pre,
                         output=c_res.result or "",
                         success=True,
                         execution_time_seconds=round(time.time() - cmd_st, 2),
@@ -436,7 +405,7 @@ class NornirService:
                 except Exception as pe:
                     pre_res_list.append(CommandResponse(
                         host=task.host.name,
-                        command=cmd,
+                        command=actual_pre,
                         output="",
                         success=False,
                         error=str(pe),
@@ -465,11 +434,12 @@ class NornirService:
             # 5. Post-Checks
             for cmd in (post_check_commands or []):
                 cmd_st = time.time()
+                actual_post = cls.resolve_vendor_command(cmd, dev_type)
                 try:
-                    c_res = task.run(task=netmiko_send_command, command_string=cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                    c_res = task.run(task=netmiko_send_command, command_string=actual_post, read_timeout=settings.DEFAULT_TIMEOUT)
                     post_res_list.append(CommandResponse(
                         host=task.host.name,
-                        command=cmd,
+                        command=actual_post,
                         output=c_res.result or "",
                         success=True,
                         execution_time_seconds=round(time.time() - cmd_st, 2),
@@ -477,7 +447,7 @@ class NornirService:
                 except Exception as pe:
                     post_res_list.append(CommandResponse(
                         host=task.host.name,
-                        command=cmd,
+                        command=actual_post,
                         output="",
                         success=False,
                         error=str(pe),

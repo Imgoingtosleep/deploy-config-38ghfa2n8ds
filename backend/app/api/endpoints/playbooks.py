@@ -1,7 +1,14 @@
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException
-from app.schemas.playbook import PlaybookCreate, PlaybookUpdate, PlaybookResponse
+from app.schemas.playbook import (
+    PlaybookCreate,
+    PlaybookUpdate,
+    PlaybookResponse,
+    AutoTranslateRequest,
+    AutoTranslateResponse,
+)
 from app.services.playbook_service import PlaybookService
+from app.services.command_translator import CommandTranslator
 
 router = APIRouter()
 
@@ -17,6 +24,24 @@ def get_playbook(playbook_id: str):
     if not pb:
         raise HTTPException(status_code=404, detail=f"Playbook {playbook_id} not found")
     return pb
+
+@router.post("/auto-translate", response_model=AutoTranslateResponse)
+def auto_translate_commands(request: AutoTranslateRequest):
+    """
+    Auto-translate commands from Huawei (primary) or any vendor
+    to all target vendors (Cisco, Juniper, Aruba, MikroTik, Comware).
+    """
+    clean_cmds = [c.strip() for c in request.commands if c.strip()]
+    translations = CommandTranslator.translate_batch(
+        commands=clean_cmds,
+        source_vendor=request.source_vendor or "huawei",
+        target_vendors=request.target_vendors,
+    )
+    return AutoTranslateResponse(
+        source_vendor=request.source_vendor or "huawei",
+        commands=clean_cmds,
+        translations=translations,
+    )
 
 @router.post("", response_model=PlaybookResponse)
 def create_playbook(request: PlaybookCreate):

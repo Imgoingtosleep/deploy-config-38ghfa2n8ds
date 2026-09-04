@@ -36,6 +36,7 @@ class JobPaginatedResultsResponse(BaseModel):
 class SingleCommandRequest(BaseModel):
     device: DeviceCredentials
     command: str = Field(..., description="Single CLI command e.g. 'show ip int brief'")
+    vendor_commands: Optional[Dict[str, str]] = Field(default=None, description="Optional vendor-specific command overrides")
 
 class MultipleCommandsRequest(BaseModel):
     device: DeviceCredentials

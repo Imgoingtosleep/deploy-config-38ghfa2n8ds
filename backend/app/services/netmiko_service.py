@@ -227,10 +227,12 @@ class NetmikoService:
     @staticmethod
     def _get_show_run_cmd(device_type: str) -> str:
         dev_type = (device_type or "").lower()
-        if "huawei" in dev_type:
+        if "huawei" in dev_type or "comware" in dev_type:
             return "display current-configuration"
         elif "juniper" in dev_type:
             return "show configuration"
+        elif "mikrotik" in dev_type or "routeros" in dev_type:
+            return "/export"
         elif "hp" in dev_type or "aruba" in dev_type:
             return "show running-config"
         else:
@@ -433,13 +435,15 @@ class NetmikoService:
                         step_logs[-1]["error"] = str(be)
 
                 # 2. Pre-check commands
+                from app.services.command_translator import CommandTranslator
                 for cmd in pre_check_commands:
                     cmd_start = time.time()
+                    actual_pre = CommandTranslator.translate_command(cmd, target_vendor=device.device_type)
                     try:
-                        out = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        out = net_connect.send_command(actual_pre, read_timeout=settings.DEFAULT_TIMEOUT)
                         pre_results.append({
                             "host": target_name,
-                            "command": cmd,
+                            "command": actual_pre,
                             "output": out,
                             "success": True,
                             "error": None,
@@ -448,7 +452,7 @@ class NetmikoService:
                     except Exception as pe:
                         pre_results.append({
                             "host": target_name,
-                            "command": cmd,
+                            "command": actual_pre,
                             "output": "",
                             "success": False,
                             "error": str(pe),
@@ -475,11 +479,12 @@ class NetmikoService:
                 # 5. Post-check commands
                 for cmd in post_check_commands:
                     cmd_start = time.time()
+                    actual_post = CommandTranslator.translate_command(cmd, target_vendor=device.device_type)
                     try:
-                        out = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        out = net_connect.send_command(actual_post, read_timeout=settings.DEFAULT_TIMEOUT)
                         post_results.append({
                             "host": target_name,
-                            "command": cmd,
+                            "command": actual_post,
                             "output": out,
                             "success": True,
                             "error": None,
@@ -488,7 +493,7 @@ class NetmikoService:
                     except Exception as pe:
                         post_results.append({
                             "host": target_name,
-                            "command": cmd,
+                            "command": actual_post,
                             "output": "",
                             "success": False,
                             "error": str(pe),

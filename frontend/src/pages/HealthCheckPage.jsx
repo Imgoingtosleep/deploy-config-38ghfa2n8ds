@@ -27,6 +27,7 @@ import {
   Terminal,
   Edit2,
   X,
+  Sparkles,
 } from 'lucide-react';
 import {
   runHealthCheck,
@@ -36,6 +37,7 @@ import {
   createPlaybook,
   updatePlaybook,
   deletePlaybook,
+  autoTranslateCommands,
 } from '../services/api';
 import TerminalOutput from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
@@ -53,42 +55,42 @@ const CATEGORIES = [
 
 const COMMAND_CATALOG = {
   standard: [
-    { id: 'std-1', name: 'System Version & Uptime', cisco: 'show version', huawei: 'display version' },
-    { id: 'std-2', name: 'IP Interfaces Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief' },
-    { id: 'std-3', name: 'Device Hardware Summary', cisco: 'show inventory', huawei: 'display device' },
-    { id: 'std-4', name: 'CPU Utilization', cisco: 'show processes cpu', huawei: 'display cpu-usage' },
-    { id: 'std-5', name: 'Neighbor Topology (LLDP/CDP)', cisco: 'show cdp neighbors', huawei: 'display lldp neighbor brief' },
+    { id: 'std-1', name: 'System Version & Uptime', cisco: 'show version', huawei: 'display version', juniper: 'show version' },
+    { id: 'std-2', name: 'IP Interfaces Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse' },
+    { id: 'std-3', name: 'Device Hardware Summary', cisco: 'show inventory', huawei: 'display device', juniper: 'show chassis hardware' },
+    { id: 'std-4', name: 'CPU & Routing Engine Status', cisco: 'show processes cpu', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine' },
+    { id: 'std-5', name: 'Neighbor Topology (LLDP/CDP)', cisco: 'show cdp neighbors', huawei: 'display lldp neighbor brief', juniper: 'show lldp neighbors' },
   ],
   interfaces: [
-    { id: 'int-1', name: 'Interface Brief Summary', cisco: 'show ip interface brief', huawei: 'display interface brief' },
-    { id: 'int-2', name: 'Port Status & Speed/Duplex', cisco: 'show interfaces status', huawei: 'display ip interface brief' },
-    { id: 'int-3', name: 'Port Descriptions', cisco: 'show interfaces description', huawei: 'display interface description' },
-    { id: 'int-4', name: 'Interface Error & Drop Counters', cisco: 'show interfaces summary', huawei: 'display interface counters' },
+    { id: 'int-1', name: 'Interface Brief Summary', cisco: 'show ip interface brief', huawei: 'display interface brief', juniper: 'show interfaces terse' },
+    { id: 'int-2', name: 'Port Status & Descriptions', cisco: 'show interfaces status', huawei: 'display ip interface brief', juniper: 'show interfaces descriptions' },
+    { id: 'int-3', name: 'Port Descriptions Detail', cisco: 'show interfaces description', huawei: 'display interface description', juniper: 'show interfaces descriptions' },
+    { id: 'int-4', name: 'Interface Error & Extensive Stats', cisco: 'show interfaces summary', huawei: 'display interface counters', juniper: 'show interfaces extensive' },
   ],
   transceiver: [
-    { id: 'sfp-1', name: 'SFP/SFP+ Optical Power (Tx/Rx dBm)', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface' },
-    { id: 'sfp-2', name: 'Optical Module Details & Alarms', cisco: 'show interfaces transceiver detail', huawei: 'display transceiver verbose' },
-    { id: 'sfp-3', name: 'Transceiver Brief Overview', cisco: 'show interfaces status', huawei: 'display transceiver' },
+    { id: 'sfp-1', name: 'SFP/SFP+ Optical Diagnostics (Tx/Rx dBm)', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics' },
+    { id: 'sfp-2', name: 'Optical Module Details & Alarms', cisco: 'show interfaces transceiver detail', huawei: 'display transceiver verbose', juniper: 'show interfaces diagnostics optics' },
+    { id: 'sfp-3', name: 'Transceiver Overview', cisco: 'show interfaces status', huawei: 'display transceiver', juniper: 'show interfaces diagnostics optics' },
   ],
   environment: [
-    { id: 'env-1', name: 'Hardware Environment (Fan, Temp, Power)', cisco: 'show environment all', huawei: 'display temperature all' },
-    { id: 'env-2', name: 'CPU Usage Breakdown', cisco: 'show processes cpu sorted', huawei: 'display cpu-usage' },
-    { id: 'env-3', name: 'Memory Pool Allocation', cisco: 'show processes memory', huawei: 'display memory-usage' },
-    { id: 'env-4', name: 'Power Supply Status', cisco: 'show power', huawei: 'display device' },
+    { id: 'env-1', name: 'Chassis Environment (Fan, Temp, Power)', cisco: 'show environment all', huawei: 'display temperature all', juniper: 'show chassis environment' },
+    { id: 'env-2', name: 'CPU & Routing Engine Utilization', cisco: 'show processes cpu sorted', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine' },
+    { id: 'env-3', name: 'Memory & System Storage', cisco: 'show processes memory', huawei: 'display memory-usage', juniper: 'show system storage' },
+    { id: 'env-4', name: 'Chassis Hardware Inventory', cisco: 'show power', huawei: 'display device', juniper: 'show chassis hardware' },
   ],
   routing: [
-    { id: 'rt-1', name: 'IPv4 Routing Table', cisco: 'show ip route', huawei: 'display ip routing-table' },
-    { id: 'rt-2', name: 'ARP Table Cache', cisco: 'show ip arp', huawei: 'display arp all' },
-    { id: 'rt-3', name: 'Routing Protocols & Peering', cisco: 'show ip protocols', huawei: 'display ip routing-table verbose' },
+    { id: 'rt-1', name: 'IPv4 Routing Table', cisco: 'show ip route', huawei: 'display ip routing-table', juniper: 'show route' },
+    { id: 'rt-2', name: 'ARP Table Cache', cisco: 'show ip arp', huawei: 'display arp all', juniper: 'show arp' },
+    { id: 'rt-3', name: 'Route Summary & Protocols', cisco: 'show ip protocols', huawei: 'display ip routing-table verbose', juniper: 'show route summary' },
   ],
   logs: [
-    { id: 'log-1', name: 'Recent Log Buffer (Syslog)', cisco: 'show logging | last 50', huawei: 'display logbuffer' },
-    { id: 'log-2', name: 'SNMP Trap Messages', cisco: 'show logging', huawei: 'display trapbuffer' },
+    { id: 'log-1', name: 'Recent Log Buffer (Syslog)', cisco: 'show logging | last 50', huawei: 'display logbuffer', juniper: 'show log messages | last 50' },
+    { id: 'log-2', name: 'SNMP Trap / Chassis Messages', cisco: 'show logging', huawei: 'display trapbuffer', juniper: 'show log messages | match SNMP' },
   ],
   custom: [
-    { id: 'cus-1', name: 'System Version', cisco: 'show version', huawei: 'display version' },
-    { id: 'cus-2', name: 'IP Interface Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief' },
-    { id: 'cus-3', name: 'Optical Tx/Rx Power', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface' },
+    { id: 'cus-1', name: 'System Version', cisco: 'show version', huawei: 'display version', juniper: 'show version' },
+    { id: 'cus-2', name: 'IP Interface Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse' },
+    { id: 'cus-3', name: 'Optical Tx/Rx Power', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics' },
   ],
 };
 
@@ -107,13 +109,18 @@ export default function HealthCheckPage({
   const [loadingPlaybooks, setLoadingPlaybooks] = useState(false);
   const [activePlaybookId, setActivePlaybookId] = useState('');
 
-  // Profile Editor Modal State (1. Title, 2. Description, 3. Commands by Manufacturer)
+  // Profile Editor Modal State (1. Title, 2. Description, 3. Commands with Huawei as Primary)
   const [showEditorModal, setShowEditorModal] = useState(false);
   const [editingPlaybookId, setEditingPlaybookId] = useState(null); // null = new, string = edit
   const [editorName, setEditorName] = useState('');
   const [editorDesc, setEditorDesc] = useState('');
-  const [editorCiscoText, setEditorCiscoText] = useState('');
+  const [customVendors, setCustomVendors] = useState([]); // ['cisco', 'juniper', 'aruba', 'mikrotik']
   const [editorHuaweiText, setEditorHuaweiText] = useState('');
+  const [editorCiscoText, setEditorCiscoText] = useState('');
+  const [editorJuniperText, setEditorJuniperText] = useState('');
+  const [editorArubaText, setEditorArubaText] = useState('');
+  const [editorMikrotikText, setEditorMikrotikText] = useState('');
+  const [translating, setTranslating] = useState(false);
 
   // Dynamic Command Checklist State: { [cmdId]: boolean }
   const [activeCommands, setActiveCommands] = useState(COMMAND_CATALOG.standard);
@@ -218,12 +225,16 @@ export default function HealthCheckPage({
     setSelectedCategory('custom');
     setActivePlaybookId(playbook.id);
     const cmds = (playbook.commands || []).map((c, i) => {
-      const cmdName = typeof c === 'string' ? c : (c.name || c.cisco || c.huawei || `Command ${i + 1}`);
+      const cmdName = typeof c === 'string' ? c : (c.name || c.huawei || c.cisco || `Command ${i + 1}`);
       return {
         id: c.id || `pb-cmd-${i + 1}`,
         name: cmdName,
-        cisco: typeof c === 'string' ? c : (c.cisco || cmdName),
         huawei: typeof c === 'string' ? c : (c.huawei || cmdName),
+        cisco: typeof c === 'string' ? c : (c.cisco || cmdName),
+        juniper: typeof c === 'string' ? c : (c.juniper || cmdName),
+        nxos: typeof c === 'string' ? c : (c.nxos || c.cisco || cmdName),
+        aruba: typeof c === 'string' ? c : (c.aruba || cmdName),
+        mikrotik: typeof c === 'string' ? c : (c.mikrotik || cmdName),
         isCustom: typeof c === 'string' ? false : (c.isCustom || false),
       };
     });
@@ -233,19 +244,149 @@ export default function HealthCheckPage({
     setTimeout(() => setSuccessToast(''), 3000);
   };
 
-  // Open Editor Modal to Create New Profile (1. Title, 2. Description, 3. Commands by Manufacturer)
+  // Add a vendor command box
+  const handleAddVendor = async (vendorKey) => {
+    if (!customVendors.includes(vendorKey)) {
+      setCustomVendors((prev) => [...prev, vendorKey]);
+      const lines = editorHuaweiText.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        const vendorKeyMap = {
+          cisco: 'cisco_ios',
+          juniper: 'juniper_junos',
+          aruba: 'aruba_os',
+          mikrotik: 'mikrotik_routeros',
+        };
+        const tgt = vendorKeyMap[vendorKey] || 'cisco_ios';
+        try {
+          const res = await autoTranslateCommands({
+            commands: lines,
+            source_vendor: 'huawei',
+            target_vendors: [tgt],
+          });
+          if (res?.translations?.[tgt]) {
+            const transStr = res.translations[tgt].join('\n');
+            if (vendorKey === 'cisco' && !editorCiscoText.trim()) setEditorCiscoText(transStr);
+            if (vendorKey === 'juniper' && !editorJuniperText.trim()) setEditorJuniperText(transStr);
+            if (vendorKey === 'aruba' && !editorArubaText.trim()) setEditorArubaText(transStr);
+            if (vendorKey === 'mikrotik' && !editorMikrotikText.trim()) setEditorMikrotikText(transStr);
+          }
+        } catch (err) {
+          console.warn('Auto translation warning:', err);
+        }
+      }
+    }
+  };
+
+  // Remove a vendor command box
+  const handleRemoveVendor = (vendorKey) => {
+    setCustomVendors((prev) => prev.filter((v) => v !== vendorKey));
+  };
+
+  // Close all vendor command boxes
+  const handleCloseAllVendors = () => {
+    setCustomVendors([]);
+    setSuccessToast('ปิดกล่องคำสั่งทุกยี่ห้อแล้ว (ระบบจะแปลงคำสั่งจาก Huawei ให้อัตโนมัติ)');
+    setTimeout(() => setSuccessToast(''), 2500);
+  };
+
+  // Auto-translate single vendor
+  const handleTranslateSingleVendor = async (vendorKey) => {
+    const lines = editorHuaweiText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    const vendorKeyMap = {
+      cisco: 'cisco_ios',
+      juniper: 'juniper_junos',
+      aruba: 'aruba_os',
+      mikrotik: 'mikrotik_routeros',
+    };
+    const tgt = vendorKeyMap[vendorKey] || 'cisco_ios';
+    try {
+      const res = await autoTranslateCommands({
+        commands: lines,
+        source_vendor: 'huawei',
+        target_vendors: [tgt],
+      });
+      if (res?.translations?.[tgt]) {
+        const transStr = res.translations[tgt].join('\n');
+        if (vendorKey === 'cisco') setEditorCiscoText(transStr);
+        if (vendorKey === 'juniper') setEditorJuniperText(transStr);
+        if (vendorKey === 'aruba') setEditorArubaText(transStr);
+        if (vendorKey === 'mikrotik') setEditorMikrotikText(transStr);
+        setSuccessToast(`Auto-filled ${vendorKey.toUpperCase()} commands!`);
+        setTimeout(() => setSuccessToast(''), 2000);
+      }
+    } catch (err) {
+      console.warn(err);
+    }
+  };
+
+  // Auto-translate Huawei commands to all vendors using Backend Translation Engine
+  const handleAutoTranslateFromHuawei = async (overrideHuaweiText = null) => {
+    const textToTranslate = overrideHuaweiText !== null ? overrideHuaweiText : editorHuaweiText;
+    const lines = textToTranslate
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) return;
+
+    setTranslating(true);
+    try {
+      const res = await autoTranslateCommands({
+        commands: lines,
+        source_vendor: 'huawei',
+      });
+      if (res && res.translations) {
+        if (res.translations.cisco_ios) {
+          setEditorCiscoText(res.translations.cisco_ios.join('\n'));
+        }
+        if (res.translations.juniper_junos) {
+          setEditorJuniperText(res.translations.juniper_junos.join('\n'));
+        }
+        if (res.translations.aruba_os) {
+          setEditorArubaText(res.translations.aruba_os.join('\n'));
+        }
+        if (res.translations.mikrotik_routeros) {
+          setEditorMikrotikText(res.translations.mikrotik_routeros.join('\n'));
+        }
+        setCustomVendors(['cisco', 'juniper', 'aruba', 'mikrotik']);
+        setSuccessToast('Auto-generated and opened commands for all vendors!');
+        setTimeout(() => setSuccessToast(''), 2500);
+      }
+    } catch (err) {
+      console.warn('Auto translate warning:', err);
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  // Open Editor Modal to Create New Profile (Huawei VRP as Primary)
   const handleOpenCreateModal = () => {
     setEditingPlaybookId(null);
     setEditorName('');
     setEditorDesc('');
-    // Prefill with currently selected commands if any
+    setCustomVendors([]); // Default clean: only Huawei box is shown
+
     const selected = activeCommands.filter((c) => selectedCommandIds.has(c.id));
     if (selected.length > 0) {
-      setEditorCiscoText(selected.map((c) => c.cisco || c.name).join('\n'));
-      setEditorHuaweiText(selected.map((c) => c.huawei || c.name).join('\n'));
+      const hText = selected.map((c) => c.huawei || c.name).join('\n');
+      const cText = selected.map((c) => c.cisco || c.name).join('\n');
+      const jText = selected.map((c) => c.juniper || c.name).join('\n');
+      const aText = selected.map((c) => c.aruba || c.name).join('\n');
+      const mText = selected.map((c) => c.mikrotik || c.name).join('\n');
+
+      setEditorHuaweiText(hText);
+      setEditorCiscoText(cText);
+      setEditorJuniperText(jText);
+      setEditorArubaText(aText);
+      setEditorMikrotikText(mText);
     } else {
-      setEditorCiscoText('show version\nshow ip interface brief\nshow ip route\nshow processes cpu');
-      setEditorHuaweiText('display version\ndisplay ip interface brief\ndisplay ip routing-table\ndisplay cpu-usage');
+      const defaultHuawei = 'display version\ndisplay interface brief\ndisplay ip routing-table\ndisplay cpu-usage';
+      setEditorHuaweiText(defaultHuawei);
+      setEditorCiscoText('');
+      setEditorJuniperText('');
+      setEditorArubaText('');
+      setEditorMikrotikText('');
     }
     setShowEditorModal(true);
   };
@@ -257,16 +398,40 @@ export default function HealthCheckPage({
     setEditorName(playbook.name);
     setEditorDesc(playbook.description || '');
 
-    const ciscoLines = (playbook.commands || []).map((c) =>
-      typeof c === 'string' ? c : (c.cisco || c.name)
-    ).filter(Boolean);
-
     const huaweiLines = (playbook.commands || []).map((c) =>
       typeof c === 'string' ? c : (c.huawei || c.name)
     ).filter(Boolean);
 
-    setEditorCiscoText(ciscoLines.join('\n'));
+    const ciscoLines = (playbook.commands || []).map((c) =>
+      typeof c === 'string' ? c : (c.cisco || c.name)
+    ).filter(Boolean);
+
+    const juniperLines = (playbook.commands || []).map((c) =>
+      typeof c === 'string' ? c : (c.juniper || c.name)
+    ).filter(Boolean);
+
+    const arubaLines = (playbook.commands || []).map((c) =>
+      typeof c === 'string' ? c : (c.aruba || c.name)
+    ).filter(Boolean);
+
+    const mikrotikLines = (playbook.commands || []).map((c) =>
+      typeof c === 'string' ? c : (c.mikrotik || c.name)
+    ).filter(Boolean);
+
     setEditorHuaweiText(huaweiLines.join('\n'));
+    setEditorCiscoText(ciscoLines.join('\n'));
+    setEditorJuniperText(juniperLines.join('\n'));
+    setEditorArubaText(arubaLines.join('\n'));
+    setEditorMikrotikText(mikrotikLines.join('\n'));
+
+    // If existing playbook had specific commands for other vendors, open those boxes
+    const activeV = [];
+    if (ciscoLines.length > 0 && ciscoLines.some((c) => !huaweiLines.includes(c))) activeV.push('cisco');
+    if (juniperLines.length > 0 && juniperLines.some((c) => !huaweiLines.includes(c))) activeV.push('juniper');
+    if (arubaLines.length > 0 && arubaLines.some((c) => !huaweiLines.includes(c))) activeV.push('aruba');
+    if (mikrotikLines.length > 0 && mikrotikLines.some((c) => !huaweiLines.includes(c))) activeV.push('mikrotik');
+    setCustomVendors(activeV);
+
     setShowEditorModal(true);
   };
 
@@ -279,18 +444,29 @@ export default function HealthCheckPage({
       return;
     }
 
-    const ciscoLines = editorCiscoText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-
     const huaweiLines = editorHuaweiText
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
 
-    if (ciscoLines.length === 0 && huaweiLines.length === 0) {
-      setErrorMessage('Please enter at least one CLI command for Cisco or Huawei.');
+    const ciscoLines = customVendors.includes('cisco')
+      ? editorCiscoText.split('\n').map((l) => l.trim()).filter(Boolean)
+      : [];
+
+    const juniperLines = customVendors.includes('juniper')
+      ? editorJuniperText.split('\n').map((l) => l.trim()).filter(Boolean)
+      : [];
+
+    const arubaLines = customVendors.includes('aruba')
+      ? editorArubaText.split('\n').map((l) => l.trim()).filter(Boolean)
+      : [];
+
+    const mikrotikLines = customVendors.includes('mikrotik')
+      ? editorMikrotikText.split('\n').map((l) => l.trim()).filter(Boolean)
+      : [];
+
+    if (huaweiLines.length === 0 && ciscoLines.length === 0) {
+      setErrorMessage('Please enter at least one CLI command for Huawei (Primary).');
       return;
     }
 
@@ -299,8 +475,12 @@ export default function HealthCheckPage({
         name,
         description: editorDesc.trim(),
         category: 'custom',
-        cisco_commands: ciscoLines,
+        primary_vendor: 'huawei',
         huawei_commands: huaweiLines,
+        cisco_commands: ciscoLines.length > 0 ? ciscoLines : undefined,
+        juniper_commands: juniperLines.length > 0 ? juniperLines : undefined,
+        aruba_commands: arubaLines.length > 0 ? arubaLines : undefined,
+        mikrotik_commands: mikrotikLines.length > 0 ? mikrotikLines : undefined,
       };
 
       if (editingPlaybookId) {
@@ -311,7 +491,7 @@ export default function HealthCheckPage({
         // Create new
         const created = await createPlaybook(payload);
         setActivePlaybookId(created.id);
-        setSuccessToast(`Profile "${name}" created and saved permanently.`);
+        setSuccessToast(`Profile "${name}" created with multi-vendor auto-translation.`);
       }
 
       setShowEditorModal(false);
@@ -347,18 +527,27 @@ export default function HealthCheckPage({
     }
   };
 
-  // Get current active command strings
+  // Get current active command strings across all vendors
   const getExecutableCommandPayload = () => {
     const selected = activeCommands.filter((c) => selectedCommandIds.has(c.id));
-    const ciscoCmds = selected.map((c) => c.cisco || c.name);
     const huaweiCmds = selected.map((c) => c.huawei || c.name);
-    const genericCmds = selected.map((c) => c.name);
+    const ciscoCmds = selected.map((c) => c.cisco || c.name);
+    const juniperCmds = selected.map((c) => c.juniper || c.name);
+    const nxosCmds = selected.map((c) => c.nxos || c.cisco || c.name);
+    const arubaCmds = selected.map((c) => c.aruba || c.name);
+    const mikrotikCmds = selected.map((c) => c.mikrotik || c.name);
+    const genericCmds = selected.map((c) => c.huawei || c.name);
 
     return {
       commands: genericCmds,
       vendorCommands: {
-        cisco_ios: ciscoCmds,
         huawei: huaweiCmds,
+        cisco_ios: ciscoCmds,
+        cisco_nxos: nxosCmds,
+        juniper_junos: juniperCmds,
+        aruba_os: arubaCmds,
+        hp_comware: huaweiCmds,
+        mikrotik_routeros: mikrotikCmds,
       },
       selectedCount: selected.length,
     };
@@ -775,58 +964,303 @@ export default function HealthCheckPage({
                   />
                 </div>
 
-                {/* 3. Commands by Manufacturer (Cisco & Huawei) */}
+                {/* 3. Primary Command (Huawei VRP) + Add Vendor Buttons */}
                 <div className="form-group mb-2">
                   <label className="text-xs text-slate-300 font-semibold block mb-2">
-                    3. Full CLI Commands by Manufacturer (ระบุคำสั่งเต็มแยกตามผู้ผลิต) *
+                    3. CLI Commands by Manufacturer (ระบุคำสั่งแยกตามผู้ผลิต) *
                   </label>
 
-                  <div className="manufacturer-commands-grid">
-                    {/* Cisco IOS Manufacturer */}
-                    <div className="manufacturer-box cisco-box">
-                      <div className="manufacturer-box-header">
-                        <div className="flex items-center gap-1.5">
-                          <span className="vendor-badge-pill cisco">Manufacturer: Cisco</span>
-                          <span className="text-xs text-slate-400">IOS / IOS-XE</span>
-                        </div>
-                        <span className="text-xs text-sky-400 font-mono font-semibold">
-                          {editorCiscoText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
-                        </span>
+                  {/* A. Primary Vendor Box: Huawei VRP */}
+                  <div className="manufacturer-box huawei-box mb-3">
+                    <div className="manufacturer-box-header">
+                      <div className="flex items-center gap-1.5">
+                        <span className="vendor-badge-pill huawei">ไวยากรณ์หลัก (Primary): Huawei VRP</span>
+                        <span className="text-xs text-slate-400">CloudEngine / S-Series / VRP</span>
                       </div>
-                      <textarea
-                        value={editorCiscoText}
-                        onChange={(e) => setEditorCiscoText(e.target.value)}
-                        placeholder="Enter full non-abbreviated Cisco commands, for example:&#10;show version&#10;show ip interface brief&#10;show ip route&#10;show processes cpu&#10;show interfaces status"
-                        rows={6}
-                        className="editor-textarea-commands cisco-textarea"
-                      />
-                      <p className="text-xs text-slate-400 mt-1">
-                        Use full Cisco syntax (e.g. <code className="text-sky-300">show ip interface brief</code>)
-                      </p>
+                      <span className="text-xs text-rose-400 font-mono font-semibold">
+                        {editorHuaweiText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                      </span>
+                    </div>
+                    <textarea
+                      value={editorHuaweiText}
+                      onChange={(e) => setEditorHuaweiText(e.target.value)}
+                      placeholder="Enter Huawei commands (Primary), for example:&#10;display version&#10;display interface brief&#10;display ip routing-table&#10;display cpu-usage&#10;display device&#10;display logbuffer"
+                      rows={6}
+                      className="editor-textarea-commands huawei-textarea"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      ป้อนคำสั่งเฉพาะ Huawei ในช่องนี้ช่องเดียวก็เพียงพอ ระบบจะแปลไปรันกับสวิตช์ยี่ห้ออื่นให้อัตโนมัติ หรือกดปุ่มด้านล่างเพื่อใส่คำสั่งเฉพาะแต่ละยี่ห้อเอง
+                    </p>
+                  </div>
+
+                  {/* B. Add Vendor Buttons Toolbar */}
+                  <div className="add-vendor-toolbar mb-3">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <span className="text-xs text-slate-300 font-semibold flex items-center gap-1.5">
+                        <Sliders className="h-3.5 w-3.5 text-indigo-400" />
+                        ปุ่มสำหรับใส่คำสั่งแยกตามแต่ละยี่ห้อเอง (Custom Overrides):
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {customVendors.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleCloseAllVendors}
+                            className="btn-close-all-vendors"
+                            title="ปิดกล่องทุกยี่ห้อและกลับไปใช้การแปลงอัตโนมัติจาก Huawei"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            <span>ปิดทุกยี่ห้อ (Close All)</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleAutoTranslateFromHuawei()}
+                          disabled={translating || !editorHuaweiText.trim()}
+                          className="btn-auto-translate"
+                          title="เปิดกล่องทุกยี่ห้อพร้อมแปลงคำสั่งจาก Huawei อัตโนมัติ"
+                        >
+                          {translating ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-3.5 w-3.5 text-amber-300" />
+                          )}
+                          <span>เปิดทุกยี่ห้อ (Auto-Fill All)</span>
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Huawei VRP Manufacturer */}
-                    <div className="manufacturer-box huawei-box">
-                      <div className="manufacturer-box-header">
-                        <div className="flex items-center gap-1.5">
-                          <span className="vendor-badge-pill huawei">Manufacturer: Huawei</span>
-                          <span className="text-xs text-slate-400">VRP (Quidway / CloudEngine)</span>
-                        </div>
-                        <span className="text-xs text-rose-400 font-mono font-semibold">
-                          {editorHuaweiText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {!customVendors.includes('cisco') ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddVendor('cisco')}
+                          className="btn-add-vendor cisco"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>+ ใส่คำสั่ง Cisco IOS/NX-OS</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-sky-400 font-medium px-2 py-1 rounded bg-sky-950/60 border border-sky-800/60 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> เพิ่มช่อง Cisco แล้ว
                         </span>
-                      </div>
-                      <textarea
-                        value={editorHuaweiText}
-                        onChange={(e) => setEditorHuaweiText(e.target.value)}
-                        placeholder="Enter full non-abbreviated Huawei commands, for example:&#10;display version&#10;display ip interface brief&#10;display ip routing-table&#10;display cpu-usage&#10;display interface brief"
-                        rows={6}
-                        className="editor-textarea-commands huawei-textarea"
-                      />
-                      <p className="text-xs text-slate-400 mt-1">
-                        Use full Huawei syntax (e.g. <code className="text-rose-300">display ip interface brief</code>)
-                      </p>
+                      )}
+
+                      {!customVendors.includes('juniper') ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddVendor('juniper')}
+                          className="btn-add-vendor juniper"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>+ ใส่คำสั่ง Juniper JunOS</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-emerald-400 font-medium px-2 py-1 rounded bg-emerald-950/60 border border-emerald-800/60 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> เพิ่มช่อง Juniper แล้ว
+                        </span>
+                      )}
+
+                      {!customVendors.includes('aruba') ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddVendor('aruba')}
+                          className="btn-add-vendor aruba"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>+ ใส่คำสั่ง Aruba OS-CX</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-amber-400 font-medium px-2 py-1 rounded bg-amber-950/60 border border-amber-800/60 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> เพิ่มช่อง Aruba แล้ว
+                        </span>
+                      )}
+
+                      {!customVendors.includes('mikrotik') ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAddVendor('mikrotik')}
+                          className="btn-add-vendor mikrotik"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>+ ใส่คำสั่ง MikroTik RouterOS</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-purple-400 font-medium px-2 py-1 rounded bg-purple-950/60 border border-purple-800/60 flex items-center gap-1">
+                          <Check className="h-3 w-3" /> เพิ่มช่อง MikroTik แล้ว
+                        </span>
+                      )}
                     </div>
+                  </div>
+
+                  {/* C. Added Vendor Custom Boxes */}
+                  <div className="custom-vendor-boxes space-y-3">
+                    {/* Cisco Box */}
+                    {customVendors.includes('cisco') && (
+                      <div className="manufacturer-box cisco-box">
+                        <div className="manufacturer-box-header">
+                          <div className="flex items-center gap-1.5">
+                            <span className="vendor-badge-pill cisco">Vendor: Cisco</span>
+                            <span className="text-xs text-slate-400">IOS / IOS-XE / NX-OS</span>
+                            <span className="text-xs text-sky-400 font-mono font-semibold ml-2">
+                              {editorCiscoText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleTranslateSingleVendor('cisco')}
+                              className="btn-remove-vendor hover:text-sky-300"
+                              title="แปลงคำสั่งจาก Huawei มาใส่ช่องนี้"
+                            >
+                              <Sparkles className="h-3 w-3 text-sky-400" />
+                              <span>แปลงจาก Huawei</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVendor('cisco')}
+                              className="btn-remove-vendor"
+                              title="นำช่องนี้ออก (ระบบจะ Auto-Translate ให้อัตโนมัติ)"
+                            >
+                              <X className="h-3 w-3" />
+                              <span>นำออก</span>
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={editorCiscoText}
+                          onChange={(e) => setEditorCiscoText(e.target.value)}
+                          placeholder="Enter Cisco commands, for example:&#10;show version&#10;show ip interface brief&#10;show ip route&#10;show processes cpu sorted"
+                          rows={5}
+                          className="editor-textarea-commands cisco-textarea"
+                        />
+                      </div>
+                    )}
+
+                    {/* Juniper Box */}
+                    {customVendors.includes('juniper') && (
+                      <div className="manufacturer-box" style={{ borderColor: 'rgba(16, 185, 129, 0.3)', background: 'rgba(6, 78, 59, 0.15)' }}>
+                        <div className="manufacturer-box-header">
+                          <div className="flex items-center gap-1.5">
+                            <span className="vendor-badge-pill" style={{ background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', border: '1px solid rgba(16, 185, 129, 0.4)' }}>Vendor: Juniper</span>
+                            <span className="text-xs text-slate-400">JunOS CLI</span>
+                            <span className="text-xs text-emerald-400 font-mono font-semibold ml-2">
+                              {editorJuniperText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleTranslateSingleVendor('juniper')}
+                              className="btn-remove-vendor hover:text-emerald-300"
+                              title="แปลงคำสั่งจาก Huawei มาใส่ช่องนี้"
+                            >
+                              <Sparkles className="h-3 w-3 text-emerald-400" />
+                              <span>แปลงจาก Huawei</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVendor('juniper')}
+                              className="btn-remove-vendor"
+                              title="นำช่องนี้ออก (ระบบจะ Auto-Translate ให้อัตโนมัติ)"
+                            >
+                              <X className="h-3 w-3" />
+                              <span>นำออก</span>
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={editorJuniperText}
+                          onChange={(e) => setEditorJuniperText(e.target.value)}
+                          placeholder="Enter Juniper commands, for example:&#10;show version&#10;show interfaces terse&#10;show route&#10;show chassis routing-engine"
+                          rows={5}
+                          className="editor-textarea-commands juniper-textarea"
+                        />
+                      </div>
+                    )}
+
+                    {/* Aruba Box */}
+                    {customVendors.includes('aruba') && (
+                      <div className="manufacturer-box" style={{ borderColor: 'rgba(245, 158, 11, 0.3)', background: 'rgba(120, 53, 15, 0.15)' }}>
+                        <div className="manufacturer-box-header">
+                          <div className="flex items-center gap-1.5">
+                            <span className="vendor-badge-pill" style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)' }}>Vendor: Aruba</span>
+                            <span className="text-xs text-slate-400">AOS-CX / ProCurve</span>
+                            <span className="text-xs text-amber-400 font-mono font-semibold ml-2">
+                              {editorArubaText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleTranslateSingleVendor('aruba')}
+                              className="btn-remove-vendor hover:text-amber-300"
+                              title="แปลงคำสั่งจาก Huawei มาใส่ช่องนี้"
+                            >
+                              <Sparkles className="h-3 w-3 text-amber-400" />
+                              <span>แปลงจาก Huawei</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVendor('aruba')}
+                              className="btn-remove-vendor"
+                              title="นำช่องนี้ออก (ระบบจะ Auto-Translate ให้อัตโนมัติ)"
+                            >
+                              <X className="h-3 w-3" />
+                              <span>นำออก</span>
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={editorArubaText}
+                          onChange={(e) => setEditorArubaText(e.target.value)}
+                          placeholder="Enter Aruba commands, for example:&#10;show version&#10;show interface brief&#10;show ip route&#10;show cpu"
+                          rows={5}
+                          className="editor-textarea-commands aruba-textarea"
+                        />
+                      </div>
+                    )}
+
+                    {/* MikroTik Box */}
+                    {customVendors.includes('mikrotik') && (
+                      <div className="manufacturer-box" style={{ borderColor: 'rgba(168, 85, 247, 0.3)', background: 'rgba(88, 28, 135, 0.15)' }}>
+                        <div className="manufacturer-box-header">
+                          <div className="flex items-center gap-1.5">
+                            <span className="vendor-badge-pill" style={{ background: 'rgba(168, 85, 247, 0.2)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.4)' }}>Vendor: MikroTik</span>
+                            <span className="text-xs text-slate-400">RouterOS</span>
+                            <span className="text-xs text-purple-400 font-mono font-semibold ml-2">
+                              {editorMikrotikText.split('\n').filter((l) => l.trim().length > 0).length} command(s)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleTranslateSingleVendor('mikrotik')}
+                              className="btn-remove-vendor hover:text-purple-300"
+                              title="แปลงคำสั่งจาก Huawei มาใส่ช่องนี้"
+                            >
+                              <Sparkles className="h-3 w-3 text-purple-400" />
+                              <span>แปลงจาก Huawei</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveVendor('mikrotik')}
+                              className="btn-remove-vendor"
+                              title="นำช่องนี้ออก (ระบบจะ Auto-Translate ให้อัตโนมัติ)"
+                            >
+                              <X className="h-3 w-3" />
+                              <span>นำออก</span>
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={editorMikrotikText}
+                          onChange={(e) => setEditorMikrotikText(e.target.value)}
+                          placeholder="Enter MikroTik commands, for example:&#10;/system resource print&#10;/interface print brief&#10;/ip route print"
+                          rows={5}
+                          className="editor-textarea-commands mikrotik-textarea"
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

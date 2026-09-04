@@ -62,10 +62,11 @@ export const runBatchHealthCheck = async (devices, checkType = 'standard', comma
 };
 
 
-export const executeTroubleshootCommand = async (device, command) => {
+export const executeTroubleshootCommand = async (device, command, vendorCommands = null) => {
   const response = await apiClient.post('/troubleshoot/execute-command', {
     device,
     command,
+    vendor_commands: vendorCommands,
   });
   return response.data;
 };
@@ -273,6 +274,11 @@ export const createPlaybook = async (payload) => {
 
 export const updatePlaybook = async (id, payload) => {
   const response = await apiClient.put(`/playbooks/${id}`, payload);
+  return response.data;
+};
+
+export const autoTranslateCommands = async (payload) => {
+  const response = await apiClient.post('/playbooks/auto-translate', payload);
   return response.data;
 };
 

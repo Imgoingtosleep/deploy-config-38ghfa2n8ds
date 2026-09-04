@@ -12,20 +12,52 @@ from app.services.netmiko_service import NetmikoService
 
 router = APIRouter()
 
-def _execute_device_command(device: DeviceCredentials, cmd: str) -> CommandResponse:
-    """Helper function to execute command on a single device"""
+def _execute_device_command(
+    device: DeviceCredentials,
+    cmd: str,
+    vendor_commands: dict = None,
+) -> CommandResponse:
+    """Helper function to execute command on a single device with multi-vendor auto-translation"""
     dev_type = (device.device_type or "").lower()
     if not dev_type or dev_type in ["autodetect", "auto"]:
         try:
             from app.services.autodetect_service import AutoDetectService
             detected_type, _ = AutoDetectService.detect_device_type(device)
             device.device_type = detected_type
+            dev_type = detected_type
         except Exception:
             pass
-    result = NetmikoService.send_command(device, cmd)
+
+    from app.services.command_translator import CommandTranslator
+    from app.services.nornir_service import NornirService
+
+    driver_group = CommandTranslator._normalize_driver_group(dev_type)
+    short_aliases = {
+        "cisco_ios": "cisco",
+        "cisco_nxos": "nxos",
+        "juniper_junos": "juniper",
+        "aruba_os": "aruba",
+        "hp_comware": "comware",
+        "mikrotik_routeros": "mikrotik",
+        "huawei": "huawei",
+    }
+    short = short_aliases.get(driver_group, "")
+
+    actual_cmd = None
+    if vendor_commands:
+        actual_cmd = (
+            vendor_commands.get(driver_group)
+            or vendor_commands.get(dev_type)
+            or vendor_commands.get(short)
+        )
+
+    if not actual_cmd:
+        actual_cmd = NornirService.resolve_vendor_command(cmd, dev_type)
+
+    result = NetmikoService.send_command(device, actual_cmd)
     return CommandResponse(
         host=result.get("host", device.host or "Unknown"),
-        command=result.get("command", cmd),
+        command=result.get("command", actual_cmd),
         output=result.get("output", ""),
         success=result.get("success", False),
         error=result.get("error"),
@@ -35,7 +67,7 @@ def _execute_device_command(device: DeviceCredentials, cmd: str) -> CommandRespo
 @router.post("/execute-command", response_model=CommandResponse)
 def execute_command(request: SingleCommandRequest):
     """Execute any custom show / exec / ping / traceroute command and return raw output"""
-    return _execute_device_command(request.device, request.command)
+    return _execute_device_command(request.device, request.command, request.vendor_commands)
 
 @router.post("/execute-batch", response_model=BatchCommandResponse)
 def execute_batch_command(request: BatchCommandRequest):
@@ -73,14 +105,35 @@ def execute_batch_command(request: BatchCommandRequest):
                     dev_type = detected_type
                 except Exception:
                     pass
-            vendor = "huawei" if "huawei" in dev_type else "cisco_ios"
-            if request.vendor_commands and vendor in request.vendor_commands and request.vendor_commands[vendor]:
-                return request.vendor_commands[vendor]
-            if request.huawei_command and vendor == "huawei":
+            from app.services.command_translator import CommandTranslator
+            from app.services.nornir_service import NornirService
+
+            driver_group = CommandTranslator._normalize_driver_group(dev_type)
+            short_aliases = {
+                "cisco_ios": "cisco",
+                "cisco_nxos": "nxos",
+                "juniper_junos": "juniper",
+                "aruba_os": "aruba",
+                "hp_comware": "comware",
+                "mikrotik_routeros": "mikrotik",
+                "huawei": "huawei",
+            }
+            short = short_aliases.get(driver_group, "")
+
+            if request.vendor_commands:
+                cmd_override = (
+                    request.vendor_commands.get(driver_group)
+                    or request.vendor_commands.get(dev_type)
+                    or request.vendor_commands.get(short)
+                )
+                if cmd_override:
+                    return cmd_override
+
+            if request.huawei_command and driver_group == "huawei":
                 return request.huawei_command
-            if request.cisco_command and vendor == "cisco_ios":
+            if request.cisco_command and driver_group == "cisco_ios":
                 return request.cisco_command
-            return request.command or ""
+            return NornirService.resolve_vendor_command(request.command or "", dev_type)
 
 
         max_workers = min(max(len(devices), 1), 20)
