@@ -213,12 +213,15 @@ export default function TroubleshootPage({
     }
 
     const commandRegexMap = {};
-    (playbook.commands || []).forEach((c) => {
-      if (typeof c === 'object' && c.regex && c.regex.trim()) {
-        const reg = c.regex.trim();
-        if (c.huawei) commandRegexMap[c.huawei] = reg;
-        if (c.cisco) commandRegexMap[c.cisco] = reg;
-        if (c.name) commandRegexMap[c.name] = reg;
+    (playbook.commands || []).forEach((c, idx) => {
+      if (typeof c === 'object') {
+        const reg = (c.regex || '').trim();
+        commandRegexMap[String(idx)] = reg;
+        if (reg) {
+          if (c.huawei && !commandRegexMap[c.huawei]) commandRegexMap[c.huawei] = reg;
+          if (c.cisco && !commandRegexMap[c.cisco]) commandRegexMap[c.cisco] = reg;
+          if (c.name && !commandRegexMap[c.name]) commandRegexMap[c.name] = reg;
+        }
       }
     });
 
@@ -531,10 +534,9 @@ export default function TroubleshootPage({
 
     const commandStrings = validCmds.map((c) => c.command.trim());
     const commandRegexes = {};
-    validCmds.forEach((c) => {
-      if (c.regex && c.regex.trim()) {
-        commandRegexes[c.command.trim()] = c.regex.trim();
-      }
+    validCmds.forEach((c, idx) => {
+      const reg = (c.regex || '').trim();
+      commandRegexes[String(idx)] = reg;
     });
 
     setHistory((prev) => [commandStrings[0], ...prev.filter((c) => c !== commandStrings[0])].slice(0, 5));
@@ -543,7 +545,7 @@ export default function TroubleshootPage({
       commandStrings[0],
       null,
       commandStrings,
-      Object.keys(commandRegexes).length > 0 ? commandRegexes : null
+      commandRegexes
     );
   };
 

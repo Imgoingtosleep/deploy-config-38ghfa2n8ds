@@ -540,16 +540,17 @@ export default function HealthCheckPage({
     const genericCmds = selected.map((c) => c.huawei || c.name);
 
     const commandRegexMap = {};
-    selected.forEach((c) => {
+    selected.forEach((c, idx) => {
       const reg = (c.regex || '').trim();
+      commandRegexMap[String(idx)] = reg;
       if (reg) {
-        if (c.huawei) commandRegexMap[c.huawei] = reg;
-        if (c.cisco) commandRegexMap[c.cisco] = reg;
-        if (c.juniper) commandRegexMap[c.juniper] = reg;
-        if (c.nxos) commandRegexMap[c.nxos] = reg;
-        if (c.aruba) commandRegexMap[c.aruba] = reg;
-        if (c.mikrotik) commandRegexMap[c.mikrotik] = reg;
-        if (c.name) commandRegexMap[c.name] = reg;
+        if (c.huawei && !commandRegexMap[c.huawei]) commandRegexMap[c.huawei] = reg;
+        if (c.cisco && !commandRegexMap[c.cisco]) commandRegexMap[c.cisco] = reg;
+        if (c.juniper && !commandRegexMap[c.juniper]) commandRegexMap[c.juniper] = reg;
+        if (c.nxos && !commandRegexMap[c.nxos]) commandRegexMap[c.nxos] = reg;
+        if (c.aruba && !commandRegexMap[c.aruba]) commandRegexMap[c.aruba] = reg;
+        if (c.mikrotik && !commandRegexMap[c.mikrotik]) commandRegexMap[c.mikrotik] = reg;
+        if (c.name && !commandRegexMap[c.name]) commandRegexMap[c.name] = reg;
       }
     });
 

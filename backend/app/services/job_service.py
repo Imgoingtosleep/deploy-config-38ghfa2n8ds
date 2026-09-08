@@ -8,7 +8,7 @@ import uuid
 import math
 import threading
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 from app.schemas.device import DeviceCredentials
 from app.schemas.command import (
@@ -49,7 +49,7 @@ class JobService:
         devices: List[DeviceCredentials],
         command: str = "",
         commands: List[str] = None,
-        command_regexes: Dict[str, str] = None,
+        command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
         vendor_commands: Dict[str, str] = None,
         huawei_command: str = None,
         cisco_command: str = None,
@@ -157,7 +157,7 @@ class JobService:
         devices: List[DeviceCredentials],
         check_type: str = "standard",
         commands: List[str] = None,
-        command_regexes: Dict[str, str] = None,
+        command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
         vendor_commands: Dict[str, List[str]] = None,
         suite_name: str = None,
         num_workers: Optional[int] = None,
@@ -232,19 +232,30 @@ class JobService:
                         dev = chunk[idx]
                         try:
                             res = future.result()
-                            combined_raw = "\n\n".join([f"[{r['command']}]\n{r['output']}" for r in res.get("results", []) if r.get("output")])
-                            regex_parts = []
-                            for r in res.get("results", []):
-                                if not r.get("output"):
-                                    continue
-                                if r.get("regex") and r.get("regex").strip():
-                                    regex_parts.append(
-                                        f"[{r['command']}] [Regex: /{r['regex']}/ - {r.get('matched_lines', 0)} matches]\n"
-                                        + (r.get("regex_output") or "--- No lines matched regex filter ---")
-                                    )
+                            results_list = res.get("results", [])
+                            raw_blocks = []
+                            regex_blocks = []
+
+                            for r_i, r in enumerate(results_list, 1):
+                                cmd_str = r.get("command", "")
+                                out_str = r.get("output", "")
+                                reg_pat = r.get("regex")
+                                reg_out = r.get("regex_output")
+                                matched_cnt = r.get("matched_lines", 0)
+
+                                raw_blocks.append(f"=== [#{r_i}] {cmd_str} ===\n{out_str}")
+
+                                if reg_pat and str(reg_pat).strip():
+                                    reg_header = f"=== [#{r_i}] {cmd_str} | Regex: /{reg_pat}/ ({matched_cnt} matches) ==="
+                                    reg_body = reg_out if (reg_out and reg_out.strip()) else "--- No lines matched regex filter ---"
+                                    regex_blocks.append(f"{reg_header}\n{reg_body}")
                                 else:
-                                    regex_parts.append(f"[{r['command']}] [No Regex Filter]\n{r['output']}")
-                            combined_regex = "\n\n".join(regex_parts)
+                                    reg_header = f"=== [#{r_i}] {cmd_str} | (No Regex Filter - Full Output) ==="
+                                    regex_blocks.append(f"{reg_header}\n{out_str}")
+
+                            separator = "\n\n" + "-" * 78 + "\n\n"
+                            combined_raw = separator.join(raw_blocks) if raw_blocks else "Completed"
+                            combined_regex = separator.join(regex_blocks) if regex_blocks else combined_raw
 
                             chunk_results[idx] = CommandResponse(
                                 host=dev.host or "Unknown",
@@ -284,11 +295,20 @@ class JobService:
                         cisco_command=job.payload.get("cisco_command"),
                         num_workers=chunk_size,
                     )
-                    cmd_regex = (
-                        cmd_regexes.get(single_cmd)
-                        or cmd_regexes.get(single_cmd.strip())
-                        or (next(iter(cmd_regexes.values()), None) if len(cmd_regexes) == 1 else None)
-                    )
+                    cmd_regex = None
+                    if isinstance(cmd_regexes, (list, tuple)):
+                        cmd_regex = cmd_regexes[0] if len(cmd_regexes) > 0 else None
+                    elif isinstance(cmd_regexes, dict):
+                        if "0" in cmd_regexes:
+                            cmd_regex = cmd_regexes.get("0")
+                        elif 0 in cmd_regexes:
+                            cmd_regex = cmd_regexes.get(0)
+                        else:
+                            cmd_regex = (
+                                cmd_regexes.get(single_cmd)
+                                or cmd_regexes.get(single_cmd.strip())
+                                or (next(iter(cmd_regexes.values()), None) if len(cmd_regexes) == 1 else None)
+                            )
                     if cmd_regex and cmd_regex.strip():
                         import re
                         try:
@@ -473,19 +493,28 @@ class JobService:
                     dev = chunk[idx]
                     try:
                         res = future.result()
-                        combined_output = "\n\n".join([f"[{r.command}]\n{r.output}" for r in res.results if r.output])
-                        regex_parts = []
-                        for r in res.results:
-                            if not r.output:
-                                continue
-                            if r.regex and r.regex.strip():
-                                regex_parts.append(
-                                    f"[{r.command}] [Regex: /{r.regex}/ - {r.matched_lines or 0} matches]\n"
-                                    + (r.regex_output if r.regex_output else "--- No lines matched regex filter ---")
-                                )
+                        raw_blocks = []
+                        regex_blocks = []
+                        for r_i, r in enumerate(res.results, 1):
+                            cmd_str = r.command
+                            out_str = r.output or ""
+                            reg_pat = r.regex
+                            reg_out = r.regex_output
+                            matched_cnt = r.matched_lines or 0
+
+                            raw_blocks.append(f"=== [#{r_i}] {cmd_str} ===\n{out_str}")
+
+                            if reg_pat and str(reg_pat).strip():
+                                reg_header = f"=== [#{r_i}] {cmd_str} | Regex: /{reg_pat}/ ({matched_cnt} matches) ==="
+                                reg_body = reg_out if (reg_out and reg_out.strip()) else "--- No lines matched regex filter ---"
+                                regex_blocks.append(f"{reg_header}\n{reg_body}")
                             else:
-                                regex_parts.append(f"[{r.command}] [No Regex Filter]\n{r.output}")
-                        combined_regex_output = "\n\n".join(regex_parts)
+                                reg_header = f"=== [#{r_i}] {cmd_str} | (No Regex Filter - Full Output) ==="
+                                regex_blocks.append(f"{reg_header}\n{out_str}")
+
+                        separator = "\n\n" + "-" * 78 + "\n\n"
+                        combined_output = separator.join(raw_blocks) if raw_blocks else "Health Check Completed"
+                        combined_regex_output = separator.join(regex_blocks) if regex_blocks else combined_output
 
                         summary_str = ""
                         if res.summary:

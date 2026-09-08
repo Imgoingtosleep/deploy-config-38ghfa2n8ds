@@ -1,5 +1,5 @@
 import time
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Union
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi import APIRouter
 from app.schemas.command import (
@@ -237,7 +237,7 @@ def _execute_device_health_check(
     check_type: str = "standard",
     custom_commands: List[str] = None,
     vendor_commands: Dict[str, List[str]] = None,
-    command_regexes: Dict[str, str] = None,
+    command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
 ) -> MultiCommandResponse:
     device_type = (device.device_type or "").lower()
     if not device_type or device_type in ["autodetect", "auto"]:

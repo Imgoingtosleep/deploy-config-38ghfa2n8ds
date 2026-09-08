@@ -2,7 +2,7 @@ import time
 import threading
 import paramiko
 from contextlib import contextmanager
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 
 # --- SSH Algorithm Compatibility & Global Lock ---
 paramiko.Transport._preferred_kex = (
@@ -426,7 +426,7 @@ class NetmikoService:
         cls,
         device: DeviceCredentials,
         commands: List[str],
-        command_regexes: Optional[Dict[str, str]] = None,
+        command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
     ) -> Dict[str, Any]:
         """Execute multiple show commands sequentially over a single connection with priority credential fallback and per-command regex"""
         import re
@@ -435,20 +435,34 @@ class NetmikoService:
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         try:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
-                for cmd in commands:
+                for cmd_idx, cmd in enumerate(commands):
                     cmd_start = time.time()
                     cmd_regex = None
                     regex_output = None
                     matched_lines = None
                     if command_regexes:
-                        raw_pat = (
-                            command_regexes.get(cmd)
-                            or command_regexes.get(cmd.strip())
-                            or command_regexes.get(cmd.lower())
-                            or command_regexes.get(cmd.strip().lower())
-                        )
-                        if raw_pat and raw_pat.strip():
-                            cmd_regex = raw_pat.strip()
+                        raw_pat = None
+                        idx_str = str(cmd_idx)
+                        if isinstance(command_regexes, (list, tuple)):
+                            if cmd_idx < len(command_regexes):
+                                raw_pat = command_regexes[cmd_idx]
+                        elif isinstance(command_regexes, dict):
+                            # Priority 1: Check by exact command index (allows identical commands to have distinct regexes)
+                            if idx_str in command_regexes:
+                                raw_pat = command_regexes[idx_str]
+                            elif cmd_idx in command_regexes:
+                                raw_pat = command_regexes[cmd_idx]
+                            else:
+                                # Priority 2: Fallback to command string only if index is not explicitly defined
+                                raw_pat = (
+                                    command_regexes.get(cmd)
+                                    or command_regexes.get(cmd.strip())
+                                    or command_regexes.get(cmd.lower())
+                                    or command_regexes.get(cmd.strip().lower())
+                                )
+
+                        if raw_pat and str(raw_pat).strip():
+                            cmd_regex = str(raw_pat).strip()
 
                     try:
                         raw_output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
@@ -466,6 +480,7 @@ class NetmikoService:
                                 matched_lines = 0
 
                         results.append({
+                            "index": cmd_idx + 1,
                             "host": target_name,
                             "command": cmd,
                             "output": output,
@@ -478,6 +493,7 @@ class NetmikoService:
                         })
                     except Exception as cmd_err:
                         results.append({
+                            "index": cmd_idx + 1,
                             "host": target_name,
                             "command": cmd,
                             "output": "",
