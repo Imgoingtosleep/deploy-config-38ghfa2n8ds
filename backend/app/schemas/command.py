@@ -56,6 +56,8 @@ class HealthCheckRequest(BaseModel):
 
 class CommandResponse(BaseModel):
     host: str
+    hostname_import: Optional[str] = None
+    sysname_device: Optional[str] = None
     command: str
     output: str
     regex: Optional[str] = None
@@ -69,6 +71,8 @@ class CommandResponse(BaseModel):
 
 class MultiCommandResponse(BaseModel):
     host: str
+    hostname_import: Optional[str] = None
+    sysname_device: Optional[str] = None
     device_name: Optional[str] = None
     results: List[CommandResponse]
     success: bool
@@ -85,7 +89,7 @@ class BatchHealthCheckRequest(BaseModel):
     command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = Field(default_factory=dict, description="Optional regex pattern per command")
     vendor_commands: Optional[Dict[str, List[str]]] = Field(default_factory=dict, description="Optional vendor-specific command lists")
     suite_name: Optional[str] = Field(None, description="Optional custom test suite/playbook name")
-    num_workers: Optional[int] = Field(None, ge=10, le=100, description="Nornir concurrent workers count (min 10, max 100)")
+    num_workers: Optional[int] = Field(None, ge=1, le=100, description="Nornir concurrent workers count (min 1, max 100)")
 
 class BatchHealthCheckResponse(BaseModel):
     devices_count: int
@@ -102,7 +106,7 @@ class BatchCommandRequest(BaseModel):
     vendor_commands: Optional[Dict[str, str]] = Field(default_factory=dict, description="Vendor specific commands e.g. {'huawei': 'display ...', 'cisco_ios': 'show ...'}")
     huawei_command: Optional[str] = Field(None, description="Command override for Huawei")
     cisco_command: Optional[str] = Field(None, description="Command override for Cisco")
-    num_workers: Optional[int] = Field(None, ge=10, le=100, description="Nornir concurrent workers count (min 10, max 100)")
+    num_workers: Optional[int] = Field(None, ge=1, le=100, description="Nornir concurrent workers count (min 1, max 100)")
 
 class BatchCommandResponse(BaseModel):
     devices_count: int
@@ -116,7 +120,7 @@ class BackupConfigRequest(BaseModel):
 
 class BatchBackupRequest(BaseModel):
     devices: List[DeviceCredentials]
-    num_workers: Optional[int] = Field(None, ge=10, le=100, description="Nornir concurrent workers count (min 10, max 100)")
+    num_workers: Optional[int] = Field(None, ge=1, le=100, description="Nornir concurrent workers count (min 1, max 100)")
 
 class BatchBackupResponse(BaseModel):
     devices_count: int
@@ -135,6 +139,8 @@ class AdvancedDeployRequest(BaseModel):
 
 class AdvancedDeployResponse(BaseModel):
     host: str
+    hostname_import: Optional[str] = None
+    sysname_device: Optional[str] = None
     command: str
     output: str
     success: bool
@@ -157,7 +163,7 @@ class BatchDeployRequest(BaseModel):
     pre_check_commands: Optional[List[str]] = Field(default_factory=list, description="Commands to run prior to deployment")
     post_check_commands: Optional[List[str]] = Field(default_factory=list, description="Commands to run after deployment for verification")
     backup_before_deploy: Optional[bool] = Field(False, description="Backup running configuration prior to deploying changes")
-    num_workers: Optional[int] = Field(None, ge=10, le=100, description="Nornir concurrent workers count (min 10, max 100)")
+    num_workers: Optional[int] = Field(None, ge=1, le=100, description="Nornir concurrent workers count (min 1, max 100)")
 
 class BatchDeployResponse(BaseModel):
     devices_count: int
@@ -168,9 +174,9 @@ class BatchDeployResponse(BaseModel):
 
 class WorkersSettingsResponse(BaseModel):
     num_workers: int = Field(..., description="Current active Nornir concurrent workers")
-    min_workers: int = Field(10, description="Minimum allowed Nornir workers")
+    min_workers: int = Field(1, description="Minimum allowed Nornir workers")
     max_workers: int = Field(100, description="Maximum allowed Nornir workers")
     default_workers: int = Field(10, description="Default starting Nornir workers")
 
 class WorkersSettingsUpdate(BaseModel):
-    num_workers: int = Field(..., ge=10, le=100, description="New Nornir concurrent workers count (min 10, max 100)")
+    num_workers: int = Field(..., ge=1, le=100, description="New Nornir concurrent workers count (min 1, max 100)")

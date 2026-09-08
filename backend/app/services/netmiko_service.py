@@ -39,6 +39,45 @@ class NetmikoService:
             return f"/dev/ttyS{com_num}"
         return cleaned
 
+    @staticmethod
+    def extract_device_sysname(output_text: str = "", prompt: str = "") -> str:
+        """
+        Extract switch/router system name (sysname/hostname) from CLI prompt or output.
+        """
+        import re
+        if prompt:
+            p = prompt.strip()
+            m = re.match(r"^[<\[]([A-Za-z0-9_\-\.]+)[>\]]", p)
+            if m:
+                return m.group(1).strip()
+            m = re.match(r"(?:.*@)?([A-Za-z0-9_\-\.]+)[>#\]]", p)
+            if m:
+                return m.group(1).strip()
+            m = re.match(r"^([A-Za-z0-9_\-\.]+)(?:\([^\)]+\))?[#>]", p)
+            if m:
+                return m.group(1).strip()
+
+        if not output_text:
+            return ""
+
+        cfg_match = re.search(r"^\s*(?:sysname|hostname|host-name)\s+[\"']?([A-Za-z0-9_\-\.]+)[\"']?", output_text, re.MULTILINE | re.IGNORECASE)
+        if cfg_match:
+            cand = cfg_match.group(1).strip()
+            if cand.lower() not in ["none", "default", "null"]:
+                return cand
+
+        hw_match = re.search(r"^[<\[]([A-Za-z0-9_\-\.]+)[>\]]", output_text, re.MULTILINE)
+        if hw_match:
+            return hw_match.group(1).strip()
+
+        cisco_match = re.search(r"^([A-Za-z0-9_\-\.]+)(?:\([^\)]+\))?[#>]", output_text, re.MULTILINE)
+        if cisco_match:
+            cand = cisco_match.group(1).strip()
+            if cand.lower() not in ["error", "invalid", "info", "warning", "note"]:
+                return cand
+
+        return ""
+
     @classmethod
     def _build_netmiko_dict(cls, device: DeviceCredentials) -> Dict[str, Any]:
         if device.connection_mode == "serial":
@@ -397,11 +436,31 @@ class NetmikoService:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 raw_output = net_connect.send_command(command, read_timeout=settings.DEFAULT_TIMEOUT)
                 output = cls.clean_cli_output(raw_output)
+
+                detected_sysname = ""
+                try:
+                    dev_type = (device.device_type or "").lower()
+                    sys_cmd = "show running-config | include hostname" if "cisco" in dev_type else "display current-configuration | include sysname"
+                    raw_sys = net_connect.send_command(sys_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                    detected_sysname = cls.extract_device_sysname(raw_sys)
+                    if not detected_sysname and "cisco" not in dev_type:
+                        raw_cisco = net_connect.send_command("show running-config | include hostname", read_timeout=settings.DEFAULT_TIMEOUT)
+                        detected_sysname = cls.extract_device_sysname(raw_cisco)
+                except Exception:
+                    pass
+                if not detected_sysname:
+                    try:
+                        p = net_connect.find_prompt()
+                        detected_sysname = cls.extract_device_sysname(prompt=p)
+                    except Exception:
+                        pass
+
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
                     "command": command,
                     "output": output,
+                    "sysname_device": detected_sysname,
                     "success": True,
                     "error": None,
                     "execution_time_seconds": elapsed,
@@ -504,10 +563,29 @@ class NetmikoService:
                             "error": str(cmd_err),
                             "execution_time_seconds": round(time.time() - cmd_start, 2),
                         })
+                detected_sysname = ""
+                try:
+                    dev_type = (device.device_type or "").lower()
+                    sys_cmd = "show running-config | include hostname" if "cisco" in dev_type else "display current-configuration | include sysname"
+                    raw_sys = net_connect.send_command(sys_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                    detected_sysname = cls.extract_device_sysname(raw_sys)
+                    if not detected_sysname and "cisco" not in dev_type:
+                        raw_cisco = net_connect.send_command("show running-config | include hostname", read_timeout=settings.DEFAULT_TIMEOUT)
+                        detected_sysname = cls.extract_device_sysname(raw_cisco)
+                except Exception:
+                    pass
+                if not detected_sysname:
+                    try:
+                        p = net_connect.find_prompt()
+                        detected_sysname = cls.extract_device_sysname(prompt=p)
+                    except Exception:
+                        pass
+
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
                     "results": results,
+                    "sysname_device": detected_sysname,
                     "success": all(r["success"] for r in results),
                     "overall_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,

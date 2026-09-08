@@ -19,6 +19,7 @@ from app.schemas.command import (
     JobPaginatedResultsResponse,
 )
 from app.services.nornir_service import NornirService
+from app.services.netmiko_service import NetmikoService
 from app.core.config import settings
 
 class JobRecord:
@@ -56,7 +57,7 @@ class JobService:
         num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
-        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         cleaned_commands = [c.strip() for c in (commands or []) if c and c.strip()]
         primary_command = command.strip() if command else (cleaned_commands[0] if cleaned_commands else "")
         job = JobRecord(
@@ -99,7 +100,7 @@ class JobService:
         num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
-        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="deploy",
@@ -130,7 +131,7 @@ class JobService:
     @classmethod
     def create_backup_job(cls, devices: List[DeviceCredentials], num_workers: Optional[int] = None) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
-        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="backup",
@@ -163,7 +164,7 @@ class JobService:
         num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
-        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="healthcheck",
@@ -201,7 +202,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        chunk_size = max(1, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
         cmds = [c for c in (job.payload.get("commands") or []) if c and c.strip()]
         cmd_regexes = job.payload.get("command_regexes") or {}
@@ -257,8 +258,11 @@ class JobService:
                             combined_raw = separator.join(raw_blocks) if raw_blocks else "Completed"
                             combined_regex = separator.join(regex_blocks) if regex_blocks else combined_raw
 
+                            sysname = res.get("sysname_device") or NetmikoService.extract_device_sysname(combined_raw)
                             chunk_results[idx] = CommandResponse(
                                 host=dev.host or "Unknown",
+                                hostname_import=getattr(dev, "name", None) or "",
+                                sysname_device=sysname,
                                 command=f"{len(cmds)} command(s)",
                                 output=combined_raw or "Completed",
                                 regex_output=combined_regex or combined_raw,
@@ -271,6 +275,8 @@ class JobService:
                         except Exception as dev_err:
                             chunk_results[idx] = CommandResponse(
                                 host=dev.host or "Unknown",
+                                hostname_import=getattr(dev, "name", None) or "",
+                                sysname_device="",
                                 command=f"{len(cmds)} command(s)",
                                 output="",
                                 success=False,
@@ -331,6 +337,8 @@ class JobService:
                         for dev in chunk:
                             job.results.append(CommandResponse(
                                 host=dev.host or "Unknown",
+                                hostname_import=getattr(dev, "name", None) or "",
+                                sysname_device="",
                                 command=job.payload.get("command", ""),
                                 output="",
                                 success=False,
@@ -353,7 +361,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        chunk_size = max(1, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
 
         for i in range(0, len(devices), chunk_size):
@@ -383,6 +391,8 @@ class JobService:
                     for dev in chunk:
                         job.results.append(AdvancedDeployResponse(
                             host=dev.host or "Unknown",
+                            hostname_import=getattr(dev, "name", None) or "",
+                            sysname_device="",
                             command="Batch Deploy Error",
                             output="",
                             success=False,
@@ -412,7 +422,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        chunk_size = max(1, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
 
         for i in range(0, len(devices), chunk_size):
@@ -434,6 +444,8 @@ class JobService:
                     for dev in chunk:
                         job.results.append(CommandResponse(
                             host=dev.host or "Unknown",
+                            hostname_import=getattr(dev, "name", None) or "",
+                            sysname_device="",
                             command="Backup Running Config",
                             output="",
                             success=False,
@@ -459,7 +471,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        chunk_size = max(1, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
         check_type = job.payload.get("check_type", "standard")
         commands = job.payload.get("commands", [])
@@ -523,8 +535,11 @@ class JobService:
                             mem = perf.get("memory_percent")
                             if cpu or mem:
                                 summary_str = f"(CPU: {cpu or 'N/A'}, Mem: {mem or 'N/A'})"
+                        sysname = getattr(res, "sysname_device", None) or NetmikoService.extract_device_sysname(combined_output)
                         chunk_results[idx] = CommandResponse(
                             host=res.host or dev.host or "Unknown",
+                            hostname_import=getattr(dev, "name", None) or "",
+                            sysname_device=sysname,
                             command=f"[{suite_name}] {len(res.results)} cmd(s) {summary_str}".strip(),
                             output=combined_output or "Health Check Completed",
                             regex_output=combined_regex_output or combined_output,
@@ -537,6 +552,8 @@ class JobService:
                     except Exception as e:
                         chunk_results[idx] = CommandResponse(
                             host=dev.host or "Unknown",
+                            hostname_import=getattr(dev, "name", None) or "",
+                            sysname_device="",
                             command=f"[{suite_name}] Error",
                             output="",
                             success=False,
@@ -653,3 +670,141 @@ class JobService:
             return False
         job.cancel_requested = True
         return True
+
+    @classmethod
+    def generate_job_zip(cls, job_id: str) -> Optional[bytes]:
+        """
+        Generate a comprehensive in-memory ZIP package containing:
+        1. report_summary.csv: Overall summary (total, success, failed, duration, rate).
+        2. report_per_device.csv: Columns [hostname_import, sysname_device, ip, result, detail].
+        3. raw_logs/{host}_{hostname}.txt: Separate raw CLI output file for each host.
+        4. regex_logs/{host}_{hostname}.txt: Separate regex filtered output file for each host.
+        """
+        import io
+        import re
+        import csv
+        import zipfile
+
+        job = cls._jobs.get(job_id)
+        if not job:
+            return None
+
+        with cls._lock:
+            results_snapshot = list(job.results)
+            devices_snapshot = list(job.devices)
+            total_devs = job.total_devices
+            succ_cnt = job.success_count
+            fail_cnt = job.failed_count
+            job_type = job.job_type
+            status = job.status
+            start_time = job.start_time
+            end_time = job.end_time or time.time()
+            created_at = job.created_at
+
+        elapsed = round(end_time - start_time, 2)
+        rate = round((succ_cnt / max(total_devs, 1)) * 100, 1)
+
+        # 1. Build report_summary.csv
+        summary_csv_buffer = io.StringIO()
+        summary_csv_writer = csv.writer(summary_csv_buffer, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+        summary_csv_writer.writerow([
+            "total",
+            "success",
+            "fail",
+            "success_rate",
+            "elapsed_seconds",
+            "job_id",
+            "job_type",
+            "status",
+            "created_at",
+        ])
+        summary_csv_writer.writerow([
+            total_devs,
+            succ_cnt,
+            fail_cnt,
+            f"{rate}%",
+            f"{elapsed}s",
+            job_id,
+            job_type.upper(),
+            status.upper(),
+            created_at,
+        ])
+        summary_csv_text = summary_csv_buffer.getvalue()
+
+        # 2. Build report_per_device.csv
+        csv_buffer = io.StringIO()
+        csv_writer = csv.writer(csv_buffer, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+        csv_writer.writerow(["hostname_import", "sysname_device", "ip", "result", "detail"])
+
+        dev_map_by_host = {d.host: d for d in devices_snapshot if getattr(d, "host", None)}
+
+        def sanitize_name(val: str) -> str:
+            cleaned = re.sub(r'[\\/*?:"<>| \t]+', "_", str(val or "")).strip("_")
+            return cleaned or "device"
+
+        zip_buffer = io.BytesIO()
+        seen_filenames: Dict[str, int] = {}
+
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("report_summary.csv", summary_csv_text)
+
+            for idx, res in enumerate(results_snapshot):
+                host_ip = getattr(res, "host", None) or (devices_snapshot[idx].host if idx < len(devices_snapshot) else f"host_{idx+1}")
+                linked_dev = dev_map_by_host.get(host_ip) or (devices_snapshot[idx] if idx < len(devices_snapshot) else None)
+
+                h_import = (
+                    getattr(res, "hostname_import", None)
+                    or (getattr(linked_dev, "name", None) if linked_dev else None)
+                    or ""
+                )
+
+                sysname = getattr(res, "sysname_device", None) or ""
+                if not sysname and getattr(res, "output", None):
+                    sysname = NetmikoService.extract_device_sysname(res.output)
+
+                is_success = bool(getattr(res, "success", False))
+                result_str = "success" if is_success else "fail"
+
+                err_detail = getattr(res, "error", None) or ""
+                if not is_success:
+                    detail_str = str(err_detail).strip() or "Execution failed"
+                else:
+                    t_exec = getattr(res, "execution_time_seconds", None)
+                    t_str = f"{t_exec}s" if t_exec is not None else "0.0s"
+                    detail_str = f"Completed successfully ({t_str})"
+
+                csv_writer.writerow([h_import, sysname, host_ip, result_str, detail_str])
+
+                # Raw CLI Output
+                raw_out = getattr(res, "output", None) or ""
+                if not raw_out and not is_success:
+                    raw_out = f"[Execution Failed]\nHost: {host_ip}\nError: {detail_str}\n"
+
+                # Regex Filtered Output
+                regex_out = getattr(res, "regex_output", None) or raw_out
+                if not regex_out and not is_success:
+                    regex_out = f"[Execution Failed]\nHost: {host_ip}\nError: {detail_str}\n"
+
+                # Construct unique file base name
+                if h_import:
+                    base_name = f"{sanitize_name(host_ip)}_{sanitize_name(h_import)}"
+                elif sysname:
+                    base_name = f"{sanitize_name(host_ip)}_{sanitize_name(sysname)}"
+                else:
+                    base_name = f"{sanitize_name(host_ip)}"
+
+                if base_name in seen_filenames:
+                    seen_filenames[base_name] += 1
+                    file_key = f"{base_name}_{seen_filenames[base_name]}.txt"
+                else:
+                    seen_filenames[base_name] = 1
+                    file_key = f"{base_name}.txt"
+
+                zf.writestr(f"raw_logs/{file_key}", raw_out)
+                zf.writestr(f"regex_logs/{file_key}", regex_out)
+
+            zf.writestr("report_per_device.csv", csv_buffer.getvalue())
+
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue()
+

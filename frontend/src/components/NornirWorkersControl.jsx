@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sliders } from 'lucide-react';
 import './NornirWorkersControl.css';
 
-const MIN_WORKERS = 10;
+const MIN_WORKERS = 1;
 const MAX_WORKERS = 100;
 
 export default function NornirWorkersControl({
@@ -61,7 +61,7 @@ export default function NornirWorkersControl({
   };
 
   return (
-    <div className="nornir-control-wrapper" title="Nornir concurrency settings (min 10, max 100)">
+    <div className="nornir-control-wrapper" title="Nornir concurrency settings (min 1, max 100)">
       <div className="nornir-control-label">
         <Sliders className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
         <span className="nornir-control-title">Nornir Workers:</span>
@@ -77,7 +77,7 @@ export default function NornirWorkersControl({
         onBlur={handleInputBlur}
         onKeyDown={handleKeyDown}
         className="nornir-control-input"
-        title="Directly enter number of workers (10 - 100)"
+        title="Directly enter number of workers (1 - 100)"
         aria-label="Nornir Workers"
       />
 
@@ -94,7 +94,7 @@ export default function NornirWorkersControl({
         />
       </div>
 
-      <span className="nornir-control-hint">(10-100)</span>
+      <span className="nornir-control-hint">(1-100)</span>
     </div>
   );
 }

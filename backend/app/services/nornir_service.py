@@ -150,12 +150,12 @@ class NornirService:
 
     @classmethod
     def init_nornir(cls, devices: List[DeviceCredentials], num_workers: int = None) -> Any:
-        """Initialize Nornir instance with in-memory dynamic inventory (min 10, max 100 concurrent workers)"""
+        """Initialize Nornir instance with in-memory dynamic inventory (min 1, max 100 concurrent workers)"""
         if num_workers is None:
             workers_setting = getattr(settings, "DEFAULT_NUM_WORKERS", 10)
         else:
             workers_setting = num_workers
-        workers_count = max(10, min(int(workers_setting), 100))
+        workers_count = max(1, min(int(workers_setting), 100))
         runner_workers = min(max(len(devices), 1), workers_count)
 
         host_dict = {}
@@ -310,6 +310,26 @@ class NornirService:
                             pass
                         continue
                     raise ce
+            detected_sysname = ""
+            try:
+                plat_l = (task.host.platform or "").lower()
+                sys_cmd = "show running-config | include hostname" if "cisco" in plat_l else "display current-configuration | include sysname"
+                sys_res = task.run(
+                    task=netmiko_send_command,
+                    command_string=sys_cmd,
+                    read_timeout=settings.DEFAULT_TIMEOUT,
+                )
+                detected_sysname = NetmikoService.extract_device_sysname(sys_res.result or "")
+                if not detected_sysname and "cisco" not in plat_l:
+                    sys_res_c = task.run(
+                        task=netmiko_send_command,
+                        command_string="show running-config | include hostname",
+                        read_timeout=settings.DEFAULT_TIMEOUT,
+                    )
+                    detected_sysname = NetmikoService.extract_device_sysname(sys_res_c.result or "")
+            except Exception:
+                pass
+
             t_elapsed = round(time.time() - t_start, 2)
             masked = NetmikoService.clean_cli_output(res.result or "")
             winning_user = task.host.username or (cred.get("username") if cred else "")
@@ -317,6 +337,7 @@ class NornirService:
             return {
                 "command": actual_cmd,
                 "output": masked,
+                "sysname_device": detected_sysname,
                 "execution_time_seconds": t_elapsed,
                 "authenticated_username": winning_user,
                 "authenticated_credential": winning_label,
@@ -328,11 +349,15 @@ class NornirService:
         for host_name, multi_result in agg_result.items():
             host_obj = nr.inventory.hosts[host_name]
             idx = host_obj.data.get("index", 0)
+            orig_dev = host_obj.data.get("original_device")
+            dev_name = getattr(orig_dev, "name", None) or ""
 
             if multi_result.failed:
                 exc = cls._extract_exception(multi_result)
                 results[idx] = CommandResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device="",
                     command=command,
                     output="",
                     success=False,
@@ -341,10 +366,14 @@ class NornirService:
                 )
             else:
                 task_data = multi_result[0].result
+                output_txt = task_data.get("output", "")
+                sysname = task_data.get("sysname_device") or NetmikoService.extract_device_sysname(output_txt)
                 results[idx] = CommandResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device=sysname,
                     command=task_data.get("command", command),
-                    output=task_data.get("output", ""),
+                    output=output_txt,
                     success=True,
                     error=None,
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
@@ -357,6 +386,8 @@ class NornirService:
             if results[i] is None:
                 results[i] = CommandResponse(
                     host=dev.host or "Unknown",
+                    hostname_import=getattr(dev, "name", None) or "",
+                    sysname_device="",
                     command=command,
                     output="",
                     success=False,
@@ -508,9 +539,31 @@ class NornirService:
             if save_output:
                 full_terminal_output += f"\n\n[Save Config Status]:\n{save_output}"
 
+            # Fetch device sysname via 'display current-configuration | include sysname'
+            detected_sysname = ""
+            try:
+                plat_l = (task.host.platform or "").lower()
+                sys_cmd = "show running-config | include hostname" if "cisco" in plat_l else "display current-configuration | include sysname"
+                sys_res = task.run(
+                    task=netmiko_send_command,
+                    command_string=sys_cmd,
+                    read_timeout=settings.DEFAULT_TIMEOUT,
+                )
+                detected_sysname = NetmikoService.extract_device_sysname(sys_res.result or "")
+                if not detected_sysname and "cisco" not in plat_l:
+                    sys_res_c = task.run(
+                        task=netmiko_send_command,
+                        command_string="show running-config | include hostname",
+                        read_timeout=settings.DEFAULT_TIMEOUT,
+                    )
+                    detected_sysname = NetmikoService.extract_device_sysname(sys_res_c.result or "")
+            except Exception:
+                pass
+
             t_elapsed = round(time.time() - t_start, 2)
             return {
                 "deploy_output": NetmikoService.clean_cli_output(full_terminal_output),
+                "sysname_device": detected_sysname,
                 "save_output": save_output,
                 "backup_output": backup_output,
                 "pre_check_results": pre_res_list,
@@ -527,11 +580,15 @@ class NornirService:
         for host_name, multi_result in agg_result.items():
             host_obj = nr.inventory.hosts[host_name]
             idx = host_obj.data.get("index", 0)
+            orig_dev = host_obj.data.get("original_device")
+            dev_name = getattr(orig_dev, "name", None) or ""
 
             if multi_result.failed:
                 exc = cls._extract_exception(multi_result)
                 results[idx] = AdvancedDeployResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device="",
                     command=f"Nornir Config Deployment ({len(clean_commands)} lines)",
                     output="",
                     success=False,
@@ -547,10 +604,14 @@ class NornirService:
                 )
             else:
                 task_data = multi_result[0].result
+                deploy_out = task_data.get("deploy_output", "")
+                sysname = task_data.get("sysname_device") or NetmikoService.extract_device_sysname(deploy_out)
                 results[idx] = AdvancedDeployResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device=sysname,
                     command=f"Nornir Config Deployment ({len(clean_commands)} lines)",
-                    output=task_data.get("deploy_output", ""),
+                    output=deploy_out,
                     success=True,
                     error=None,
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
@@ -569,6 +630,8 @@ class NornirService:
             if results[i] is None:
                 results[i] = AdvancedDeployResponse(
                     host=dev.host or "Unknown",
+                    hostname_import=getattr(dev, "name", None) or "",
+                    sysname_device="",
                     command="Nornir Deployment",
                     output="",
                     success=False,
@@ -632,11 +695,15 @@ class NornirService:
         for host_name, multi_result in agg_result.items():
             host_obj = nr.inventory.hosts[host_name]
             idx = host_obj.data.get("index", 0)
+            orig_dev = host_obj.data.get("original_device")
+            dev_name = getattr(orig_dev, "name", None) or ""
 
             if multi_result.failed:
                 exc = cls._extract_exception(multi_result)
                 results[idx] = CommandResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device="",
                     command="Backup Running Config",
                     output="",
                     success=False,
@@ -645,10 +712,14 @@ class NornirService:
                 )
             else:
                 task_data = multi_result[0].result
+                out_txt = task_data.get("output", "")
+                sysname = NetmikoService.extract_device_sysname(out_txt)
                 results[idx] = CommandResponse(
                     host=host_name,
+                    hostname_import=dev_name,
+                    sysname_device=sysname,
                     command=task_data.get("command", "show running-config"),
-                    output=task_data.get("output", ""),
+                    output=out_txt,
                     success=True,
                     error=None,
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
@@ -658,6 +729,8 @@ class NornirService:
             if results[i] is None:
                 results[i] = CommandResponse(
                     host=dev.host or "Unknown",
+                    hostname_import=getattr(dev, "name", None) or "",
+                    sysname_device="",
                     command="Backup Running Config",
                     output="",
                     success=False,

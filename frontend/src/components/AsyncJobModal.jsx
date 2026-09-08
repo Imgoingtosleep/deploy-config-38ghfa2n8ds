@@ -21,6 +21,7 @@ import {
   Filter,
   Layers,
   ChevronDown,
+  FileArchive,
 } from 'lucide-react';
 import {
   getJobStatus,
@@ -29,6 +30,7 @@ import {
   cancelJob,
   createJobEventSource,
   getTemplates,
+  exportJobZipFile,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from './TerminalOutput';
 import './AsyncJobModal.css';
@@ -372,6 +374,21 @@ export default function AsyncJobModal({
     }, 400);
   };
 
+  const exportZipPackage = async () => {
+    if (!jobId) return;
+    setExporting(true);
+    try {
+      await exportJobZipFile(jobId, title);
+      setFleetExportFeedback('Saved Fleet ZIP (Reports & Logs)');
+      setTimeout(() => setFleetExportFeedback(''), 3000);
+      setShowExportDropdown(false);
+    } catch (err) {
+      alert(`Export ZIP failed: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const progress = jobStatus?.progress_percent || 0;
   const isRunning = jobStatus?.status === 'running' || jobStatus?.status === 'pending';
   const speed = jobStatus?.elapsed_seconds > 0
@@ -539,6 +556,25 @@ export default function AsyncJobModal({
 
                     <button
                       type="button"
+                      onClick={exportZipPackage}
+                      className="save-menu-item"
+                      style={{ background: 'rgba(99, 102, 241, 0.08)' }}
+                    >
+                      <FileArchive className="h-4 w-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                      <div className="save-menu-text">
+                        <span className="save-menu-title" style={{ color: '#818cf8', fontWeight: 600 }}>
+                          Export All to ZIP (Reports + Logs)
+                        </span>
+                        <span className="save-menu-desc">
+                          Summary report, per-device CSV report, and individual raw/regex log files
+                        </span>
+                      </div>
+                    </button>
+
+                    <div className="save-menu-divider" />
+
+                    <button
+                      type="button"
                       onClick={exportAllRaw}
                       className="save-menu-item"
                     >
@@ -620,8 +656,21 @@ export default function AsyncJobModal({
                         <tr key={idx} className={!isSuccess ? 'bg-rose-950/20' : ''}>
                           <td className="font-mono text-xs text-slate-500 whitespace-nowrap">{itemIdx}</td>
                           <td className="font-mono text-xs font-semibold text-white whitespace-nowrap">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-col gap-0.5">
                               <span>{item.host}</span>
+                              {(item.hostname_import || item.sysname_device) && (
+                                <div className="flex items-center gap-1 text-[11px] font-normal text-slate-400">
+                                  {item.hostname_import && (
+                                    <span className="text-indigo-300 font-sans" title="Imported Hostname">{item.hostname_import}</span>
+                                  )}
+                                  {item.hostname_import && item.sysname_device && item.sysname_device !== item.hostname_import && (
+                                    <span className="text-slate-600">&bull;</span>
+                                  )}
+                                  {item.sysname_device && item.sysname_device !== item.hostname_import && (
+                                    <span className="text-amber-300 font-sans" title="Device CLI Sysname">[{item.sysname_device}]</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </td>
                           <td className="whitespace-nowrap">

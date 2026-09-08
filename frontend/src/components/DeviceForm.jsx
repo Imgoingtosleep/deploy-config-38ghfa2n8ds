@@ -494,7 +494,7 @@ export default function DeviceForm({
     const results = [];
 
     fleet.forEach((dev, idx) => {
-      if (dev && dev.host && dev.host.toLowerCase().includes(q)) {
+      if (dev && ((dev.host && dev.host.toLowerCase().includes(q)) || (dev.name && dev.name.toLowerCase().includes(q)))) {
         results.push({
           ...dev,
           originalHost: dev.host,
@@ -509,12 +509,13 @@ export default function DeviceForm({
 
   // Filtered fleet for table display
   const filteredFleet = hostSearchQuery.trim()
-    ? fleet.filter((dev) => dev.host && dev.host.toLowerCase().includes(hostSearchQuery.trim().toLowerCase()))
+    ? fleet.filter((dev) => (dev.host && dev.host.toLowerCase().includes(hostSearchQuery.trim().toLowerCase())) || (dev.name && dev.name.toLowerCase().includes(hostSearchQuery.trim().toLowerCase())))
     : fleet;
 
   const handleOpenEditDevice = (dev) => {
     setEditingDevice(dev);
     setEditForm({
+      name: dev.name || '',
       host: dev.host || '',
       port: dev.port || 22,
       device_type: dev.device_type || 'autodetect',
@@ -700,6 +701,7 @@ export default function DeviceForm({
 
     const formatDevice = (d, id) => ({
       id: id || d.id || `dev-${Date.now()}-${Math.random()}`,
+      name: d.name || d.hostname || '',
       host: d.host || '',
       port: d.port || prof?.port || 22,
       device_type: d.device_type && d.device_type !== 'autodetect' ? d.device_type : (prof?.device_type || 'autodetect'),
@@ -1022,6 +1024,7 @@ export default function DeviceForm({
               <thead>
                 <tr>
                   <th style={{ width: '45px', textAlign: 'center' }}>#</th>
+                  <th style={{ width: '180px' }}>Hostname</th>
                   <th>IP Address (Host)</th>
                   <th style={{ width: '240px' }}>Device Type / Driver</th>
                   <th style={{ width: '100px' }}>Port</th>
@@ -1031,10 +1034,10 @@ export default function DeviceForm({
               <tbody>
                 {filteredFleet.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="text-center py-8 text-slate-400 text-xs">
+                    <td colSpan="6" className="text-center py-8 text-slate-400 text-xs">
                       <div className="flex flex-col items-center gap-2">
                         <Search className="h-6 w-6 text-slate-600" />
-                        <p>No devices found matching Host IP "{hostSearchQuery}"</p>
+                        <p>No devices found matching Host IP or Hostname "{hostSearchQuery}"</p>
                         <button
                           type="button"
                           onClick={() => setHostSearchQuery('')}
@@ -1050,6 +1053,15 @@ export default function DeviceForm({
                     <tr key={dev.id} id={`fleet-row-${dev.id}`}>
                       <td style={{ textAlign: 'center' }} className="font-mono text-xs text-slate-500">
                         {idx + 1}
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={dev.name || ''}
+                          onChange={(e) => updateFleetDevice(dev.id, 'name', e.target.value)}
+                          placeholder="e.g. SW-Core-01"
+                          className="fleet-input font-mono text-sky-300"
+                        />
                       </td>
                       <td>
                         <input
@@ -1089,7 +1101,7 @@ export default function DeviceForm({
                             type="button"
                             onClick={() => handleOpenEditDevice(dev)}
                             className="btn-edit-row"
-                            title="Edit this Host IP and settings"
+                            title="Edit this device settings"
                           >
                             <Edit2 className="h-3.5 w-3.5 text-indigo-400" />
                           </button>
@@ -1586,23 +1598,23 @@ export default function DeviceForm({
                 />
                 <UploadCloud className="h-9 w-9 text-indigo-400 mb-2" />
                 <p className="text-sm font-medium text-slate-200">
-                  {importFile ? importFile.name : 'Click to browse or drag & drop IP file here'}
+                  {importFile ? importFile.name : 'Click to browse or drag & drop inventory file here'}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Requires only IP addresses (1 IP per row). Formats: <strong className="text-indigo-300">CSV</strong>, <strong className="text-emerald-300">Excel (.xlsx)</strong>, <strong className="text-amber-300">JSON</strong>, <strong className="text-sky-300">YAML</strong>, <strong className="text-slate-300">TXT</strong>
+                  Supports <strong className="text-sky-300">Hostname</strong> & <strong className="text-indigo-300">IP address</strong> columns (e.g. hostname, ip). Formats: <strong className="text-indigo-300">CSV</strong>, <strong className="text-emerald-300">Excel (.xlsx)</strong>, <strong className="text-amber-300">JSON</strong>, <strong className="text-sky-300">YAML</strong>, <strong className="text-slate-300">TXT</strong>
                 </p>
               </div>
 
               {/* Sample Templates Bar */}
               <div className="templates-download-bar">
                 <span className="text-xs text-slate-400 flex items-center gap-1">
-                  <Download className="h-3 w-3" /> Sample IP Templates:
+                  <Download className="h-3 w-3" /> Sample Templates:
                 </span>
                 <button
                   type="button"
                   onClick={() => downloadInventoryTemplate('csv')}
                   className="btn-template-dl"
-                  title="Download CSV containing only IP column"
+                  title="Download CSV template with Hostname and IP"
                 >
                   <FileText className="h-3 w-3 text-indigo-300" />
                   <span>CSV</span>
@@ -1611,7 +1623,7 @@ export default function DeviceForm({
                   type="button"
                   onClick={() => downloadInventoryTemplate('xlsx')}
                   className="btn-template-dl"
-                  title="Download Excel XLSX containing only IP column"
+                  title="Download Excel XLSX template with Hostname and IP"
                 >
                   <FileSpreadsheet className="h-3 w-3 text-emerald-300" />
                   <span>Excel (XLSX)</span>
@@ -1620,7 +1632,7 @@ export default function DeviceForm({
                   type="button"
                   onClick={() => downloadInventoryTemplate('json')}
                   className="btn-template-dl"
-                  title="Download JSON array of IPs"
+                  title="Download JSON template with Hostname and IP"
                 >
                   <FileCode className="h-3 w-3 text-amber-300" />
                   <span>JSON</span>
@@ -1629,7 +1641,7 @@ export default function DeviceForm({
                   type="button"
                   onClick={() => downloadInventoryTemplate('yaml')}
                   className="btn-template-dl"
-                  title="Download YAML list of IPs"
+                  title="Download YAML template with Hostname and IP"
                 >
                   <FileCode className="h-3 w-3 text-sky-300" />
                   <span>YAML</span>
@@ -1713,6 +1725,7 @@ export default function DeviceForm({
                       <thead>
                         <tr>
                           <th>#</th>
+                          <th>Hostname</th>
                           <th>Host / IP</th>
                           <th>Profile</th>
                           <th>Type</th>
@@ -1725,6 +1738,7 @@ export default function DeviceForm({
                           return (
                             <tr key={i}>
                               <td className="font-mono text-slate-500">{i + 1}</td>
+                              <td className="font-mono text-sky-300">{d.name || '-'}</td>
                               <td className="font-mono font-semibold text-white">{d.host}</td>
                               <td className="text-sky-300 font-mono text-xs">{prof?.name || 'Default'}</td>
                               <td className="text-slate-300">{d.device_type || prof?.device_type || 'autodetect'}</td>
@@ -1773,7 +1787,7 @@ export default function DeviceForm({
             <div className="edit-ip-modal-header">
               <div className="flex items-center gap-2">
                 <Edit2 className="h-4 w-4 text-indigo-400" />
-                <h3 className="font-semibold text-white text-sm">Edit Host IP Address</h3>
+                <h3 className="font-semibold text-white text-sm">Edit Device Settings</h3>
               </div>
               <button
                 type="button"
@@ -1790,9 +1804,27 @@ export default function DeviceForm({
                 <span className="font-mono text-xs font-bold text-white">
                   {editingDevice.originalHost || editingDevice.host}
                 </span>
+                {editingDevice.name && (
+                  <span className="text-xs text-sky-300 font-mono font-semibold">
+                    ({editingDevice.name})
+                  </span>
+                )}
                 <span className="text-[11px] text-indigo-400">
                   (Fleet Device)
                 </span>
+              </div>
+
+              <div className="form-group mb-3">
+                <label className="form-label font-semibold text-slate-300">
+                  Hostname
+                </label>
+                <input
+                  type="text"
+                  value={editForm.name || ''}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  placeholder="e.g. SW-Core-01"
+                  className="form-input font-mono text-sky-300"
+                />
               </div>
 
               <div className="form-group mb-3">

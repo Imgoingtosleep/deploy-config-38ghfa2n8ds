@@ -589,6 +589,7 @@ export default function HealthCheckPage({
 
     try {
       const devicesPayload = validDevices.map((d) => ({
+        name: d.name || '',
         host: d.host.trim(),
         port: parseInt(d.port, 10) || 22,
         device_type: d.device_type || 'cisco_ios',

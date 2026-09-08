@@ -456,6 +456,7 @@ export default function DeployConfigPage({
     try {
       setDeploying(true);
       const payloadDevices = validFleet.map((d) => ({
+        name: d.name || '',
         host: d.host.trim(),
         port: parseInt(d.port, 10) || 22,
         device_type: d.device_type || 'cisco_ios',
@@ -497,6 +498,7 @@ export default function DeployConfigPage({
     try {
       setBackingUp(true);
       const payloadDevices = validFleet.map((d) => ({
+        name: d.name || '',
         host: d.host.trim(),
         port: parseInt(d.port, 10) || 22,
         device_type: d.device_type || 'cisco_ios',

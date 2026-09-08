@@ -1,7 +1,7 @@
 import json
 import asyncio
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from app.schemas.command import (
     BatchCommandRequest,
     BatchDeployRequest,
@@ -143,3 +143,26 @@ def cancel_job(job_id: str):
     if not success:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return {"job_id": job_id, "status": "cancelling", "message": "Cancellation signal dispatched."}
+
+@router.get("/{job_id}/export-zip")
+def export_job_zip(job_id: str):
+    """
+    Export all job logs and reports as a ZIP archive containing:
+    - report_summary.csv (total, success, failed statistics)
+    - report_per_device.csv (hostname_import, sysname_device, ip, result, detail)
+    - raw_logs/{host}_{hostname}.txt (raw output for each device)
+    - regex_logs/{host}_{hostname}.txt (regex filtered output for each device)
+    """
+    zip_bytes = JobService.generate_job_zip(job_id)
+    if zip_bytes is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="fleet_job_{job_id[:8]}_export.zip"',
+            "Content-Type": "application/zip",
+        },
+    )
+

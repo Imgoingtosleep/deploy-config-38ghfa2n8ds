@@ -291,6 +291,8 @@ def _execute_device_health_check(
 
     return MultiCommandResponse(
         host=result.get("host", device.host or "Unknown"),
+        hostname_import=device.name,
+        sysname_device=result.get("sysname_device"),
         device_name=device.name,
         results=command_results,
         success=result.get("success", False),
@@ -374,7 +376,7 @@ def run_batch_health_check(request: BatchHealthCheckRequest):
         )
 
     check_type = request.check_type or "standard"
-    workers_val = max(10, min(int(request.num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+    workers_val = max(1, min(int(request.num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
     max_workers = min(len(devices), workers_val)
 
     device_results = [None] * len(devices)

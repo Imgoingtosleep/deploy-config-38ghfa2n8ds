@@ -96,7 +96,7 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
             "authenticated_username": getattr(dev, "username", None),
         }
 
-    workers_val = max(10, min(getattr(settings, "DEFAULT_NUM_WORKERS", 10), 100))
+    workers_val = max(1, min(getattr(settings, "DEFAULT_NUM_WORKERS", 10), 100))
     with ThreadPoolExecutor(max_workers=min(len(devices), workers_val)) as executor:
         future_map = {executor.submit(_probe_dev, dev, idx): idx for idx, dev in enumerate(devices)}
         for future in future_map:
@@ -209,16 +209,16 @@ async def import_devices(
 
 @router.get("/templates/{format_name}")
 def download_inventory_template(format_name: str):
-    """Download ready-to-use sample IP list template (csv, xlsx, json, yaml) containing only IP addresses"""
+    """Download ready-to-use sample IP list template (csv, xlsx, json, yaml) with hostname and ip"""
     fmt = format_name.lower().strip()
 
     if fmt == "csv":
         csv_data = (
-            "ip\n"
-            "192.168.1.1\n"
-            "192.168.1.2\n"
-            "10.0.0.1\n"
-            "10.0.0.2\n"
+            "hostname,ip\n"
+            "SW-Core-01,192.168.1.1\n"
+            "SW-Dist-01,192.168.1.2\n"
+            "SW-Access-01,10.0.0.1\n"
+            "SW-Access-02,10.0.0.2\n"
         )
         return Response(
             content=csv_data,
@@ -228,11 +228,15 @@ def download_inventory_template(format_name: str):
 
     elif fmt in ["yaml", "yml"]:
         yaml_data = (
-            "# Fleet IP List YAML\n"
-            "- 192.168.1.1\n"
-            "- 192.168.1.2\n"
-            "- 10.0.0.1\n"
-            "- 10.0.0.2\n"
+            "# Fleet IP List YAML (hostname and ip)\n"
+            "- hostname: SW-Core-01\n"
+            "  ip: 192.168.1.1\n"
+            "- hostname: SW-Dist-01\n"
+            "  ip: 192.168.1.2\n"
+            "- hostname: SW-Access-01\n"
+            "  ip: 10.0.0.1\n"
+            "- hostname: SW-Access-02\n"
+            "  ip: 10.0.0.2\n"
         )
         return Response(
             content=yaml_data,
@@ -242,10 +246,10 @@ def download_inventory_template(format_name: str):
 
     elif fmt == "json":
         json_data = [
-            "192.168.1.1",
-            "192.168.1.2",
-            "10.0.0.1",
-            "10.0.0.2",
+            {"hostname": "SW-Core-01", "ip": "192.168.1.1"},
+            {"hostname": "SW-Dist-01", "ip": "192.168.1.2"},
+            {"hostname": "SW-Access-01", "ip": "10.0.0.1"},
+            {"hostname": "SW-Access-02", "ip": "10.0.0.2"},
         ]
         import json as json_lib
         return Response(
@@ -260,11 +264,11 @@ def download_inventory_template(format_name: str):
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Fleet_IP_List"
-        ws.append(["ip"])
-        ws.append(["192.168.1.1"])
-        ws.append(["192.168.1.2"])
-        ws.append(["10.0.0.1"])
-        ws.append(["10.0.0.2"])
+        ws.append(["hostname", "ip"])
+        ws.append(["SW-Core-01", "192.168.1.1"])
+        ws.append(["SW-Dist-01", "192.168.1.2"])
+        ws.append(["SW-Access-01", "10.0.0.1"])
+        ws.append(["SW-Access-02", "10.0.0.2"])
 
         stream = io.BytesIO()
         wb.save(stream)

@@ -10,17 +10,17 @@ import './App.css';
 export default function App() {
   const [activeTab, setActiveTab] = useState('healthcheck');
 
-  // Nornir Concurrent Workers (Default starts at 10, min: 10, max: 100)
+  // Nornir Concurrent Workers (Default starts at 10, min: 1, max: 100)
   const [nornirWorkers, setNornirWorkers] = useState(() => {
     const saved = localStorage.getItem('netauto_nornir_workers');
-    return saved ? Math.max(10, Math.min(100, parseInt(saved, 10))) : 10;
+    return saved ? Math.max(1, Math.min(100, parseInt(saved, 10))) : 10;
   });
 
   useEffect(() => {
     getNornirWorkers()
       .then((data) => {
         if (data?.num_workers) {
-          const val = Math.max(10, Math.min(100, data.num_workers));
+          const val = Math.max(1, Math.min(100, data.num_workers));
           setNornirWorkers(val);
           localStorage.setItem('netauto_nornir_workers', val);
         }
@@ -31,7 +31,7 @@ export default function App() {
   }, []);
 
   const handleUpdateWorkers = (val) => {
-    const clamped = Math.max(10, Math.min(100, parseInt(val, 10) || 10));
+    const clamped = Math.max(1, Math.min(100, parseInt(val, 10) || 10));
     setNornirWorkers(clamped);
     localStorage.setItem('netauto_nornir_workers', clamped);
     saveNornirWorkersApi(clamped).catch((err) => {

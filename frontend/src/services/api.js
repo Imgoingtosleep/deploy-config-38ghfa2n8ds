@@ -301,6 +301,24 @@ export const cancelJob = async (jobId) => {
   return response.data;
 };
 
+export const downloadJobZip = async (jobId) => {
+  const response = await apiClient.get(`/jobs/${jobId}/export-zip`, {
+    responseType: 'blob',
+  });
+  return response.data;
+};
+
+export const exportJobZipFile = async (jobId, title = 'fleet_job') => {
+  const blob = await downloadJobZip(jobId);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `fleet_${jobId.slice(0, 8)}_${timestamp}.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 export const createJobEventSource = (jobId) => {
   const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
   return new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/stream`);
