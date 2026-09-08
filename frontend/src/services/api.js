@@ -51,13 +51,15 @@ export const runHealthCheck = async (device, checkType = 'standard', commands = 
   return response.data;
 };
 
-export const runBatchHealthCheck = async (devices, checkType = 'standard', commands = [], vendorCommands = {}) => {
-  const response = await apiClient.post('/healthcheck/run-batch', {
+export const runBatchHealthCheck = async (devices, checkType = 'standard', commands = [], vendorCommands = {}, numWorkers = null) => {
+  const payload = {
     devices,
     check_type: checkType,
     commands,
     vendor_commands: vendorCommands,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/healthcheck/run-batch', payload);
   return response.data;
 };
 
@@ -71,12 +73,14 @@ export const executeTroubleshootCommand = async (device, command, vendorCommands
   return response.data;
 };
 
-export const executeBatchTroubleshootCommand = async (devices, command = '', vendorCommands = {}) => {
-  const response = await apiClient.post('/troubleshoot/execute-batch', {
+export const executeBatchTroubleshootCommand = async (devices, command = '', vendorCommands = {}, numWorkers = null) => {
+  const payload = {
     devices,
     command,
     vendor_commands: vendorCommands,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/troubleshoot/execute-batch', payload);
   return response.data;
 };
 
@@ -114,16 +118,19 @@ export const deployConfigurationBatch = async (
   saveConfig = true,
   preCheckCommands = [],
   postCheckCommands = [],
-  backupBeforeDeploy = false
+  backupBeforeDeploy = false,
+  numWorkers = null
 ) => {
-  const response = await apiClient.post('/deploy/push-batch', {
+  const payload = {
     devices,
     config_commands: configCommands,
     save_config: saveConfig,
     pre_check_commands: preCheckCommands,
     post_check_commands: postCheckCommands,
     backup_before_deploy: backupBeforeDeploy,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/deploy/push-batch', payload);
   return response.data;
 };
 
@@ -134,10 +141,10 @@ export const backupRunningConfig = async (device) => {
   return response.data;
 };
 
-export const backupBatchRunningConfig = async (devices) => {
-  const response = await apiClient.post('/deploy/backup-batch', {
-    devices,
-  });
+export const backupBatchRunningConfig = async (devices, numWorkers = null) => {
+  const payload = { devices };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/deploy/backup-batch', payload);
   return response.data;
 };
 
@@ -184,15 +191,18 @@ export const submitTroubleshootJob = async (
   command,
   vendorCommands = null,
   huaweiCommand = null,
-  ciscoCommand = null
+  ciscoCommand = null,
+  numWorkers = null
 ) => {
-  const response = await apiClient.post('/jobs/submit-troubleshoot', {
+  const payload = {
     devices,
     command,
     vendor_commands: vendorCommands,
     huawei_command: huaweiCommand,
     cisco_command: ciscoCommand,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/jobs/submit-troubleshoot', payload);
   return response.data;
 };
 
@@ -202,34 +212,57 @@ export const submitDeployJob = async (
   saveConfig = true,
   preCheckCommands = [],
   postCheckCommands = [],
-  backupBeforeDeploy = false
+  backupBeforeDeploy = false,
+  numWorkers = null
 ) => {
-  const response = await apiClient.post('/jobs/submit-deploy', {
+  const payload = {
     devices,
     config_commands: configCommands,
     save_config: saveConfig,
     pre_check_commands: preCheckCommands,
     post_check_commands: postCheckCommands,
     backup_before_deploy: backupBeforeDeploy,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/jobs/submit-deploy', payload);
   return response.data;
 };
 
-export const submitBackupJob = async (devices) => {
-  const response = await apiClient.post('/jobs/submit-backup', {
-    devices,
-  });
+export const submitBackupJob = async (devices, numWorkers = null) => {
+  const payload = { devices };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/jobs/submit-backup', payload);
   return response.data;
 };
 
-export const submitHealthCheckJob = async (devices, checkType = 'standard', commands = [], vendorCommands = {}, suiteName = null) => {
-  const response = await apiClient.post('/jobs/submit-healthcheck', {
+export const submitHealthCheckJob = async (
+  devices,
+  checkType = 'standard',
+  commands = [],
+  vendorCommands = {},
+  suiteName = null,
+  numWorkers = null
+) => {
+  const payload = {
     devices,
     check_type: checkType,
     commands,
     vendor_commands: vendorCommands,
     suite_name: suiteName,
-  });
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/jobs/submit-healthcheck', payload);
+  return response.data;
+};
+
+// System / Nornir Concurrency Setting APIs
+export const getNornirWorkers = async () => {
+  const response = await apiClient.get('/system/nornir-workers');
+  return response.data;
+};
+
+export const setNornirWorkers = async (numWorkers) => {
+  const response = await apiClient.post('/system/nornir-workers', { num_workers: numWorkers });
   return response.data;
 };
 
@@ -317,6 +350,33 @@ export const importDevicesFromFile = async (file, defaultOptions = {}) => {
 export const downloadInventoryTemplate = (formatName) => {
   const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
   window.open(`${baseUrl}/api/v1/devices/templates/${formatName}`, '_blank');
+};
+
+
+// --- Credential Profiles APIs ---
+export const getCredentialProfiles = async () => {
+  const response = await apiClient.get('/profiles');
+  return response.data;
+};
+
+export const createCredentialProfile = async (profileData) => {
+  const response = await apiClient.post('/profiles', profileData);
+  return response.data;
+};
+
+export const updateCredentialProfile = async (id, profileData) => {
+  const response = await apiClient.put(`/profiles/${id}`, profileData);
+  return response.data;
+};
+
+export const deleteCredentialProfile = async (id) => {
+  const response = await apiClient.delete(`/profiles/${id}`);
+  return response.data;
+};
+
+export const setDefaultCredentialProfile = async (id) => {
+  const response = await apiClient.post(`/profiles/${id}/default`);
+  return response.data;
 };
 
 export default apiClient;

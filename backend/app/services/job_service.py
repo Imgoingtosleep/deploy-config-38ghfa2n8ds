@@ -51,8 +51,10 @@ class JobService:
         vendor_commands: Dict[str, str] = None,
         huawei_command: str = None,
         cisco_command: str = None,
+        num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
+        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="troubleshoot",
@@ -62,6 +64,7 @@ class JobService:
                 "vendor_commands": vendor_commands,
                 "huawei_command": huawei_command,
                 "cisco_command": cisco_command,
+                "num_workers": workers_val,
             }
         )
         with cls._lock:
@@ -75,7 +78,7 @@ class JobService:
             status="pending",
             total_devices=len(devices),
             created_at=job.created_at,
-            message=f"Job {job_id} submitted for {len(devices)} devices in background.",
+            message=f"Job {job_id} submitted for {len(devices)} devices in background ({workers_val} workers).",
         )
 
     @classmethod
@@ -87,8 +90,10 @@ class JobService:
         pre_check_commands: List[str] = None,
         post_check_commands: List[str] = None,
         backup_before_deploy: bool = False,
+        num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
+        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="deploy",
@@ -99,6 +104,7 @@ class JobService:
                 "pre_check_commands": pre_check_commands or [],
                 "post_check_commands": post_check_commands or [],
                 "backup_before_deploy": backup_before_deploy,
+                "num_workers": workers_val,
             }
         )
         with cls._lock:
@@ -112,17 +118,18 @@ class JobService:
             status="pending",
             total_devices=len(devices),
             created_at=job.created_at,
-            message=f"Deployment job {job_id} submitted for {len(devices)} devices in background.",
+            message=f"Deployment job {job_id} submitted for {len(devices)} devices in background ({workers_val} workers).",
         )
 
     @classmethod
-    def create_backup_job(cls, devices: List[DeviceCredentials]) -> JobSubmitResponse:
+    def create_backup_job(cls, devices: List[DeviceCredentials], num_workers: Optional[int] = None) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
+        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="backup",
             devices=devices,
-            payload={}
+            payload={"num_workers": workers_val}
         )
         with cls._lock:
             cls._jobs[job_id] = job
@@ -135,7 +142,7 @@ class JobService:
             status="pending",
             total_devices=len(devices),
             created_at=job.created_at,
-            message=f"Fleet backup job {job_id} submitted for {len(devices)} devices in background.",
+            message=f"Fleet backup job {job_id} submitted for {len(devices)} devices in background ({workers_val} workers).",
         )
 
     @classmethod
@@ -146,8 +153,10 @@ class JobService:
         commands: List[str] = None,
         vendor_commands: Dict[str, List[str]] = None,
         suite_name: str = None,
+        num_workers: Optional[int] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
+        workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         job = JobRecord(
             job_id=job_id,
             job_type="healthcheck",
@@ -157,6 +166,7 @@ class JobService:
                 "commands": commands or [],
                 "vendor_commands": vendor_commands or {},
                 "suite_name": suite_name or check_type.capitalize(),
+                "num_workers": workers_val,
             }
         )
         with cls._lock:
@@ -171,7 +181,7 @@ class JobService:
             status="pending",
             total_devices=len(devices),
             created_at=job.created_at,
-            message=f"Fleet health check job {job_id} ({label}) submitted for {len(devices)} devices in background.",
+            message=f"Fleet health check job {job_id} ({label}) submitted for {len(devices)} devices in background ({workers_val} workers).",
         )
 
 
@@ -183,7 +193,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
+        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
 
         for i in range(0, len(devices), chunk_size):
@@ -201,6 +211,7 @@ class JobService:
                     vendor_commands=job.payload.get("vendor_commands"),
                     huawei_command=job.payload.get("huawei_command"),
                     cisco_command=job.payload.get("cisco_command"),
+                    num_workers=chunk_size,
                 )
                 with cls._lock:
                     job.results.extend(batch_res.results)
@@ -234,7 +245,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
+        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
 
         for i in range(0, len(devices), chunk_size):
@@ -252,6 +263,7 @@ class JobService:
                     pre_check_commands=job.payload.get("pre_check_commands", []),
                     post_check_commands=job.payload.get("post_check_commands", []),
                     backup_before_deploy=job.payload.get("backup_before_deploy", False),
+                    num_workers=chunk_size,
                 )
                 with cls._lock:
                     job.results.extend(batch_res.results)
@@ -292,7 +304,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
+        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
 
         for i in range(0, len(devices), chunk_size):
@@ -303,7 +315,7 @@ class JobService:
 
             chunk = devices[i : i + chunk_size]
             try:
-                batch_res = NornirService.run_batch_backup(devices=chunk)
+                batch_res = NornirService.run_batch_backup(devices=chunk, num_workers=chunk_size)
                 with cls._lock:
                     job.results.extend(batch_res.results)
                     job.completed_devices += len(chunk)
@@ -339,7 +351,7 @@ class JobService:
 
         job.status = "running"
         job.start_time = time.time()
-        chunk_size = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
+        chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
         check_type = job.payload.get("check_type", "standard")
         commands = job.payload.get("commands", [])
@@ -355,7 +367,7 @@ class JobService:
             chunk = devices[i : i + chunk_size]
             chunk_results = [None] * len(chunk)
 
-            with ThreadPoolExecutor(max_workers=min(len(chunk), 50)) as executor:
+            with ThreadPoolExecutor(max_workers=min(len(chunk), chunk_size)) as executor:
                 future_to_idx = {
                     executor.submit(
                         _execute_device_health_check,

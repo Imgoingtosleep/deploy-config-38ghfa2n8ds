@@ -26,6 +26,7 @@ def submit_troubleshoot_job(request: BatchCommandRequest):
         vendor_commands=request.vendor_commands,
         huawei_command=request.huawei_command,
         cisco_command=request.cisco_command,
+        num_workers=request.num_workers,
     )
 
 @router.post("/submit-deploy", response_model=JobSubmitResponse)
@@ -40,6 +41,7 @@ def submit_deploy_job(request: BatchDeployRequest):
         pre_check_commands=request.pre_check_commands or [],
         post_check_commands=request.post_check_commands or [],
         backup_before_deploy=request.backup_before_deploy,
+        num_workers=request.num_workers,
     )
 
 @router.post("/submit-backup", response_model=JobSubmitResponse)
@@ -47,7 +49,7 @@ def submit_backup_job(request: BatchBackupRequest):
     """Submit background running-config backup job across fleet (up to 10,000+ devices)"""
     if not request.devices:
         raise HTTPException(status_code=400, detail="No devices provided for backup job")
-    return JobService.create_backup_job(request.devices)
+    return JobService.create_backup_job(request.devices, num_workers=request.num_workers)
 
 @router.post("/submit-healthcheck", response_model=JobSubmitResponse)
 def submit_healthcheck_job(request: BatchHealthCheckRequest):
@@ -60,6 +62,7 @@ def submit_healthcheck_job(request: BatchHealthCheckRequest):
         commands=request.commands,
         vendor_commands=request.vendor_commands,
         suite_name=request.suite_name,
+        num_workers=request.num_workers,
     )
 
 

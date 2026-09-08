@@ -123,6 +123,7 @@ def deploy_config_batch(request: BatchDeployRequest):
             pre_check_commands=request.pre_check_commands or [],
             post_check_commands=request.post_check_commands or [],
             backup_before_deploy=request.backup_before_deploy,
+            num_workers=request.num_workers,
         )
     except Exception as nornir_err:
         # Fallback to ThreadPoolExecutor if Nornir encounters environment-specific exceptions
@@ -133,7 +134,8 @@ def deploy_config_batch(request: BatchDeployRequest):
             for line in request.config_commands
             if line.strip() and not line.strip().startswith("!") and not line.strip().startswith("#")
         ]
-        max_workers = min(max(len(devices), 1), 20)
+        fallback_workers = request.num_workers or 20
+        max_workers = min(max(len(devices), 1), fallback_workers)
         device_results = [None] * len(devices)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -212,7 +214,7 @@ def backup_batch_running_config(request: BatchBackupRequest):
     """Fetch running configuration concurrently across all devices in fleet using Nornir Engine"""
     try:
         from app.services.nornir_service import NornirService
-        return NornirService.run_batch_backup(request.devices)
+        return NornirService.run_batch_backup(request.devices, num_workers=request.num_workers)
     except Exception:
         # Fallback to ThreadPoolExecutor
         start_time = time.time()
@@ -226,7 +228,8 @@ def backup_batch_running_config(request: BatchBackupRequest):
                 results=[],
             )
 
-        max_workers = min(max(len(devices), 1), 20)
+        fallback_workers = request.num_workers or 20
+        max_workers = min(max(len(devices), 1), fallback_workers)
         device_results = [None] * len(devices)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

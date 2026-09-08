@@ -47,6 +47,8 @@ export default function TroubleshootPage({
   deviceMode = 'multi',
   device,
   fleet = [],
+  nornirWorkers = 10,
+  onUpdateWorkers,
 }) {
   const isHuawei = device?.device_type?.toLowerCase().includes('huawei');
   const [customCommand, setCustomCommand] = useState('');
@@ -124,7 +126,7 @@ export default function TroubleshootPage({
         connection_mode: 'network',
       }));
 
-      const res = await submitTroubleshootJob(payloadDevices, trimmed, vendorCommands);
+      const res = await submitTroubleshootJob(payloadDevices, trimmed, vendorCommands, null, null, nornirWorkers);
       setActiveAsyncJob({
         id: res.job_id,
         title: `Fleet Diagnostic: ${trimmed || 'Multi-Vendor Task'} (${validFleet.length.toLocaleString()} Devices)`,
@@ -226,7 +228,8 @@ export default function TroubleshootPage({
             hp_comware: huaweiCmds,
             mikrotik_routeros: mikrotikCmds,
           },
-          playbook.name
+          playbook.name,
+          nornirWorkers
         );
 
         setActiveAsyncJob({

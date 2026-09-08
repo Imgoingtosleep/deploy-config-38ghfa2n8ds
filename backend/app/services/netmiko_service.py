@@ -1,7 +1,8 @@
 import time
 import threading
 import paramiko
-from typing import List, Dict, Any, Tuple
+from contextlib import contextmanager
+from typing import List, Dict, Any, Tuple, Optional
 
 # --- SSH Algorithm Compatibility & Global Lock ---
 paramiko.Transport._preferred_kex = (
@@ -41,8 +42,6 @@ class NetmikoService:
     @classmethod
     def _build_netmiko_dict(cls, device: DeviceCredentials) -> Dict[str, Any]:
         if device.connection_mode == "serial":
-            # Serial / Console Cable mode
-            # Netmiko uses 'cisco_ios_serial' for generic/cisco serial console connections
             dev_type = "cisco_ios_serial"
             if device.device_type == "furukawa_fitelnet_serial":
                 dev_type = "furukawa_fitelnet_serial"
@@ -63,12 +62,10 @@ class NetmikoService:
                 "fast_cli": False,
             }
         else:
-            # Network mode (SSH / Telnet)
             is_telnet = "telnet" in (device.device_type or "").lower()
             default_port = 23 if is_telnet else settings.DEFAULT_SSH_PORT
             port = device.port if device.port and device.port > 0 else default_port
 
-            # Ensure device_type is a valid Netmiko platform
             raw_type = (device.device_type or "").lower().strip()
             if not raw_type or raw_type in ["autodetect", "auto"]:
                 try:
@@ -80,7 +77,6 @@ class NetmikoService:
                     raw_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
 
             if raw_type not in NETMIKO_PLATFORMS:
-                # Fallback to standard cisco_ios or cisco_ios_telnet
                 dev_type = "cisco_ios_telnet" if is_telnet else "cisco_ios"
             else:
                 dev_type = raw_type
@@ -104,58 +100,275 @@ class NetmikoService:
 
     @staticmethod
     def _prepare_session(net_connect, device: DeviceCredentials):
-        """Prepare session: wake up serial console or enter enable mode"""
+        """Prepare session: wake up serial console, enter enable mode, and ensure paging is disabled"""
         if device.connection_mode == "serial":
             try:
                 net_connect.write_channel("\r\n")
                 time.sleep(0.5)
+                try:
+                    net_connect.disable_paging()
+                except Exception:
+                    pass
             except Exception:
                 pass
 
         if device.secret:
             try:
                 net_connect.enable()
+                try:
+                    net_connect.disable_paging()
+                except Exception:
+                    pass
             except Exception:
                 pass
 
     @classmethod
-    def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str]:
-        """Test SSH or Serial connectivity and return (is_connected, message, prompt)"""
+    def _resolve_credential_candidates(cls, device: DeviceCredentials) -> List[Dict[str, Any]]:
+        """Resolve ordered list of credential candidates for priority fallback (Priority 1 -> 2 -> 3)"""
+        candidates = []
+        seen = set()
+
+        # 1. Check if device is linked to a Credential Profile (which contains multi-tier prioritized credentials)
+        if device.profile_id:
+            try:
+                from app.services.profile_service import ProfileService
+                prof = ProfileService.get_profile_by_id(device.profile_id)
+                if prof and prof.get("credentials"):
+                    sorted_creds = sorted(prof["credentials"], key=lambda x: int(x.get("priority", 999)))
+                    for c in sorted_creds:
+                        u = (c.get("username") or "").strip()
+                        p = c.get("password") or ""
+                        key = (u, p)
+                        if key not in seen and (u or p):
+                            lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
+                            candidates.append({
+                                "name": f"{prof.get('name', 'Profile')} - {lbl}",
+                                "username": u,
+                                "password": p,
+                                "secret": c.get("secret") or "",
+                                "device_type": prof.get("device_type") or device.device_type,
+                                "port": prof.get("port") or device.port,
+                            })
+                            seen.add(key)
+            except Exception:
+                pass
+
+        # 2. Directly supplied credential_pool dicts (explicit multi-priority pool)
+        if device.credential_pool:
+            sorted_pool = sorted(device.credential_pool, key=lambda x: int(x.get("priority", 999)))
+            for idx, c in enumerate(sorted_pool, start=len(candidates) + 1):
+                u = (c.get("username") or "").strip()
+                p = c.get("password") or ""
+                key = (u, p)
+                if key not in seen and (u or p):
+                    lbl = c.get("label") or c.get("name") or f"Priority {c.get('priority', idx)}"
+                    candidates.append({
+                        "name": lbl,
+                        "username": u,
+                        "password": p,
+                        "secret": c.get("secret") or "",
+                        "device_type": c.get("device_type") or device.device_type,
+                        "port": c.get("port") or device.port,
+                    })
+                    seen.add(key)
+
+        # 3. Direct device fields (if not already captured from profile or pool)
+        if device.username or device.password:
+            key = (device.username or "", device.password or "")
+            if key not in seen:
+                label = device.active_credential_name or f"Direct Device Credentials"
+                # If candidates already had items from profile, this serves as extra candidate, or insert at front if no profile
+                if not candidates:
+                    candidates.append({
+                        "name": label,
+                        "username": device.username or "",
+                        "password": device.password or "",
+                        "secret": device.secret or "",
+                        "device_type": device.device_type or "autodetect",
+                        "port": device.port,
+                    })
+                    seen.add(key)
+                else:
+                    candidates.append({
+                        "name": label,
+                        "username": device.username or "",
+                        "password": device.password or "",
+                        "secret": device.secret or "",
+                        "device_type": device.device_type or "autodetect",
+                        "port": device.port,
+                    })
+                    seen.add(key)
+
+        # 4. Additional Fallback Profile IDs (referenced from ProfileService)
+        if device.fallback_profile_ids:
+            try:
+                from app.services.profile_service import ProfileService
+                all_profiles = {prof["id"]: prof for prof in ProfileService.get_profiles()}
+                for pid in device.fallback_profile_ids:
+                    if pid in all_profiles:
+                        prof = all_profiles[pid]
+                        # Unpack all prioritized credentials within this profile
+                        if prof.get("credentials"):
+                            sorted_creds = sorted(prof["credentials"], key=lambda x: int(x.get("priority", 999)))
+                            for c in sorted_creds:
+                                u = (c.get("username") or "").strip()
+                                p = c.get("password") or ""
+                                key = (u, p)
+                                if key not in seen and (u or p):
+                                    lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
+                                    candidates.append({
+                                        "name": f"{prof.get('name', 'Profile')} - {lbl}",
+                                        "username": u,
+                                        "password": p,
+                                        "secret": c.get("secret") or "",
+                                        "device_type": prof.get("device_type") or device.device_type,
+                                        "port": prof.get("port") or device.port,
+                                    })
+                                    seen.add(key)
+                        else:
+                            u = prof.get("username") or ""
+                            p = prof.get("password") or ""
+                            key = (u, p)
+                            if key not in seen:
+                                candidates.append({
+                                    "name": prof.get("name") or f"Profile ({u})",
+                                    "username": u,
+                                    "password": p,
+                                    "secret": prof.get("secret") or "",
+                                    "device_type": prof.get("device_type") or device.device_type,
+                                    "port": prof.get("port") or device.port,
+                                })
+                                seen.add(key)
+            except Exception:
+                pass
+
+        # Fallback default if empty
+        if not candidates:
+            candidates.append({
+                "name": "Default Credentials",
+                "username": device.username or "",
+                "password": device.password or "",
+                "secret": device.secret or "",
+                "device_type": device.device_type or "autodetect",
+                "port": device.port,
+            })
+
+        return candidates
+
+    @classmethod
+    @contextmanager
+    def connect_with_fallback(cls, device: DeviceCredentials):
+        """
+        Connect to device with Priority-based Multi-Credential Fallback (Priority 1 -> 2 -> 3).
+        Cycles through credential sets sequentially until authentication succeeds.
+        Yields (net_connect, winning_credential_label, attempt_logs).
+        """
+        candidates = cls._resolve_credential_candidates(device)
+        attempt_logs = []
+        target_name = device.serial_port if device.connection_mode == "serial" else (device.host or "127.0.0.1")
+        
+        last_auth_error = None
+        for idx, cred in enumerate(candidates, 1):
+            cred_label = cred.get("name") or f"Priority {idx}"
+            
+            attempt_device = device.copy()
+            attempt_device.username = cred["username"]
+            attempt_device.password = cred["password"]
+            attempt_device.secret = cred.get("secret")
+            if cred.get("device_type") and cred["device_type"] != "autodetect":
+                attempt_device.device_type = cred["device_type"]
+            if cred.get("port"):
+                attempt_device.port = cred["port"]
+
+            params = cls._build_netmiko_dict(attempt_device)
+            net_connect = None
+            try:
+                net_connect = ConnectHandler(**params)
+                cls._prepare_session(net_connect, attempt_device)
+                
+                # Update device state with working credentials
+                device.username = attempt_device.username
+                device.password = attempt_device.password
+                device.secret = attempt_device.secret
+                device.device_type = attempt_device.device_type
+                if attempt_device.port:
+                    device.port = attempt_device.port
+                device.active_credential_name = cred_label
+                
+                attempt_logs.append(f"Priority {idx} [{cred_label}]: Success")
+                try:
+                    yield net_connect, cred_label, attempt_logs
+                finally:
+                    try:
+                        net_connect.disconnect()
+                    except Exception:
+                        pass
+                return
+            except (NetmikoAuthenticationException, paramiko.ssh_exception.AuthenticationException) as auth_err:
+                last_auth_error = auth_err
+                attempt_logs.append(f"Priority {idx} [{cred_label}]: Auth Failed")
+                if net_connect:
+                    try:
+                        net_connect.disconnect()
+                    except Exception:
+                        pass
+                if idx < len(candidates):
+                    continue
+                else:
+                    summary = " -> ".join(attempt_logs)
+                    raise NetmikoAuthenticationException(
+                        f"Authentication failed across all {len(candidates)} credential sets on {target_name}. [{summary}]"
+                    )
+            except Exception as e:
+                if net_connect:
+                    try:
+                        net_connect.disconnect()
+                    except Exception:
+                        pass
+                err_lower = str(e).lower()
+                if "auth fail" in err_lower or "authentication to device failed" in err_lower or "permission denied" in err_lower:
+                    last_auth_error = e
+                    attempt_logs.append(f"Priority {idx} [{cred_label}]: Auth Failed ({str(e)})")
+                    if idx < len(candidates):
+                        continue
+                raise e
+
+    @classmethod
+    def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str, Optional[str], List[str]]:
+        """Test SSH or Serial connectivity with priority-based credential fallback"""
         detected_info = ""
         was_auto = (device.device_type or "").lower() in ["autodetect", "auto", ""]
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         if was_auto and device.device_type:
             detected_info = f" (Auto-Detected: {device.device_type})"
 
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, attempt_logs):
                 prompt = net_connect.find_prompt()
-                return True, f"Successfully connected to device on {target_name}{detected_info}", prompt
+                prio_note = f" (via {winning_cred})" if winning_cred and len(attempt_logs) > 1 else ""
+                msg = f"Successfully connected to device on {target_name}{detected_info}{prio_note}"
+                return True, msg, prompt, winning_cred, attempt_logs
         except NetmikoAuthenticationException as e:
-            return False, f"Authentication failed: {str(e)}", ""
+            return False, f"Authentication failed: {str(e)}", "", None, [str(e)]
         except NetmikoTimeoutException as e:
             err_str = str(e)
             if "terminal width 511" in err_str.lower():
-                return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", ""
-            return False, f"Connection timed out on {target_name}: {err_str}", ""
+                return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", "", None, [err_str]
+            return False, f"Connection timed out on {target_name}: {err_str}", "", None, [err_str]
         except SSHException as e:
-            return False, f"SSH error: {str(e)}", ""
+            return False, f"SSH error: {str(e)}", "", None, [str(e)]
         except Exception as e:
-            return False, f"Connection error: {str(e)}", ""
-
+            return False, f"Connection error: {str(e)}", "", None, [str(e)]
 
     @classmethod
     def send_command(cls, device: DeviceCredentials, command: str) -> Dict[str, Any]:
-        """Execute a single show/exec command"""
+        """Execute a single show/exec command with priority credential fallback"""
         start_time = time.time()
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
-                output = net_connect.send_command(command, read_timeout=settings.DEFAULT_TIMEOUT)
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
+                raw_output = net_connect.send_command(command, read_timeout=settings.DEFAULT_TIMEOUT)
+                output = cls.clean_cli_output(raw_output)
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
@@ -164,6 +377,7 @@ class NetmikoService:
                     "success": True,
                     "error": None,
                     "execution_time_seconds": elapsed,
+                    "authenticated_credential": winning_cred,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -174,22 +388,22 @@ class NetmikoService:
                 "success": False,
                 "error": str(e),
                 "execution_time_seconds": elapsed,
+                "authenticated_credential": None,
             }
 
     @classmethod
     def send_multiple_commands(cls, device: DeviceCredentials, commands: List[str]) -> Dict[str, Any]:
-        """Execute multiple show commands sequentially over a single connection"""
+        """Execute multiple show commands sequentially over a single connection with priority credential fallback"""
         start_time = time.time()
         results = []
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 for cmd in commands:
                     cmd_start = time.time()
                     try:
-                        output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        raw_output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        output = cls.clean_cli_output(raw_output)
                         results.append({
                             "host": target_name,
                             "command": cmd,
@@ -207,13 +421,14 @@ class NetmikoService:
                             "error": str(cmd_err),
                             "execution_time_seconds": round(time.time() - cmd_start, 2),
                         })
-            elapsed = round(time.time() - start_time, 2)
-            return {
-                "host": target_name,
-                "results": results,
-                "success": all(r["success"] for r in results),
-                "overall_time_seconds": elapsed,
-            }
+                elapsed = round(time.time() - start_time, 2)
+                return {
+                    "host": target_name,
+                    "results": results,
+                    "success": all(r["success"] for r in results),
+                    "overall_time_seconds": elapsed,
+                    "authenticated_credential": winning_cred,
+                }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
             return {
@@ -222,6 +437,7 @@ class NetmikoService:
                 "success": False,
                 "error": str(e),
                 "overall_time_seconds": elapsed,
+                "authenticated_credential": None,
             }
 
     @staticmethod
@@ -300,6 +516,51 @@ class NetmikoService:
         )
         return masked
 
+    @classmethod
+    def clean_cli_output(cls, text: str) -> str:
+        """
+        Clean CLI output across all network vendors:
+        1. Remove ANSI VT100/Xterm escape codes (color codes, cursor positions, screen clears)
+        2. Remove backspace control characters (\x08)
+        3. Strip residual pagination artifacts (--More--, ---- More ----, [More], etc.)
+        4. Standardize newlines (\r\r\n / \r\n -> \n)
+        5. Mask sensitive passwords and SNMP community strings
+        """
+        if not text or not isinstance(text, str):
+            return text or ""
+        import re
+
+        # 1. Strip ANSI escape codes
+        cleaned = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b[=>]|\x1b\([a-zA-Z]", "", text)
+
+        # 2. Strip backspaces
+        cleaned = cleaned.replace("\x08", "")
+
+        # 3. Strip standalone vendor pagination lines
+        pager_line_patterns = [
+            r"^\s*----?\s*More(?:\s*\([^\)]*\))?\s*----?\s*$",   # Huawei VRP / HP Comware
+            r"^\s*--\s*More\s*--\s*$",                           # Cisco IOS / NX-OS
+            r"^\s*--\s*MORE\s*--[^\r\n]*$",                      # Aruba / HP ProCurve
+            r"^\s*---\(more(?:\s+\d+%)?\s*\)---\s*$",            # Juniper Junos
+            r"^\s*\[\s*More\s*\]\s*$",                           # Juniper [More]
+            r"^\s*<---\s*More\s*--->\s*$",                       # Extreme / other switches
+        ]
+        for pat in pager_line_patterns:
+            cleaned = re.sub(pat, "", cleaned, flags=re.MULTILINE | re.IGNORECASE)
+
+        # Also strip residual inline pager prompts
+        cleaned = re.sub(r"----?\s*More(?:\s*\([^\)]*\))?\s*----?", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"--\s*MORE\s*--,\s*next page:[^\r\n]*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"--\s*More\s*--", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"---\(more(?:\s+\d+%)?\s*\)---", "", cleaned, flags=re.IGNORECASE)
+
+        # 4. Standardize newlines and collapse excess empty lines
+        cleaned = cleaned.replace("\r\r\n", "\n").replace("\r\n", "\n").replace("\r", "\n")
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+
+        # 5. Mask sensitive passwords & secrets
+        return cls.mask_sensitive_data(cleaned.strip())
+
     @staticmethod
     def generate_rollback(config_lines: List[str], device_type: str) -> List[str]:
         dev_type = (device_type or "").lower()
@@ -328,15 +589,14 @@ class NetmikoService:
 
     @classmethod
     def fetch_running_config(cls, device: DeviceCredentials) -> Dict[str, Any]:
-        """Fetch running configuration for backup"""
+        """Fetch running configuration for backup with priority credential fallback"""
         start_time = time.time()
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         cmd = cls._get_show_run_cmd(device.device_type)
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
-                output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
+                raw_output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                output = cls.clean_cli_output(raw_output)
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
@@ -345,6 +605,7 @@ class NetmikoService:
                     "success": True,
                     "error": None,
                     "execution_time_seconds": elapsed,
+                    "authenticated_credential": winning_cred,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -355,17 +616,16 @@ class NetmikoService:
                 "success": False,
                 "error": str(e),
                 "execution_time_seconds": elapsed,
+                "authenticated_credential": None,
             }
 
     @classmethod
     def deploy_config(cls, device: DeviceCredentials, config_lines: List[str], save: bool = True) -> Dict[str, Any]:
-        """Deploy configuration set to the device"""
+        """Deploy configuration set to the device with priority credential fallback"""
         start_time = time.time()
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 output = net_connect.send_config_set(config_lines)
                 save_output = ""
                 if save:
@@ -375,7 +635,7 @@ class NetmikoService:
                         save_output = f"Config deployed but save failed: {str(se)}"
                 
                 full_output = f"{output}\n\n[Save Config Status]:\n{save_output}" if save else output
-                masked_output = cls.mask_sensitive_data(full_output)
+                masked_output = cls.clean_cli_output(full_output)
                 elapsed = round(time.time() - start_time, 2)
                 return {
                     "host": target_name,
@@ -384,6 +644,7 @@ class NetmikoService:
                     "success": True,
                     "error": None,
                     "execution_time_seconds": elapsed,
+                    "authenticated_credential": winning_cred,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -394,6 +655,7 @@ class NetmikoService:
                 "success": False,
                 "error": str(e),
                 "execution_time_seconds": elapsed,
+                "authenticated_credential": None,
             }
 
     @classmethod
@@ -406,9 +668,8 @@ class NetmikoService:
         post_check_commands: List[str] = None,
         backup_before: bool = False,
     ) -> Dict[str, Any]:
-        """Advanced deployment with pre-check, backup, config deployment, save, post-check, and rollback generation"""
+        """Advanced deployment with pre-check, backup, config deployment, save, post-check, rollback, and priority fallback"""
         start_time = time.time()
-        params = cls._build_netmiko_dict(device)
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
         pre_check_commands = pre_check_commands or []
         post_check_commands = post_check_commands or []
@@ -419,15 +680,14 @@ class NetmikoService:
         step_logs = []
         
         try:
-            with ConnectHandler(**params) as net_connect:
-                cls._prepare_session(net_connect, device)
-                
+            with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 # 1. Optional pre-deployment backup
                 if backup_before:
                     backup_cmd = cls._get_show_run_cmd(device.device_type)
                     step_logs.append({"step": "backup", "title": f"Fetching Backup ({backup_cmd})", "status": "running"})
                     try:
-                        backup_output = net_connect.send_command(backup_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        raw_backup = net_connect.send_command(backup_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        backup_output = cls.clean_cli_output(raw_backup)
                         step_logs[-1]["status"] = "success"
                     except Exception as be:
                         backup_output = f"Backup failed: {str(be)}"
@@ -440,7 +700,8 @@ class NetmikoService:
                     cmd_start = time.time()
                     actual_pre = CommandTranslator.translate_command(cmd, target_vendor=device.device_type)
                     try:
-                        out = net_connect.send_command(actual_pre, read_timeout=settings.DEFAULT_TIMEOUT)
+                        raw_pre = net_connect.send_command(actual_pre, read_timeout=settings.DEFAULT_TIMEOUT)
+                        out = cls.clean_cli_output(raw_pre)
                         pre_results.append({
                             "host": target_name,
                             "command": actual_pre,
@@ -481,7 +742,8 @@ class NetmikoService:
                     cmd_start = time.time()
                     actual_post = CommandTranslator.translate_command(cmd, target_vendor=device.device_type)
                     try:
-                        out = net_connect.send_command(actual_post, read_timeout=settings.DEFAULT_TIMEOUT)
+                        raw_post = net_connect.send_command(actual_post, read_timeout=settings.DEFAULT_TIMEOUT)
+                        out = cls.clean_cli_output(raw_post)
                         post_results.append({
                             "host": target_name,
                             "command": actual_post,
@@ -505,7 +767,7 @@ class NetmikoService:
 
                 elapsed = round(time.time() - start_time, 2)
                 full_output = f"{deploy_output}\n\n[Save Config Status]:\n{save_output}" if save and save_output else deploy_output
-                masked_full_output = cls.mask_sensitive_data(full_output)
+                masked_full_output = cls.clean_cli_output(full_output)
 
                 return {
                     "host": target_name,
@@ -521,6 +783,7 @@ class NetmikoService:
                     "post_check_results": post_results,
                     "rollback_commands": rollback_cmds,
                     "step_logs": step_logs,
+                    "authenticated_credential": winning_cred,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -539,4 +802,5 @@ class NetmikoService:
                 "post_check_results": post_results,
                 "rollback_commands": rollback_cmds,
                 "step_logs": step_logs,
+                "authenticated_credential": None,
             }

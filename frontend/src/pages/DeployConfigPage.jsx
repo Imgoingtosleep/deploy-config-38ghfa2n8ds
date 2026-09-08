@@ -258,6 +258,8 @@ export default function DeployConfigPage({
   deviceMode = 'multi',
   device,
   fleet = [],
+  nornirWorkers = 10,
+  onUpdateWorkers,
 }) {
   // Main Script Editor State
   const [configText, setConfigText] = useState('');
@@ -549,7 +551,8 @@ export default function DeployConfigPage({
         saveConfig,
         preCmds,
         postCmds,
-        enableBackup
+        enableBackup,
+        nornirWorkers
       );
       setShowConfirmModal(false);
       setActiveAsyncJob({
@@ -579,7 +582,7 @@ export default function DeployConfigPage({
         secret: d.secret || '',
         connection_mode: 'network',
       }));
-      const res = await submitBackupJob(payloadDevices);
+      const res = await submitBackupJob(payloadDevices, nornirWorkers);
       setShowBackupModal(false);
       setActiveAsyncJob({
         id: res.job_id,

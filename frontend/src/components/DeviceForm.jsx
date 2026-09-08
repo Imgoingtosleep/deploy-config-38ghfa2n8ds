@@ -19,6 +19,16 @@ import {
   AlertCircle,
   Check,
   Compass,
+  UserCheck,
+  Settings,
+  Bookmark,
+  Eye,
+  EyeOff,
+  Star,
+  Edit2,
+  ListOrdered,
+  ShieldAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   testDeviceConnection,
@@ -27,7 +37,13 @@ import {
   downloadInventoryTemplate,
   detectSingleDeviceType,
   detectFleetTypes,
+  getCredentialProfiles,
+  createCredentialProfile,
+  updateCredentialProfile,
+  deleteCredentialProfile,
+  setDefaultCredentialProfile,
 } from '../services/api';
+import NornirWorkersControl from './NornirWorkersControl';
 import './DeviceForm.css';
 
 export default function DeviceForm({
@@ -38,6 +54,8 @@ export default function DeviceForm({
   fleet = [],
   setFleet,
   onConnectionStatusChange,
+  nornirWorkers = 10,
+  onUpdateWorkers,
 }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -45,6 +63,31 @@ export default function DeviceForm({
   const [commonUser, setCommonUser] = useState('');
   const [commonPass, setCommonPass] = useState('');
   const [detectingFleet, setDetectingFleet] = useState(false);
+
+  // Profiles State
+  const [profiles, setProfiles] = useState([]);
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileModalTab, setProfileModalTab] = useState('list'); // 'list' | 'edit'
+  const [editingProfile, setEditingProfile] = useState(null);
+  const [showProfilePassMap, setShowProfilePassMap] = useState({});
+  const [showFormPassword, setShowFormPassword] = useState(false);
+  const [showFormSecret, setShowFormSecret] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
+
+  // Priority Fallback State (Priority 1 -> 2 -> 3)
+  const [enableFallback, setEnableFallback] = useState(false);
+  const [prio1ProfileId, setPrio1ProfileId] = useState('');
+  const [prio2ProfileId, setPrio2ProfileId] = useState('');
+  const [prio3ProfileId, setPrio3ProfileId] = useState('');
+
+  // Fleet Pool Modal State
+  const [showFleetPoolModal, setShowFleetPoolModal] = useState(false);
+  const [fleetPrio1Id, setFleetPrio1Id] = useState('');
+  const [fleetPrio2Id, setFleetPrio2Id] = useState('');
+  const [fleetPrio3Id, setFleetPrio3Id] = useState('');
 
   // Import Modal State
   const [showImportModal, setShowImportModal] = useState(false);
@@ -57,7 +100,6 @@ export default function DeviceForm({
 
   // Fallback credentials for import if missing in file
   const [fallbackType, setFallbackType] = useState('autodetect');
-
   const [fallbackUser, setFallbackUser] = useState('');
   const [fallbackPass, setFallbackPass] = useState('');
   const [fallbackPort, setFallbackPort] = useState(22);
@@ -84,11 +126,374 @@ export default function DeviceForm({
         }
       })
       .catch(() => console.log('Using default device types list'));
+
+    loadProfiles();
   }, []);
+
+  const loadProfiles = async () => {
+    try {
+      const data = await getCredentialProfiles();
+      if (Array.isArray(data) && data.length > 0) {
+        setProfiles(data);
+        const def = data.find((p) => p.is_default) || data[0];
+        if (def && (!device.username || !device.username.trim())) {
+          applyProfileToSingle(def);
+          setCommonType(def.device_type || 'autodetect');
+          setCommonUser(def.username || '');
+          setCommonPass(def.password || '');
+          setPrio1ProfileId(def.id);
+          setFleetPrio1Id(def.id);
+        }
+
+        // Set default 2nd and 3rd priority candidates if available
+        if (data.length > 1) {
+          setPrio2ProfileId(data[1].id);
+          setFleetPrio2Id(data[1].id);
+        }
+        if (data.length > 2) {
+          setPrio3ProfileId(data[2].id);
+          setFleetPrio3Id(data[2].id);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load credential profiles:', err);
+    }
+  };
+
+  // Sync fallback profile IDs to device state
+  useEffect(() => {
+    if (enableFallback) {
+      const pList = [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean);
+      setDevice((prev) => ({
+        ...prev,
+        fallback_profile_ids: pList,
+      }));
+    } else {
+      setDevice((prev) => ({
+        ...prev,
+        fallback_profile_ids: null,
+      }));
+    }
+  }, [enableFallback, prio1ProfileId, prio2ProfileId, prio3ProfileId]);
+
+  const applyProfileToSingle = (profile) => {
+    if (!profile) return;
+    const prio1 = (profile.credentials && profile.credentials[0]) || profile;
+    setDevice((prev) => ({
+      ...prev,
+      username: prio1.username || '',
+      password: prio1.password || '',
+      secret: prio1.secret || '',
+      device_type: profile.device_type && profile.device_type !== 'autodetect' ? profile.device_type : prev.device_type,
+      port: profile.port || (profile.device_type?.includes('telnet') ? 23 : 22),
+      profile_id: profile.id,
+      credential_pool: profile.credentials && profile.credentials.length > 0 ? profile.credentials : null,
+    }));
+    setSelectedProfileId(profile.id);
+    setPrio1ProfileId(profile.id);
+  };
+
+  const handleSelectProfileSingle = (profileId) => {
+    if (profileId === 'custom' || !profileId) {
+      setSelectedProfileId('custom');
+      setPrio1ProfileId('');
+      setDevice((prev) => ({ ...prev, profile_id: null, credential_pool: null }));
+      return;
+    }
+    const prof = profiles.find((p) => p.id === profileId);
+    if (prof) {
+      applyProfileToSingle(prof);
+    }
+  };
+
+  const handleApplyProfileToFleet = (profileId) => {
+    const prof = profiles.find((p) => p.id === profileId);
+    if (!prof) return;
+
+    const prio1 = (prof.credentials && prof.credentials[0]) || prof;
+    setCommonType(prof.device_type || commonType);
+    setCommonUser(prio1.username || '');
+    setCommonPass(prio1.password || '');
+
+    setFleet((prev) =>
+      prev.map((d) => ({
+        ...d,
+        device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
+        username: prio1.username || '',
+        password: prio1.password || '',
+        secret: prio1.secret !== undefined ? prio1.secret : d.secret,
+        profile_id: prof.id,
+        credential_pool: prof.credentials && prof.credentials.length > 0 ? prof.credentials : null,
+      }))
+    );
+  };
+
+  const updateFleetDeviceProfile = (deviceId, profileId) => {
+    if (profileId === 'custom' || !profileId) {
+      setFleet((prev) =>
+        prev.map((d) => (d.id === deviceId ? { ...d, profile_id: null, credential_pool: null, fallback_profile_ids: null } : d))
+      );
+      return;
+    }
+    const prof = profiles.find((p) => p.id === profileId);
+    if (!prof) return;
+
+    const prio1 = (prof.credentials && prof.credentials[0]) || prof;
+    setFleet((prev) =>
+      prev.map((d) =>
+        d.id === deviceId
+          ? {
+              ...d,
+              device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
+              username: prio1.username || '',
+              password: prio1.password || '',
+              secret: prio1.secret || '',
+              profile_id: prof.id,
+              credential_pool: prof.credentials && prof.credentials.length > 0 ? prof.credentials : null,
+            }
+          : d
+      )
+    );
+  };
+
+  // Apply 3-Priority Fallback Pool to all fleet devices
+  const handleApplyFleetPoolToAll = () => {
+    const pList = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
+    const p1 = profiles.find((p) => p.id === fleetPrio1Id);
+
+    setFleet((prev) =>
+      prev.map((d) => ({
+        ...d,
+        username: p1 ? p1.username : d.username,
+        password: p1 ? p1.password : d.password,
+        secret: p1 ? (p1.secret || '') : d.secret,
+        device_type: p1 && p1.device_type !== 'autodetect' ? p1.device_type : d.device_type,
+        profile_id: p1 ? p1.id : d.profile_id,
+        fallback_profile_ids: pList,
+      }))
+    );
+
+    if (p1) {
+      setCommonUser(p1.username || '');
+      setCommonPass(p1.password || '');
+      setCommonType(p1.device_type || commonType);
+    }
+
+    setShowFleetPoolModal(false);
+  };
+
+  // Open modal with prefilled current credentials
+  const handleOpenSaveCurrentAsProfile = () => {
+    const hostLabel = device.host && device.host !== '192.168.1.1' ? ` (${device.host})` : '';
+    setEditingProfile({
+      id: null,
+      name: `Profile${hostLabel}`,
+      description: `Saved credentials for ${device.host || 'device'}`,
+      device_type: device.device_type || 'autodetect',
+      port: device.port || 22,
+      is_default: false,
+      credentials: [
+        {
+          priority: 1,
+          label: 'Primary Admin',
+          username: device.username || '',
+          password: device.password || '',
+          secret: device.secret || '',
+        },
+      ],
+      username: device.username || '',
+      password: device.password || '',
+      secret: device.secret || '',
+    });
+    setProfileError('');
+    setProfileSuccess('');
+    setProfileModalTab('edit');
+    setShowProfileModal(true);
+  };
+
+  // Open modal to create brand new profile
+  const handleOpenNewProfile = () => {
+    setEditingProfile({
+      id: null,
+      name: '',
+      description: '',
+      device_type: 'huawei',
+      port: 22,
+      is_default: false,
+      credentials: [
+        { priority: 1, label: 'Primary (TACACS / Local)', username: '', password: '', secret: '' },
+        { priority: 2, label: 'Secondary Backup', username: '', password: '', secret: '' },
+      ],
+      username: '',
+      password: '',
+      secret: '',
+    });
+    setProfileError('');
+    setProfileSuccess('');
+    setProfileModalTab('edit');
+  };
+
+  // Open modal to edit existing profile
+  const handleOpenEditProfile = (profile) => {
+    const creds = (profile.credentials && profile.credentials.length > 0)
+      ? profile.credentials
+      : [
+          {
+            priority: 1,
+            label: 'Primary',
+            username: profile.username || '',
+            password: profile.password || '',
+            secret: profile.secret || '',
+          },
+        ];
+
+    setEditingProfile({
+      id: profile.id,
+      name: profile.name || '',
+      description: profile.description || '',
+      device_type: profile.device_type || 'autodetect',
+      port: profile.port || 22,
+      is_default: !!profile.is_default,
+      credentials: creds.map((c, i) => ({
+        priority: c.priority || i + 1,
+        label: c.label || `Priority ${i + 1}`,
+        username: c.username || '',
+        password: c.password || '',
+        secret: c.secret || '',
+      })),
+      username: profile.username || '',
+      password: profile.password || '',
+      secret: profile.secret || '',
+    });
+    setProfileError('');
+    setProfileSuccess('');
+    setProfileModalTab('edit');
+  };
+
+  const handleAddProfileCredential = () => {
+    if (!editingProfile) return;
+    const creds = editingProfile.credentials || [];
+    const nextPrio = creds.length + 1;
+    setEditingProfile((prev) => ({
+      ...prev,
+      credentials: [
+        ...creds,
+        {
+          priority: nextPrio,
+          label: `Priority ${nextPrio} Fallback`,
+          username: '',
+          password: '',
+          secret: '',
+        },
+      ],
+    }));
+  };
+
+  const handleRemoveProfileCredential = (index) => {
+    if (!editingProfile) return;
+    const creds = [...(editingProfile.credentials || [])];
+    if (creds.length <= 1) {
+      alert('Profile must have at least 1 credential tier.');
+      return;
+    }
+    creds.splice(index, 1);
+    const reindexed = creds.map((c, i) => ({
+      ...c,
+      priority: i + 1,
+    }));
+    setEditingProfile((prev) => ({
+      ...prev,
+      credentials: reindexed,
+    }));
+  };
+
+  const handleUpdateProfileCredential = (index, field, value) => {
+    if (!editingProfile) return;
+    const creds = [...(editingProfile.credentials || [])];
+    creds[index] = {
+      ...creds[index],
+      [field]: value,
+    };
+    setEditingProfile((prev) => ({
+      ...prev,
+      credentials: creds,
+    }));
+  };
+
+  // Save or update profile via API
+  const handleSaveProfile = async (e) => {
+    e.preventDefault();
+    if (!editingProfile || !editingProfile.name.trim()) {
+      setProfileError('Profile name is required.');
+      return;
+    }
+
+    setProfileLoading(true);
+    setProfileError('');
+    setProfileSuccess('');
+
+    try {
+      const p1 = editingProfile.credentials?.[0] || {};
+      const payload = {
+        ...editingProfile,
+        username: p1.username || '',
+        password: p1.password || '',
+        secret: p1.secret || '',
+      };
+
+      if (editingProfile.id) {
+        const updated = await updateCredentialProfile(editingProfile.id, payload);
+        setProfileSuccess(`Profile "${updated.name}" updated successfully.`);
+      } else {
+        const created = await createCredentialProfile(payload);
+        setProfileSuccess(`Profile "${created.name}" created successfully.`);
+        applyProfileToSingle(created);
+      }
+
+      await loadProfiles();
+      setTimeout(() => {
+        setProfileModalTab('list');
+        setProfileSuccess('');
+      }, 700);
+    } catch (err) {
+      setProfileError(err.response?.data?.detail || err.message || 'Failed to save profile.');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  // Delete profile via API
+  const handleDeleteProfile = async (profileId, profileName) => {
+    if (!window.confirm(`Are you sure you want to delete profile "${profileName}"?`)) return;
+
+    try {
+      await deleteCredentialProfile(profileId);
+      if (selectedProfileId === profileId) {
+        setSelectedProfileId('custom');
+      }
+      await loadProfiles();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message || 'Failed to delete profile.');
+    }
+  };
+
+  // Set default profile via API
+  const handleSetDefaultProfile = async (profileId) => {
+    try {
+      await setDefaultCredentialProfile(profileId);
+      await loadProfiles();
+    } catch (err) {
+      alert(err.response?.data?.detail || err.message || 'Failed to set default profile.');
+    }
+  };
 
   // Single Device Handlers
   const handleSingleChange = (e) => {
     const { name, value } = e.target;
+    if (name === 'username' || name === 'password' || name === 'secret') {
+      setSelectedProfileId('custom');
+    }
+
     if (name === 'device_type') {
       const isTelnet = value.toLowerCase().includes('telnet');
       setDevice((prev) => ({
@@ -143,16 +548,19 @@ export default function DeviceForm({
 
   const addFleetDevice = () => {
     const newId = `dev-${Date.now()}`;
+    const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
     setFleet((prev) => [
       ...prev,
       {
         id: newId,
         host: '',
-        port: 22,
-        device_type: commonType || 'autodetect',
-        username: commonUser,
-        password: commonPass,
-        secret: '',
+        port: defProf?.port || 22,
+        device_type: defProf?.device_type || commonType || 'autodetect',
+        username: defProf?.username || commonUser,
+        password: defProf?.password || commonPass,
+        secret: defProf?.secret || '',
+        profile_id: defProf?.id || null,
+        fallback_profile_ids: enableFallback ? [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean) : null,
       },
     ]);
   };
@@ -185,7 +593,6 @@ export default function DeviceForm({
       setDetectingFleet(false);
     }
   };
-
 
   const removeFleetDevice = (id) => {
     setFleet((prev) => prev.filter((d) => d.id !== id));
@@ -259,11 +666,6 @@ export default function DeviceForm({
     }
   };
 
-  const handleReParseWithFallbacks = async () => {
-    if (!importFile) return;
-    processSelectedFile(importFile);
-  };
-
   const handleConfirmImport = () => {
     if (!parsedPreview || !parsedPreview.devices || parsedPreview.devices.length === 0) {
       setImportError('No valid devices to import.');
@@ -271,14 +673,16 @@ export default function DeviceForm({
     }
 
     const newDevices = parsedPreview.devices;
+    const pool = enableFallback ? [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean) : null;
+
     if (importMode === 'replace') {
-      setFleet(newDevices);
+      setFleet(newDevices.map((d) => ({ ...d, fallback_profile_ids: pool })));
     } else {
-      // Append mode, ensure unique IDs
       const timestamp = Date.now();
       const mapped = newDevices.map((d, i) => ({
         ...d,
         id: `dev-${timestamp}-${i}`,
+        fallback_profile_ids: pool,
       }));
       setFleet((prev) => [...prev.filter((d) => d.host && d.host.trim()), ...mapped]);
     }
@@ -321,6 +725,171 @@ export default function DeviceForm({
       {/* ========================================================================= */}
       {deviceMode === 'single' ? (
         <>
+          {/* User Profile Selector Bar for Single Device */}
+          <div className="profile-selector-bar">
+            <div className="profile-bar-left">
+              <UserCheck className="profile-bar-icon" />
+              <span className="profile-bar-label">Profile:</span>
+              <select
+                value={selectedProfileId}
+                onChange={(e) => handleSelectProfileSingle(e.target.value)}
+                className="profile-select"
+              >
+                <option value="custom">-- Custom / Manual Entry --</option>
+                {profiles.map((p) => {
+                  const credCount = p.credentials?.length || 1;
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.is_default ? '[Default] ' : ''}{p.name} ({credCount > 1 ? `${credCount} priorities` : (p.username || 'no user')})
+                    </option>
+                  );
+                })}
+              </select>
+
+              {/* Priority Fallback Toggle Button */}
+              <button
+                type="button"
+                className={`fallback-toggle-btn ${enableFallback ? 'active' : ''}`}
+                onClick={() => setEnableFallback(!enableFallback)}
+                title="Toggle 3-tier sequential credential fallback (Priority 1 -> 2 -> 3)"
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                <span>{enableFallback ? '3-Priority Fallback: ON' : 'Enable 3-Tier Fallback'}</span>
+              </button>
+            </div>
+
+            <div className="profile-bar-right">
+              <button
+                type="button"
+                className="btn-profile-quick-save"
+                onClick={handleOpenSaveCurrentAsProfile}
+                title="Save currently entered username and password as a reusable profile"
+              >
+                <Bookmark className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Save as Profile</span>
+              </button>
+              <button
+                type="button"
+                className="btn-profile-manage"
+                onClick={() => {
+                  setProfileModalTab('list');
+                  setProfileError('');
+                  setProfileSuccess('');
+                  setShowProfileModal(true);
+                }}
+                title="Manage, create, and edit user credential profiles"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Profiles ({profiles.length})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Profile Priority Preview Strip */}
+          {selectedProfileId && selectedProfileId !== 'custom' && (() => {
+            const currentProf = profiles.find((p) => p.id === selectedProfileId);
+            const creds = currentProf?.credentials || [];
+            if (!currentProf || creds.length <= 1) return null;
+            return (
+              <div className="profile-priority-summary-strip">
+                <div className="flex items-center gap-1.5 text-xs text-sky-400 font-medium">
+                  <ShieldCheck className="h-3.5 w-3.5 text-sky-400" />
+                  <span>Profile Multi-Priority Pool ({creds.length} Tiers Active):</span>
+                </div>
+                <div className="profile-priority-pills">
+                  {creds.map((c, idx) => (
+                    <span key={idx} className="profile-priority-pill" title={c.label || `Priority ${c.priority}`}>
+                      <span className={`prio-tag prio-tag-${Math.min(c.priority, 3)}`}>P{c.priority}</span>
+                      <span className="prio-user font-mono">{c.username || '(empty)'}</span>
+                      {c.label && <span className="prio-lbl">({c.label})</span>}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Expandable Multi-Credential Priority Fallback Panel */}
+          {enableFallback && (
+            <div className="priority-fallback-panel">
+              <div className="priority-panel-header">
+                <div className="priority-panel-title">
+                  <ListOrdered className="h-4 w-4 text-sky-400" />
+                  <span>Multi-Credential Priority Order (Attempts 1 &rarr; 2 &rarr; 3)</span>
+                </div>
+                <span className="priority-panel-desc">
+                  If Priority 1 fails authentication, the system will automatically probe Priority 2, then Priority 3.
+                </span>
+              </div>
+
+              <div className="priority-slots-grid">
+                {/* Priority 1 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-1">Priority 1 (Primary)</span>
+                  </div>
+                  <select
+                    value={prio1ProfileId}
+                    onChange={(e) => {
+                      setPrio1ProfileId(e.target.value);
+                      const p = profiles.find((prof) => prof.id === e.target.value);
+                      if (p) applyProfileToSingle(p);
+                    }}
+                    className="priority-slot-select"
+                  >
+                    <option value="">-- Direct Form Credentials --</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                  <span className="priority-slot-summary">
+                    User: {device.username || '(manual)'}
+                  </span>
+                </div>
+
+                {/* Priority 2 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-2">Priority 2 (Secondary)</span>
+                  </div>
+                  <select
+                    value={prio2ProfileId}
+                    onChange={(e) => setPrio2ProfileId(e.target.value)}
+                    className="priority-slot-select"
+                  >
+                    <option value="">-- None --</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                  <span className="priority-slot-summary">
+                    {prio2ProfileId ? `User: ${profiles.find((p) => p.id === prio2ProfileId)?.username || '-'}` : 'Disabled'}
+                  </span>
+                </div>
+
+                {/* Priority 3 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-3">Priority 3 (Emergency)</span>
+                  </div>
+                  <select
+                    value={prio3ProfileId}
+                    onChange={(e) => setPrio3ProfileId(e.target.value)}
+                    className="priority-slot-select"
+                  >
+                    <option value="">-- None --</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                  <span className="priority-slot-summary">
+                    {prio3ProfileId ? `User: ${profiles.find((p) => p.id === prio3ProfileId)?.username || '-'}` : 'Disabled'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleTestConnection} className="device-grid">
             {/* Host IP */}
             <div className="form-group col-span-3">
@@ -422,7 +991,7 @@ export default function DeviceForm({
                 name="secret"
                 value={device.secret}
                 onChange={handleSingleChange}
-                placeholder="Enable secret password (if required)"
+                placeholder="Enable secret (if needed)"
                 className="form-input"
               />
             </div>
@@ -441,6 +1010,27 @@ export default function DeviceForm({
                 {testResult.device_prompt && (
                   <p className="banner-prompt">Prompt: {testResult.device_prompt}</p>
                 )}
+                {testResult.authenticated_credential && (
+                  <div className="winning-cred-tag">
+                    <CheckCircle2 className="h-3 w-3" />
+                    <span>Active Authenticated Credential: {testResult.authenticated_credential}</span>
+                  </div>
+                )}
+                {/* Attempt Sequence Logs */}
+                {testResult.attempt_logs && testResult.attempt_logs.length > 1 && (
+                  <div className="attempt-logs-container">
+                    <span className="text-[11px] font-semibold text-slate-400">Sequential Probing History:</span>
+                    {testResult.attempt_logs.map((log, lIdx) => (
+                      <div
+                        key={lIdx}
+                        className={`attempt-log-row ${log.includes('Successful') || log.includes('Success') ? 'success' : 'failed'}`}
+                      >
+                        <span>{log.includes('Successful') || log.includes('Success') ? '✓' : '✗'}</span>
+                        <span>{log}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -453,11 +1043,49 @@ export default function DeviceForm({
           <div className="fleet-header">
             <div className="fleet-header-left">
               <span className="fleet-title">Fleet Device List ({fleet.filter((d) => d.host).length} Devices)</span>
+              <NornirWorkersControl
+                workers={nornirWorkers}
+                onChange={onUpdateWorkers}
+              />
             </div>
 
             {/* Quick Credentials Filler & Actions */}
             <div className="quick-creds-bar">
-              <span className="quick-creds-label">Batch Setup:</span>
+              {/* Profile Quick Picker for Fleet */}
+              <div className="flex items-center gap-1.5">
+                <UserCheck className="h-3.5 w-3.5 text-indigo-400 flex-shrink-0" />
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      handleApplyProfileToFleet(e.target.value);
+                      e.target.value = '';
+                    }
+                  }}
+                  className="quick-select"
+                  title="Apply username and password from profile to all devices in list"
+                >
+                  <option value="" disabled>Apply Profile to All...</option>
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.is_default ? '[Default] ' : ''}{p.name} ({p.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 3-Tier Priority Pool Modal Button */}
+              <button
+                type="button"
+                className="fallback-toggle-btn"
+                onClick={() => setShowFleetPoolModal(true)}
+                title="Configure 3-tier sequential credential fallback pool for the entire fleet"
+              >
+                <ListOrdered className="h-3.5 w-3.5" />
+                <span>Priority Pool (1-2-3)</span>
+              </button>
+
+              <span className="quick-creds-label">Manual Batch:</span>
               <select
                 value={commonType}
                 onChange={(e) => setCommonType(e.target.value)}
@@ -523,7 +1151,7 @@ export default function DeviceForm({
                 <span>Add Row</span>
               </button>
 
-              {/* Import Fleet Button (CSV, XLSX, JSON, YAML) */}
+              {/* Import Fleet Button */}
               <button
                 type="button"
                 className="btn-import-fleet"
@@ -532,6 +1160,21 @@ export default function DeviceForm({
               >
                 <FileUp className="h-3.5 w-3.5" />
                 <span>Import Fleet</span>
+              </button>
+
+              <button
+                type="button"
+                className="btn-profile-manage"
+                onClick={() => {
+                  setProfileModalTab('list');
+                  setProfileError('');
+                  setProfileSuccess('');
+                  setShowProfileModal(true);
+                }}
+                title="Manage saved profiles"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Profiles</span>
               </button>
 
               {fleet.length > 0 && (
@@ -552,6 +1195,7 @@ export default function DeviceForm({
               <thead>
                 <tr>
                   <th>IP Address (Host)</th>
+                  <th>Profile / Fallback</th>
                   <th>Type</th>
                   <th>Username</th>
                   <th>Password</th>
@@ -559,64 +1203,598 @@ export default function DeviceForm({
                 </tr>
               </thead>
               <tbody>
-                {fleet.map((dev) => (
-                  <tr key={dev.id}>
-                    <td>
-                      <input
-                        type="text"
-                        value={dev.host}
-                        onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
-                        placeholder="e.g. 192.168.1.1"
-                        className="fleet-input font-mono"
-                      />
-                    </td>
-                    <td>
-                      <select
-                        value={dev.device_type}
-                        onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
-                        className="fleet-select"
-                      >
-                        <option value="autodetect">Auto Detect</option>
-                        <option value="huawei">Huawei (VRP)</option>
-                        <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                        <option value="hp_comware">HP / H3C Comware</option>
-                        <option value="aruba_os">Aruba OS</option>
-                        <option value="juniper_junos">Juniper JunOS</option>
-                      </select>
-                    </td>
+                {fleet.map((dev) => {
+                  const assignedProf = profiles.find((p) => p.id === dev.profile_id);
+                  const credCount = assignedProf?.credentials?.length || (dev.fallback_profile_ids?.length) || (dev.credential_pool?.length) || 1;
+                  const hasPool = credCount > 1;
+                  return (
+                    <tr key={dev.id}>
+                      <td>
+                        <input
+                          type="text"
+                          value={dev.host}
+                          onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
+                          placeholder="e.g. 192.168.1.1"
+                          className="fleet-input font-mono"
+                        />
+                      </td>
+                      <td style={{ width: '155px' }}>
+                        <div className="flex items-center gap-1">
+                          <select
+                            value={dev.profile_id || ''}
+                            onChange={(e) => updateFleetDeviceProfile(dev.id, e.target.value)}
+                            className="fleet-profile-select"
+                            title="Select profile for this device (includes all prioritized credentials)"
+                          >
+                            <option value="">Custom</option>
+                            {profiles.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} {p.credentials?.length > 1 ? `(P:${p.credentials.length})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {hasPool && (
+                            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700 font-mono flex-shrink-0" title={`Multi-Priority Credentials active: ${credCount} priorities in profile`}>
+                              P:{credCount}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <select
+                          value={dev.device_type}
+                          onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
+                          className="fleet-select"
+                        >
+                          <option value="autodetect">Auto Detect</option>
+                          <option value="huawei">Huawei (VRP)</option>
+                          <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
+                          <option value="hp_comware">HP / H3C Comware</option>
+                          <option value="aruba_os">Aruba OS</option>
+                          <option value="juniper_junos">Juniper JunOS</option>
+                        </select>
+                      </td>
 
-                    <td>
-                      <input
-                        type="text"
-                        value={dev.username}
-                        onChange={(e) => updateFleetDevice(dev.id, 'username', e.target.value)}
-                        placeholder="Username"
-                        className="fleet-input"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="password"
-                        value={dev.password}
-                        onChange={(e) => updateFleetDevice(dev.id, 'password', e.target.value)}
-                        placeholder="Password"
-                        className="fleet-input"
-                      />
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={() => removeFleetDevice(dev.id)}
-                        className="btn-remove-row"
-                        title="Remove device from fleet"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      <td>
+                        <input
+                          type="text"
+                          value={dev.username}
+                          onChange={(e) => updateFleetDevice(dev.id, 'username', e.target.value)}
+                          placeholder="Username"
+                          className="fleet-input"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="password"
+                          value={dev.password}
+                          onChange={(e) => updateFleetDevice(dev.id, 'password', e.target.value)}
+                          placeholder="Password"
+                          className="fleet-input"
+                        />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          onClick={() => removeFleetDevice(dev.id)}
+                          className="btn-remove-row"
+                          title="Remove device from fleet"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* FLEET PRIORITY CREDENTIAL POOL MODAL                                      */}
+      {/* ========================================================================= */}
+      {showFleetPoolModal && (
+        <div className="modal-backdrop">
+          <div className="save-playbook-box fleet-pool-modal">
+            <div className="save-playbook-header">
+              <div className="flex items-center gap-2">
+                <ListOrdered className="h-4 w-4 text-sky-400" />
+                <h3 className="save-playbook-title font-semibold">
+                  Configure Fleet Priority Credential Pool
+                </h3>
+              </div>
+              <button onClick={() => setShowFleetPoolModal(false)} className="modal-close-btn">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="save-playbook-body">
+              <p className="text-xs text-slate-300 mb-3">
+                Select up to 3 credential profiles in priority order. When running batch commands or deployment, each switch will probe <strong>Priority 1</strong>, then <strong>Priority 2</strong>, then <strong>Priority 3</strong> until authentication succeeds.
+              </p>
+
+              <div className="flex flex-col gap-3">
+                {/* Priority 1 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-1">Priority 1 (Primary TACACS/RADIUS)</span>
+                  </div>
+                  <select
+                    value={fleetPrio1Id}
+                    onChange={(e) => setFleetPrio1Id(e.target.value)}
+                    className="priority-slot-select mt-1"
+                  >
+                    <option value="" disabled>Select Priority 1 Profile...</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Priority 2 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-2">Priority 2 (Secondary / Site Local Admin)</span>
+                  </div>
+                  <select
+                    value={fleetPrio2Id}
+                    onChange={(e) => setFleetPrio2Id(e.target.value)}
+                    className="priority-slot-select mt-1"
+                  >
+                    <option value="">-- None --</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Priority 3 */}
+                <div className="priority-slot-card">
+                  <div className="priority-slot-header">
+                    <span className="priority-badge priority-badge-3">Priority 3 (Emergency / Vendor Default)</span>
+                  </div>
+                  <select
+                    value={fleetPrio3Id}
+                    onChange={(e) => setFleetPrio3Id(e.target.value)}
+                    className="priority-slot-select mt-1"
+                  >
+                    <option value="">-- None --</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="save-playbook-footer">
+              <button
+                type="button"
+                onClick={() => setShowFleetPoolModal(false)}
+                className="btn-modal-cancel"
+              >
+                <X className="h-4 w-4" />
+                <span>Cancel</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyFleetPoolToAll}
+                className="btn-modal-save"
+                disabled={!fleetPrio1Id}
+              >
+                <Check className="h-4 w-4" />
+                <span>Apply Priority Pool to All ({fleet.length} Devices)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MANAGE CREDENTIAL PROFILES MODAL                                          */}
+      {/* ========================================================================= */}
+      {showProfileModal && (
+        <div className="modal-backdrop">
+          <div className="save-playbook-box profile-modal">
+            <div className="save-playbook-header">
+              <div className="flex items-center gap-2">
+                <UserCheck className="h-4 w-4 text-indigo-400" />
+                <h3 className="save-playbook-title font-semibold">
+                  User Credential Profiles (SSH / Telnet)
+                </h3>
+              </div>
+              <button onClick={() => setShowProfileModal(false)} className="modal-close-btn">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="save-playbook-body">
+              {/* Tab Selector */}
+              <div className="profile-tab-toggle">
+                <button
+                  type="button"
+                  className={`btn-profile-tab ${profileModalTab === 'list' ? 'active' : ''}`}
+                  onClick={() => {
+                    setProfileModalTab('list');
+                    setProfileError('');
+                    setProfileSuccess('');
+                  }}
+                >
+                  Saved Profiles ({profiles.length})
+                </button>
+                <button
+                  type="button"
+                  className={`btn-profile-tab ${profileModalTab === 'edit' ? 'active' : ''}`}
+                  onClick={handleOpenNewProfile}
+                >
+                  <Plus className="h-3 w-3 inline mr-1" />
+                  {editingProfile?.id ? 'Edit Profile' : 'Add New Profile'}
+                </button>
+              </div>
+
+              {profileError && (
+                <div className="alert-box mb-3">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  <span>{profileError}</span>
+                </div>
+              )}
+
+              {profileSuccess && (
+                <div className="alert-box mb-3 text-emerald-400 bg-emerald-950/40 border-emerald-800">
+                  <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                  <span>{profileSuccess}</span>
+                </div>
+              )}
+
+              {/* Tab 1: Profile List */}
+              {profileModalTab === 'list' && (
+                <div className="profile-list">
+                  {profiles.length === 0 ? (
+                    <div className="text-center py-6 text-xs text-slate-400">
+                      No profiles saved yet. Click "Add New Profile" to create one.
+                    </div>
+                  ) : (
+                    profiles.map((p) => {
+                      const isRevealed = !!showProfilePassMap[p.id];
+                      return (
+                        <div
+                          key={p.id}
+                          className={`profile-card-item ${p.is_default ? 'is-default' : ''}`}
+                        >
+                          <div className="profile-card-top">
+                            <div className="profile-card-name-group">
+                              <span className="profile-card-name">{p.name}</span>
+                              {p.is_default && (
+                                <span className="profile-default-badge">
+                                  <Star className="h-2.5 w-2.5 fill-indigo-400 text-indigo-400" />
+                                  Default
+                                </span>
+                              )}
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-mono">
+                                {(p.credentials?.length || 1)} Priorities
+                              </span>
+                            </div>
+
+                            <div className="profile-card-actions">
+                              {!p.is_default && (
+                                <button
+                                  type="button"
+                                  className="btn-profile-card-action"
+                                  onClick={() => handleSetDefaultProfile(p.id)}
+                                  title="Set as default profile for new devices"
+                                >
+                                  <Star className="h-3 w-3" />
+                                  <span>Set Default</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn-profile-card-action"
+                                onClick={() => handleOpenEditProfile(p)}
+                                title="Edit this profile"
+                              >
+                                <Edit2 className="h-3 w-3" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-profile-card-action btn-del"
+                                onClick={() => handleDeleteProfile(p.id, p.name)}
+                                title="Delete profile"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {p.description && (
+                            <p className="text-xs text-slate-400">{p.description}</p>
+                          )}
+
+                          <div className="text-[11px] text-slate-400 flex items-center gap-3 mt-1 font-mono">
+                            <span>Driver: <strong className="text-slate-200">{p.device_type || 'autodetect'}</strong></span>
+                            <span>Port: <strong className="text-slate-200">{p.port || 22}</strong></span>
+                          </div>
+
+                          {/* Prioritized Credentials Breakdown */}
+                          <div className="profile-card-creds-list">
+                            {(p.credentials && p.credentials.length > 0 ? p.credentials : [{ priority: 1, username: p.username, password: p.password, label: 'Primary' }]).map((c, cIdx) => {
+                              const credKey = `${p.id}_prio_${cIdx}`;
+                              const isCredRevealed = !!showProfilePassMap[credKey];
+                              return (
+                                <div key={cIdx} className="profile-card-cred-row">
+                                  <span className={`card-cred-badge prio-badge-${Math.min(c.priority, 3)}`}>
+                                    P{c.priority}
+                                  </span>
+                                  <span className="card-cred-user font-mono text-xs text-slate-200">
+                                    {c.username || '(empty user)'}
+                                  </span>
+                                  {c.label && (
+                                    <span className="card-cred-label text-[11px] text-slate-400">({c.label})</span>
+                                  )}
+                                  <span className="card-cred-pass font-mono text-xs text-slate-400 flex items-center gap-1 ml-auto">
+                                    {isCredRevealed ? (c.password || '(empty)') : (c.password ? '••••••••' : '(no pass)')}
+                                    {c.password && (
+                                      <button
+                                        type="button"
+                                        className="btn-toggle-eye"
+                                        onClick={() =>
+                                          setShowProfilePassMap((prev) => ({
+                                            ...prev,
+                                            [credKey]: !isCredRevealed,
+                                          }))
+                                        }
+                                        title={isCredRevealed ? 'Hide Password' : 'Show Password'}
+                                      >
+                                        {isCredRevealed ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                                      </button>
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {/* Tab 2: Create / Edit Form */}
+              {profileModalTab === 'edit' && editingProfile && (
+                <form onSubmit={handleSaveProfile} className="profile-form-grid">
+                  {/* Profile Name */}
+                  <div className="form-group col-span-full">
+                    <label className="form-label">Profile Name *</label>
+                    <input
+                      type="text"
+                      value={editingProfile.name}
+                      onChange={(e) =>
+                        setEditingProfile((prev) => ({ ...prev, name: e.target.value }))
+                      }
+                      placeholder="e.g. Huawei Core Switch Admin"
+                      required
+                      className="form-input"
+                    />
+                  </div>
+
+                  {/* Description */}
+                  <div className="form-group col-span-full">
+                    <label className="form-label">Description (Optional)</label>
+                    <input
+                      type="text"
+                      value={editingProfile.description}
+                      onChange={(e) =>
+                        setEditingProfile((prev) => ({ ...prev, description: e.target.value }))
+                      }
+                      placeholder="Remarks or location e.g. Data Center Core Switch"
+                      className="form-input"
+                    />
+                  </div>
+
+                  {/* Device Driver */}
+                  <div className="form-group">
+                    <label className="form-label">Default Device Driver</label>
+                    <select
+                      value={editingProfile.device_type}
+                      onChange={(e) =>
+                        setEditingProfile((prev) => ({
+                          ...prev,
+                          device_type: e.target.value,
+                          port: e.target.value.includes('telnet') ? 23 : (prev.port || 22),
+                        }))
+                      }
+                      className="form-select"
+                    >
+                      {deviceTypes.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Port */}
+                  <div className="form-group">
+                    <label className="form-label">Default Port</label>
+                    <input
+                      type="number"
+                      value={editingProfile.port}
+                      onChange={(e) =>
+                        setEditingProfile((prev) => ({
+                          ...prev,
+                          port: parseInt(e.target.value, 10) || 22,
+                        }))
+                      }
+                      className="form-input font-mono"
+                    />
+                  </div>
+
+                  {/* Prioritized Credentials Section (Priority 1, 2, 3...) */}
+                  <div className="col-span-full profile-credentials-section">
+                    <div className="profile-credentials-section-header">
+                      <div className="flex items-center gap-2">
+                        <ListOrdered className="h-4 w-4 text-sky-400" />
+                        <span className="text-xs font-semibold text-slate-200">
+                          Credentials by Priority (ชุดรหัสผ่านเรียงตามลำดับความสำคัญ)
+                        </span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-mono">
+                          {(editingProfile.credentials || []).length} Tiers
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-add-prio"
+                        onClick={handleAddProfileCredential}
+                        title="Add another sequential credential fallback"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <span>Add Priority</span>
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mb-2">
+                      ระบบจะลองเชื่อมต่อด้วย Priority 1 ก่อน หาก Authentication ล้มเหลวจะ Failover ไปลอง Priority ถัดไปอัตโนมัติ
+                    </p>
+
+                    <div className="profile-credentials-list">
+                      {(editingProfile.credentials || []).map((cred, cIdx) => {
+                        const pKey = `form_prio_pass_${cIdx}`;
+                        const sKey = `form_prio_sec_${cIdx}`;
+                        return (
+                          <div key={cIdx} className="profile-cred-card">
+                            <div className="profile-cred-card-top">
+                              <span className={`cred-prio-badge prio-badge-${Math.min(cred.priority, 3)}`}>
+                                Priority {cred.priority} {cIdx === 0 ? '(Primary)' : cIdx === 1 ? '(Secondary)' : '(Emergency)'}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={cred.label || ''}
+                                  onChange={(e) => handleUpdateProfileCredential(cIdx, 'label', e.target.value)}
+                                  placeholder="Label (e.g. TACACS, Local Admin)"
+                                  className="cred-label-input"
+                                />
+                                {(editingProfile.credentials || []).length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveProfileCredential(cIdx)}
+                                    className="btn-del-prio"
+                                    title="Remove this priority"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="profile-cred-grid">
+                              <div className="form-group">
+                                <label className="form-label text-[10px]">Username</label>
+                                <input
+                                  type="text"
+                                  value={cred.username || ''}
+                                  onChange={(e) => handleUpdateProfileCredential(cIdx, 'username', e.target.value)}
+                                  placeholder="admin"
+                                  className="form-input text-xs"
+                                />
+                              </div>
+
+                              <div className="form-group">
+                                <label className="form-label text-[10px]">Password</label>
+                                <div className="password-input-wrapper">
+                                  <input
+                                    type={showProfilePassMap[pKey] ? 'text' : 'password'}
+                                    value={cred.password || ''}
+                                    onChange={(e) => handleUpdateProfileCredential(cIdx, 'password', e.target.value)}
+                                    placeholder="Password"
+                                    className="form-input text-xs"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="password-eye-btn"
+                                    onClick={() => setShowProfilePassMap((prev) => ({ ...prev, [pKey]: !prev[pKey] }))}
+                                    title={showProfilePassMap[pKey] ? 'Hide' : 'Show'}
+                                  >
+                                    {showProfilePassMap[pKey] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="form-group">
+                                <label className="form-label text-[10px]">Enable Secret (Optional)</label>
+                                <div className="password-input-wrapper">
+                                  <input
+                                    type={showProfilePassMap[sKey] ? 'text' : 'password'}
+                                    value={cred.secret || ''}
+                                    onChange={(e) => handleUpdateProfileCredential(cIdx, 'secret', e.target.value)}
+                                    placeholder="Enable secret"
+                                    className="form-input text-xs"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="password-eye-btn"
+                                    onClick={() => setShowProfilePassMap((prev) => ({ ...prev, [sKey]: !prev[sKey] }))}
+                                    title={showProfilePassMap[sKey] ? 'Hide' : 'Show'}
+                                  >
+                                    {showProfilePassMap[sKey] ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Default Profile Checkbox */}
+                  <div className="col-span-full">
+                    <label className="form-checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={editingProfile.is_default}
+                        onChange={(e) =>
+                          setEditingProfile((prev) => ({ ...prev, is_default: e.target.checked }))
+                        }
+                      />
+                      <span>Set this as the default profile for new sessions</span>
+                    </label>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="col-span-full flex justify-end gap-2 mt-3">
+                    <button
+                      type="button"
+                      onClick={() => setProfileModalTab('list')}
+                      className="btn-modal-cancel"
+                    >
+                      <X className="h-4 w-4" />
+                      <span>Cancel</span>
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={profileLoading}
+                      className="btn-modal-save"
+                    >
+                      {profileLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="h-4 w-4" />
+                          <span>{editingProfile.id ? 'Update Profile' : 'Save Profile'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -706,16 +1884,38 @@ export default function DeviceForm({
                 </button>
               </div>
 
-              {/* Inherited Batch Setup Credentials Notice */}
+              {/* Inherited Batch Setup Credentials Notice with Profile Picker */}
               <div className="import-batch-notice">
-                <span className="text-xs text-slate-300 font-semibold block mb-0.5">
-                  Applied Batch Setup Credentials:
-                </span>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-slate-300 font-semibold">
+                    Fallback Credentials for Imported Devices:
+                  </span>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const prof = profiles.find((p) => p.id === e.target.value);
+                      if (prof) {
+                        setFallbackType(prof.device_type || 'huawei');
+                        setFallbackUser(prof.username || '');
+                        setFallbackPass(prof.password || '');
+                        setFallbackPort(prof.port || 22);
+                        setFallbackSecret(prof.secret || '');
+                      }
+                      e.target.value = '';
+                    }}
+                    className="quick-select text-[11px]"
+                  >
+                    <option value="" disabled>Apply from Profile...</option>
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex items-center gap-3 text-xs text-slate-400">
-                  <span>Vendor: <strong className="text-indigo-300">{commonType || 'huawei'}</strong></span>
-                  <span>User: <strong className="text-slate-200">{commonUser || '(blank)'}</strong></span>
-                  <span>Password: <strong className="text-slate-200">{commonPass ? '••••••' : '(blank)'}</strong></span>
-                  <span>Port: <strong className="text-slate-200">22</strong></span>
+                  <span>Vendor: <strong className="text-indigo-300">{fallbackType || commonType || 'huawei'}</strong></span>
+                  <span>User: <strong className="text-slate-200">{fallbackUser || commonUser || '(blank)'}</strong></span>
+                  <span>Password: <strong className="text-slate-200">{(fallbackPass || commonPass) ? '••••••' : '(blank)'}</strong></span>
+                  <span>Port: <strong className="text-slate-200">{fallbackPort || 22}</strong></span>
                 </div>
               </div>
 
@@ -745,7 +1945,6 @@ export default function DeviceForm({
                   </label>
                 </div>
               </div>
-
 
               {/* Status and Error Messages */}
               {importLoading && (

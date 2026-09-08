@@ -150,10 +150,13 @@ class NornirService:
 
     @classmethod
     def init_nornir(cls, devices: List[DeviceCredentials], num_workers: int = None) -> Any:
-        """Initialize Nornir instance with in-memory dynamic inventory (up to 100 concurrent workers)"""
-        if not num_workers:
-            max_workers = getattr(settings, "DEFAULT_NUM_WORKERS", 100)
-            num_workers = min(max(len(devices), 1), max_workers)
+        """Initialize Nornir instance with in-memory dynamic inventory (min 10, max 100 concurrent workers)"""
+        if num_workers is None:
+            workers_setting = getattr(settings, "DEFAULT_NUM_WORKERS", 10)
+        else:
+            workers_setting = num_workers
+        workers_count = max(10, min(int(workers_setting), 100))
+        runner_workers = min(max(len(devices), 1), workers_count)
 
         host_dict = {}
         for idx, dev in enumerate(devices):
@@ -169,24 +172,30 @@ class NornirService:
             platform = cls._map_platform(dev.device_type)
 
             
+            candidates = NetmikoService._resolve_credential_candidates(dev)
+            p1_user = candidates[0]["username"] if candidates else (dev.username or "")
+            p1_pass = candidates[0]["password"] if candidates else (dev.password or "")
+            p1_secret = candidates[0].get("secret") if candidates else (dev.secret or "")
+
             extras = {
                 "timeout": settings.DEFAULT_TIMEOUT,
                 "global_delay_factor": settings.GLOBAL_DELAY_FACTOR,
                 "fast_cli": False,
             }
-            if dev.secret:
-                extras["secret"] = dev.secret
+            if p1_secret:
+                extras["secret"] = p1_secret
 
             host_dict[host_key] = {
                 "hostname": dev.host or "127.0.0.1",
                 "port": dev.port or (23 if "telnet" in platform else 22),
-                "username": dev.username or "",
-                "password": dev.password or "",
+                "username": p1_user,
+                "password": p1_pass,
                 "platform": platform,
                 "extras": extras,
                 "data": {
                     "original_device": dev,
                     "index": idx,
+                    "credential_candidates": candidates,
                 }
             }
 
@@ -194,7 +203,7 @@ class NornirService:
             runner={
                 "plugin": "threaded",
                 "options": {
-                    "num_workers": num_workers,
+                    "num_workers": runner_workers,
                 },
             },
             inventory={
@@ -215,6 +224,7 @@ class NornirService:
         vendor_commands: Dict[str, str] = None,
         huawei_command: str = None,
         cisco_command: str = None,
+        num_workers: int = None,
     ) -> BatchCommandResponse:
         """Run CLI command across all devices in fleet using Nornir Engine"""
         start_time = time.time()
@@ -227,7 +237,7 @@ class NornirService:
                 results=[],
             )
 
-        nr = cls.init_nornir(devices)
+        nr = cls.init_nornir(devices, num_workers=num_workers)
 
         def _nornir_cmd_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
@@ -265,13 +275,34 @@ class NornirService:
                 else:
                     actual_cmd = command or ""
 
-            res = task.run(
-                task=netmiko_send_command,
-                command_string=actual_cmd,
-                read_timeout=settings.DEFAULT_TIMEOUT,
-            )
+            candidates = task.host.data.get("credential_candidates") or []
+            res = None
+            for c_idx, cred in enumerate(candidates or [{}], 1):
+                if cred:
+                    task.host.username = cred.get("username", "")
+                    task.host.password = cred.get("password", "")
+                    task.host.connection_options["netmiko"].username = cred.get("username", "")
+                    task.host.connection_options["netmiko"].password = cred.get("password", "")
+                    if cred.get("secret"):
+                        task.host.connection_options["netmiko"].extras["secret"] = cred["secret"]
+                try:
+                    res = task.run(
+                        task=netmiko_send_command,
+                        command_string=actual_cmd,
+                        read_timeout=settings.DEFAULT_TIMEOUT,
+                    )
+                    break
+                except Exception as ce:
+                    err_l = str(ce).lower()
+                    if ("auth" in err_l or "password" in err_l or "login" in err_l) and c_idx < len(candidates):
+                        try:
+                            task.host.close_connection("netmiko")
+                        except Exception:
+                            pass
+                        continue
+                    raise ce
             t_elapsed = round(time.time() - t_start, 2)
-            masked = NetmikoService.mask_sensitive_data(res.result or "")
+            masked = NetmikoService.clean_cli_output(res.result or "")
             return {
                 "command": actual_cmd,
                 "output": masked,
@@ -339,6 +370,7 @@ class NornirService:
         pre_check_commands: List[str] = None,
         post_check_commands: List[str] = None,
         backup_before_deploy: bool = False,
+        num_workers: int = None,
     ) -> BatchDeployResponse:
         """Run advanced configuration deployment across fleet using Nornir Engine"""
         start_time = time.time()
@@ -366,7 +398,7 @@ class NornirService:
                 results=[],
             )
 
-        nr = cls.init_nornir(devices)
+        nr = cls.init_nornir(devices, num_workers=num_workers)
 
         def _nornir_deploy_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
@@ -382,7 +414,7 @@ class NornirService:
                 step_logs.append({"step": "backup", "title": f"Fetching Backup ({show_run})", "status": "running"})
                 try:
                     b_res = task.run(task=netmiko_send_command, command_string=show_run, read_timeout=settings.DEFAULT_TIMEOUT)
-                    backup_output = b_res.result
+                    backup_output = NetmikoService.clean_cli_output(b_res.result or "")
                     step_logs[-1]["status"] = "success"
                 except Exception as be:
                     backup_output = f"Backup failed: {str(be)}"
@@ -463,7 +495,7 @@ class NornirService:
 
             t_elapsed = round(time.time() - t_start, 2)
             return {
-                "deploy_output": NetmikoService.mask_sensitive_data(full_terminal_output),
+                "deploy_output": NetmikoService.clean_cli_output(full_terminal_output),
                 "save_output": save_output,
                 "backup_output": backup_output,
                 "pre_check_results": pre_res_list,
@@ -547,7 +579,7 @@ class NornirService:
         )
 
     @classmethod
-    def run_batch_backup(cls, devices: List[DeviceCredentials]) -> BatchBackupResponse:
+    def run_batch_backup(cls, devices: List[DeviceCredentials], num_workers: int = None) -> BatchBackupResponse:
         """Pull running-configuration snapshots across fleet using Nornir Engine"""
         start_time = time.time()
         if not devices:
@@ -559,7 +591,7 @@ class NornirService:
                 results=[],
             )
 
-        nr = cls.init_nornir(devices)
+        nr = cls.init_nornir(devices, num_workers=num_workers)
 
         def _nornir_backup_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
@@ -573,7 +605,7 @@ class NornirService:
             t_elapsed = round(time.time() - t_start, 2)
             return {
                 "command": cmd,
-                "output": res.result or "",
+                "output": NetmikoService.clean_cli_output(res.result or ""),
                 "execution_time_seconds": t_elapsed,
             }
 

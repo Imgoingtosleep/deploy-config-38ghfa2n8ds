@@ -1,0 +1,92 @@
+/* ========================================================================= */
+/* NORNIR WORKERS CONTROLLER STYLES                                          */
+/* ========================================================================= */
+
+.nornir-control-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.625rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.nornir-control-wrapper:hover {
+  border-color: rgba(245, 158, 11, 0.6);
+  background: rgba(15, 23, 42, 0.95);
+}
+
+.nornir-control-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.nornir-control-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  letter-spacing: 0.025em;
+  white-space: nowrap;
+}
+
+.nornir-control-input {
+  width: 3.25rem;
+  height: 1.625rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  color: #fbbf24;
+  font-size: 0.8125rem;
+  font-family: monospace;
+  font-weight: 700;
+  text-align: center;
+  padding: 0 0.25rem;
+  outline: none;
+  transition: all 0.15s ease;
+  -moz-appearance: textfield;
+}
+
+.nornir-control-input:focus {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+  background: #1e293b;
+}
+
+.nornir-control-input::-webkit-outer-spin-button,
+.nornir-control-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.nornir-control-slider-box {
+  display: flex;
+  align-items: center;
+  width: 5.5rem;
+}
+
+.nornir-control-slider {
+  width: 100%;
+  height: 5px;
+  background: #334155;
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  accent-color: #f59e0b;
+  transition: opacity 0.15s ease;
+}
+
+.nornir-control-slider:hover {
+  opacity: 0.9;
+}
+
+.nornir-control-hint {
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  font-family: monospace;
+  white-space: nowrap;
+}

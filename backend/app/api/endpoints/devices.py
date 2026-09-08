@@ -46,14 +46,16 @@ def get_available_serial_ports():
 
 @router.post("/test-connection", response_model=DeviceTestResult)
 def test_connection(device: DeviceCredentials):
-    """Test SSH connectivity and credentials on the target network device"""
-    connected, message, prompt = NetmikoService.test_connection(device)
+    """Test SSH connectivity and credentials on the target network device with priority fallback"""
+    connected, message, prompt, winning_cred, attempt_logs = NetmikoService.test_connection(device)
     return DeviceTestResult(
         host=device.host,
         status="connected" if connected else "failed",
         connected=connected,
         message=message,
         device_prompt=prompt if connected else None,
+        authenticated_credential=winning_cred,
+        attempt_logs=attempt_logs,
     )
 
 

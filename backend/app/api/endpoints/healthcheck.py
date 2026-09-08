@@ -373,7 +373,8 @@ def run_batch_health_check(request: BatchHealthCheckRequest):
         )
 
     check_type = request.check_type or "standard"
-    max_workers = min(len(devices), 10)
+    workers_val = max(10, min(int(request.num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+    max_workers = min(len(devices), workers_val)
 
     device_results = [None] * len(devices)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:

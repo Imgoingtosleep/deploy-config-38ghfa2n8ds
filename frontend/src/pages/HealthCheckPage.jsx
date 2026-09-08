@@ -98,6 +98,8 @@ export default function HealthCheckPage({
   deviceMode = 'multi',
   device,
   fleet = [],
+  nornirWorkers = 10,
+  onUpdateWorkers,
 }) {
   const [selectedCategory, setSelectedCategory] = useState('standard');
   const [running, setRunning] = useState(false);
@@ -629,7 +631,8 @@ export default function HealthCheckPage({
         selectedCategory,
         commands,
         vendorCommands,
-        categoryName
+        categoryName,
+        nornirWorkers
       );
 
       setActiveAsyncJob({

@@ -81,6 +81,7 @@ def execute_batch_command(request: BatchCommandRequest):
             vendor_commands=request.vendor_commands,
             huawei_command=request.huawei_command,
             cisco_command=request.cisco_command,
+            num_workers=request.num_workers,
         )
     except Exception:
         # Fallback to ThreadPoolExecutor
@@ -136,7 +137,8 @@ def execute_batch_command(request: BatchCommandRequest):
             return NornirService.resolve_vendor_command(request.command or "", dev_type)
 
 
-        max_workers = min(max(len(devices), 1), 20)
+        fallback_workers = request.num_workers or 20
+        max_workers = min(max(len(devices), 1), fallback_workers)
         device_results = [None] * len(devices)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
