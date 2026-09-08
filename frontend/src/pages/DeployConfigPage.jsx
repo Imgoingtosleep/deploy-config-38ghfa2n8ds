@@ -36,11 +36,6 @@ import {
   Plus,
 } from 'lucide-react';
 import {
-  deployConfigurationAdvanced,
-  deployConfigurationBatch,
-  backupRunningConfig,
-  backupBatchRunningConfig,
-  executeTroubleshootCommand,
   submitDeployJob,
   submitBackupJob,
 } from '../services/api';
@@ -255,8 +250,6 @@ const WARNING_KEYWORDS = [
 ];
 
 export default function DeployConfigPage({
-  deviceMode = 'multi',
-  device,
   fleet = [],
   nornirWorkers = 10,
   onUpdateWorkers,
@@ -319,10 +312,11 @@ export default function DeployConfigPage({
 
   const fileInputRef = useRef(null);
 
-  // Auto-detect vendor based on device.device_type
+  // Auto-detect vendor based on fleet device types
   useEffect(() => {
-    if (device?.device_type) {
-      const type = device.device_type.toLowerCase();
+    const primaryDevice = fleet?.[0];
+    if (primaryDevice?.device_type) {
+      const type = primaryDevice.device_type.toLowerCase();
       if (type.includes('huawei')) {
         setActiveVendor('huawei');
         setPreCheckCmd('display interface brief');
@@ -341,7 +335,7 @@ export default function DeployConfigPage({
         setPostCheckCmd('show interfaces terse');
       }
     }
-  }, [device?.device_type]);
+  }, [fleet]);
 
   // Clean lines for analysis and execution
   const rawLines = configText.split('\n');
@@ -409,37 +403,14 @@ export default function DeployConfigPage({
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (deviceMode === 'multi') {
-      if (validFleet.length === 0) {
-        setErrorMessage('Please add at least one device IP in Target Device above.');
-        setBackingUp(false);
-        return;
-      }
-
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device IP in Target Device above.');
       setBackingUp(false);
-      handleLaunchAsyncFleetBackup();
       return;
-    } else {
-      if (!device?.host) {
-        setErrorMessage('Please fill in Device Host / IP Address above.');
-        setBackingUp(false);
-        return;
-      }
-      try {
-        const res = await backupRunningConfig(device);
-        setManualBackupResult(res);
-        setShowBackupModal(true);
-        if (res.success) {
-          setSuccessMessage(`Successfully fetched running configuration from ${device.host} (${res.execution_time_seconds}s)`);
-        } else {
-          setErrorMessage(res.error || 'Backup command returned an error');
-        }
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Failed to fetch running config');
-      } finally {
-        setBackingUp(false);
-      }
     }
+
+    setBackingUp(false);
+    handleLaunchAsyncFleetBackup();
   };
 
   // Trigger Advanced Deployment
@@ -457,66 +428,15 @@ export default function DeployConfigPage({
     setResult(null);
     setBatchResult(null);
 
-    const preCmds = enablePreCheck && preCheckCmd.trim() ? [preCheckCmd.trim()] : [];
-    const postCmds = enablePostCheck && postCheckCmd.trim() ? [postCheckCmd.trim()] : [];
-
-    if (deviceMode === 'multi') {
-      if (validFleet.length === 0) {
-        setErrorMessage('Please add at least one device IP address in Target Device above.');
-        setDeploying(false);
-        return;
-      }
-
-      // Route to Background Async Job with live progress stream & modal
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device IP address in Target Device above.');
       setDeploying(false);
-      handleLaunchAsyncFleetDeploy();
       return;
-    } else {
-      // Single Mode
-      if (!device?.host) {
-        setErrorMessage('Please fill in Device Host / IP Address above.');
-        setDeploying(false);
-        return;
-      }
-
-      try {
-        const data = await deployConfigurationAdvanced(
-          device,
-          validCommands,
-          saveConfig,
-          preCmds,
-          postCmds,
-          enableBackup
-        );
-        setResult(data);
-        setActiveTab('results');
-        setResultTab('terminal');
-
-        // Record in session history
-        const historyItem = {
-          id: Date.now(),
-          timestamp: new Date().toLocaleTimeString(),
-          date: new Date().toLocaleDateString(),
-          host: device.host,
-          device_type: device.device_type,
-          commandCount: validCommands.length,
-          success: data.success,
-          executionTime: data.execution_time_seconds,
-          script: configText,
-          result: data,
-        };
-        setDeployHistory((prev) => [historyItem, ...prev.slice(0, 19)]); // Keep last 20
-        if (data.success) {
-          setSuccessMessage(`Configuration successfully deployed to ${device.host} (${data.execution_time_seconds}s)`);
-        } else {
-          setErrorMessage(data.error || 'Deployment failed on device');
-        }
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Config deployment failed');
-      } finally {
-        setDeploying(false);
-      }
     }
+
+    // Route to Background Async Job with live progress stream & modal
+    setDeploying(false);
+    handleLaunchAsyncFleetDeploy();
   };
 
   // Launch Massive Fleet Background Job (10,000+ Scale with live SSE Progress Stream & Pagination)
@@ -666,7 +586,7 @@ export default function DeployConfigPage({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `config_deploy_${device.host || 'device'}_${Date.now()}.cfg`;
+    a.download = `config_deploy_${fleet?.[0]?.host ? `fleet_${fleet[0].host}` : 'fleet'}_${Date.now()}.cfg`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -707,24 +627,13 @@ export default function DeployConfigPage({
       {/* Top Device Header & Quick Actions */}
       <div className="deploy-top-banner">
         <div className="deploy-banner-left">
-          {deviceMode === 'multi' ? (
-            <div className="deploy-target-badge fleet-mode">
-              <span className="badge-dot" />
-              <span className="badge-host">Fleet Deployment ({validFleet.length} Devices)</span>
-              <span className="badge-type">Multi-Device SSH</span>
-            </div>
-          ) : (
-            <div className="deploy-target-badge">
-              <span className="badge-dot" />
-              <span className="badge-host">{device.host || 'No Host Specified'}</span>
-              <span className="badge-type">({device.device_type || 'Unknown Driver'})</span>
-              <span className="badge-port">Port {device.port || (device.device_type?.includes('telnet') ? 23 : 22)}</span>
-            </div>
-          )}
+          <div className="deploy-target-badge fleet-mode">
+            <span className="badge-dot" />
+            <span className="badge-host">Fleet Deployment ({validFleet.length} Devices)</span>
+            <span className="badge-type">Multi-Device SSH</span>
+          </div>
           <p className="deploy-banner-hint">
-            {deviceMode === 'multi'
-              ? `Direct CLI push across all ${validFleet.length} devices configured in Target Device above with automated verification & backups.`
-              : 'Direct CLI push with automated pre/post verification checks, running-config backups, and safety validation.'}
+            Direct CLI push across all {validFleet.length} devices configured in Target Device above with automated verification & backups.
           </p>
         </div>
 
@@ -732,34 +641,19 @@ export default function DeployConfigPage({
           <button
             type="button"
             onClick={handleManualBackup}
-            disabled={
-              backingUp ||
-              (deviceMode === 'multi' ? validFleet.length === 0 : !device?.host)
-            }
+            disabled={backingUp || validFleet.length === 0}
             className="btn-backup-quick"
-            title={
-              deviceMode === 'multi'
-                ? `Fetch and preview running configuration from all ${validFleet.length} devices`
-                : 'Fetch and view current device running configuration'
-            }
+            title={`Fetch and preview running configuration from all ${validFleet.length} devices`}
           >
             {backingUp ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-                <span>
-                  {deviceMode === 'multi'
-                    ? `Fetching Fleet Backup (${validFleet.length})...`
-                    : 'Fetching Backup...'}
-                </span>
+                <span>Fetching Fleet Backup ({validFleet.length})...</span>
               </>
             ) : (
               <>
                 <HardDrive className="h-4 w-4 text-indigo-400" />
-                <span>
-                  {deviceMode === 'multi'
-                    ? `Backup Fleet Config (${validFleet.length} Devices)`
-                    : 'Backup Running Config'}
-                </span>
+                <span>Backup Fleet Config ({validFleet.length} Devices)</span>
               </>
             )}
           </button>
@@ -1068,9 +962,7 @@ export default function DeployConfigPage({
                     <span>
                       {validCommands.length === 0
                         ? 'Add commands above to proceed'
-                        : deviceMode === 'multi'
-                        ? `Ready to push ${validCommands.length} command(s) across ${validFleet.length} device(s)`
-                        : `Ready to push ${validCommands.length} command(s) to ${device.host}`}
+                        : `Ready to push ${validCommands.length} command(s) across ${validFleet.length} device(s)`}
                     </span>
                   </div>
 
@@ -1080,27 +972,19 @@ export default function DeployConfigPage({
                     disabled={
                       deploying ||
                       validCommands.length === 0 ||
-                      (deviceMode === 'multi' ? validFleet.length === 0 : !device.host)
+                      validFleet.length === 0
                     }
                     className="btn-deploy-main"
                   >
                     {deploying ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>
-                          {deviceMode === 'multi'
-                            ? `Deploying across ${validFleet.length} Devices...`
-                            : `Deploying to ${device.host}...`}
-                        </span>
+                        <span>Deploying across {validFleet.length} Devices...</span>
                       </>
                     ) : (
                       <>
                         <Send className="h-4 w-4" />
-                        <span>
-                          {deviceMode === 'multi'
-                            ? `Review & Deploy to Fleet (${validFleet.length} Devices)`
-                            : `Review & Deploy (${validCommands.length})`}
-                        </span>
+                        <span>Review & Deploy to Fleet ({validFleet.length} Devices)</span>
                       </>
                     )}
                   </button>
@@ -1635,7 +1519,7 @@ export default function DeployConfigPage({
 
       {/* TAB 3: DEPLOYMENT RESULTS & ANALYTICS */}
       {activeTab === 'results' && (() => {
-        const activeResult = (deviceMode === 'multi' && batchResult)
+        const activeResult = batchResult
           ? batchResult.results?.[selectedBatchDeviceIdx]
           : result;
 
@@ -1665,7 +1549,7 @@ export default function DeployConfigPage({
           <div className="deploy-results-container">
             <div className="results-wrapper">
               {/* Batch Fleet Summary Stats & Device Selector */}
-              {deviceMode === 'multi' && batchResult && (
+              {batchResult && (
                 <div className="batch-deploy-overview-card">
                   <div className="batch-stats-bar">
                     <div className="batch-stat-item">
@@ -2088,9 +1972,7 @@ export default function DeployConfigPage({
               <div className="flex items-center gap-2">
                 <Send className="h-5 w-5 text-indigo-400" />
                 <h3 className="confirm-modal-title">
-                  {deviceMode === 'multi'
-                    ? `Confirm Fleet Deployment (${validFleet.length} Devices)`
-                    : 'Confirm Configuration Deployment'}
+                  Confirm Fleet Deployment ({validFleet.length} Devices)
                 </h3>
               </div>
               <button onClick={() => setShowConfirmModal(false)} className="modal-close-btn">
@@ -2102,17 +1984,15 @@ export default function DeployConfigPage({
               {/* Summary Stats Grid */}
               <div className="confirm-stats-grid">
                 <div className="confirm-stat-card">
-                  <span className="confirm-stat-label">
-                    {deviceMode === 'multi' ? 'Fleet Targets' : 'Target Device'}
-                  </span>
+                  <span className="confirm-stat-label">Fleet Targets</span>
                   <span className="confirm-stat-val font-mono">
-                    {deviceMode === 'multi' ? `${validFleet.length} Devices` : device.host}
+                    {validFleet.length} Devices
                   </span>
                 </div>
                 <div className="confirm-stat-card">
                   <span className="confirm-stat-label">Mode / Driver</span>
                   <span className="confirm-stat-val font-mono">
-                    {deviceMode === 'multi' ? 'Multi-Device SSH' : device.device_type}
+                    Multi-Device SSH
                   </span>
                 </div>
                 <div className="confirm-stat-card">
@@ -2241,16 +2121,16 @@ export default function DeployConfigPage({
       )}
 
       {/* STANDALONE BACKUP MODAL */}
-      {showBackupModal && (manualBackupResult || manualBackupBatchResult) && (
+      {showBackupModal && (manualBackupBatchResult || manualBackupResult) && (
         <div className="modal-backdrop">
           <div className="backup-modal-box">
             <div className="confirm-modal-header">
               <div className="flex items-center gap-2">
                 <HardDrive className="h-4 w-4 text-indigo-400" />
                 <h3 className="confirm-modal-title">
-                  {deviceMode === 'multi' && manualBackupBatchResult
+                  {manualBackupBatchResult
                     ? `Fleet Running Configuration Backup (${manualBackupBatchResult.success_count}/${manualBackupBatchResult.devices_count} Succeeded)`
-                    : `Running Configuration Backup • ${device?.host}`}
+                    : 'Fleet Running Configuration Backup'}
                 </h3>
               </div>
               <button onClick={() => setShowBackupModal(false)} className="modal-close-btn">
@@ -2258,8 +2138,8 @@ export default function DeployConfigPage({
               </button>
             </div>
 
-            {/* In Multi Mode, render device tabs */}
-            {deviceMode === 'multi' && manualBackupBatchResult && (
+            {/* Device tabs */}
+            {manualBackupBatchResult && (
               <div className="p-4 pb-0">
                 <div className="batch-device-tabs-row mb-1">
                   {manualBackupBatchResult.results?.map((devRes, idx) => {
@@ -2291,10 +2171,9 @@ export default function DeployConfigPage({
 
             <div className="p-4 pt-2">
               {(() => {
-                const currentRes =
-                  deviceMode === 'multi' && manualBackupBatchResult
-                    ? manualBackupBatchResult.results?.[selectedBackupDeviceIdx]
-                    : manualBackupResult;
+                const currentRes = manualBackupBatchResult
+                  ? manualBackupBatchResult.results?.[selectedBackupDeviceIdx]
+                  : manualBackupResult;
 
                 if (!currentRes) {
                   return <div className="text-xs text-slate-400 p-4">No backup content available.</div>;
@@ -2315,7 +2194,7 @@ export default function DeployConfigPage({
             </div>
 
             <div className="confirm-modal-footer">
-              {deviceMode === 'multi' && manualBackupBatchResult ? (
+              {manualBackupBatchResult && (
                 <>
                   <button
                     type="button"
@@ -2359,23 +2238,6 @@ export default function DeployConfigPage({
                     <span>Download All ({manualBackupBatchResult.success_count} Files)</span>
                   </button>
                 </>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const blob = new Blob([manualBackupResult?.output || ''], { type: 'text/plain;charset=utf-8' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `running_config_${device?.host}_${Date.now()}.cfg`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="btn-primary"
-                >
-                  <Download className="h-4 w-4" />
-                  <span>Download .cfg File</span>
-                </button>
               )}
 
               <button

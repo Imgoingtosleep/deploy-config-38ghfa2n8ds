@@ -30,8 +30,6 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
-  runHealthCheck,
-  runBatchHealthCheck,
   submitHealthCheckJob,
   getPlaybooks,
   createPlaybook,
@@ -39,7 +37,6 @@ import {
   deletePlaybook,
   autoTranslateCommands,
 } from '../services/api';
-import TerminalOutput from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
 import './HealthCheckPage.css';
 
@@ -95,8 +92,6 @@ const COMMAND_CATALOG = {
 };
 
 export default function HealthCheckPage({
-  deviceMode = 'multi',
-  device,
   fleet = [],
   nornirWorkers = 10,
   onUpdateWorkers,
@@ -133,15 +128,7 @@ export default function HealthCheckPage({
   // Custom User Commands added via quick inline input
   const [customInput, setCustomInput] = useState('');
 
-  // Single Device State
-  const [healthData, setHealthData] = useState(null);
-  const [cachedSummary, setCachedSummary] = useState(null);
-  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
-
   // Multi-Device Fleet State
-  const [batchResults, setBatchResults] = useState(null);
-  const [inspectDeviceIndex, setInspectDeviceIndex] = useState(null);
-  const [inspectCommandIndex, setInspectCommandIndex] = useState(0);
   const [activeAsyncJob, setActiveAsyncJob] = useState(null);
 
   // Fetch Playbooks from Backend on Mount
@@ -555,45 +542,6 @@ export default function HealthCheckPage({
     };
   };
 
-  // Handle Single Device Run
-  const handleRunSingleHealthCheck = async () => {
-    if (!device?.host) {
-      setErrorMessage('Please fill in Device Host / IP Address in the Target Device section above.');
-      return;
-    }
-
-    const { commands, vendorCommands, selectedCount } = getExecutableCommandPayload();
-    if (selectedCount === 0) {
-      setErrorMessage('Please select at least one command from the checklist below.');
-      return;
-    }
-
-    setRunning(true);
-    setErrorMessage('');
-
-    try {
-      const data = await runHealthCheck(device, selectedCategory, commands, vendorCommands);
-      setHealthData(data);
-      setSelectedCommandIndex(0);
-
-      if (data.summary) {
-        setCachedSummary((prev) => {
-          if (!prev) return data.summary;
-          return {
-            device_info: data.summary.device_info?.model !== 'Unknown Model' ? data.summary.device_info : prev.device_info,
-            performance: data.summary.performance?.cpu_percent ? data.summary.performance : prev.performance,
-            ports_summary: data.summary.ports_summary?.total_ports > 0 ? data.summary.ports_summary : prev.ports_summary,
-            hardware_health: data.summary.hardware_health?.status ? data.summary.hardware_health : prev.hardware_health,
-          };
-        });
-      }
-    } catch (err) {
-      setErrorMessage(err.response?.data?.detail || err.message || 'Health check execution failed');
-    } finally {
-      setRunning(false);
-    }
-  };
-
   // Handle Multi-Device Batch Run (Runs all devices in fleet with Background Async Progress Bar)
   const handleRunBatchHealthCheck = async () => {
     const validDevices = fleet.filter((d) => d.host && d.host.trim() !== '');
@@ -646,10 +594,6 @@ export default function HealthCheckPage({
     }
   };
 
-  const activeResult = healthData?.results?.[selectedCommandIndex];
-  const activeInspectDevice = inspectDeviceIndex !== null && batchResults?.results?.[inspectDeviceIndex];
-  const activeInspectCommand = activeInspectDevice?.results?.[inspectCommandIndex];
-
   const validFleetCount = fleet.filter((d) => d.host && d.host.trim() !== '').length;
   const selectedCount = activeCommands.filter((c) => selectedCommandIds.has(c.id)).length;
 
@@ -660,65 +604,34 @@ export default function HealthCheckPage({
         <div className="health-header">
           <div>
             <h2 className="health-title">
-              {deviceMode === 'multi' ? (
-                <>
-                  <Layers className="h-5 w-5" style={{ color: '#818cf8' }} />
-                  <span>Fleet Health Check & Custom Diagnostic Profiles</span>
-                </>
-              ) : (
-                <>
-                  <Activity className="h-5 w-5" style={{ color: '#818cf8' }} />
-                  <span>Single Device Health Check & Diagnostic Profiles</span>
-                </>
-              )}
+              <Layers className="h-5 w-5" style={{ color: '#818cf8' }} />
+              <span>Fleet Health Check & Custom Diagnostic Profiles</span>
             </h2>
             <p className="health-subtitle">
-              {deviceMode === 'multi'
-                ? `Execute customizable command profiles across all ${validFleetCount} devices in fleet concurrently.`
-                : `Execute customizable command profiles on ${device?.host || 'target host'}.`}
+              Execute customizable command profiles across all {validFleetCount} devices in fleet concurrently.
             </p>
           </div>
 
           {/* Action Trigger Button */}
-          {deviceMode === 'multi' ? (
-            <button
-              onClick={handleRunBatchHealthCheck}
-              disabled={running || validFleetCount === 0 || selectedCount === 0}
-              className="btn-run-health"
-            >
-              {running ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Executing Fleet Job...</span>
-                </>
-              ) : (
-                <>
-                  <Zap className="h-4 w-4" style={{ fill: 'currentColor' }} />
-                  <span>
-                    Run Fleet Suite ({selectedCount} Cmds • {validFleetCount} Devs)
-                  </span>
-                </>
-              )}
-            </button>
-          ) : (
-            <button
-              onClick={handleRunSingleHealthCheck}
-              disabled={running || !device?.host || selectedCount === 0}
-              className="btn-run-health"
-            >
-              {running ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Running Suite...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4" style={{ fill: 'currentColor' }} />
-                  <span>Run Selected Suite ({selectedCount} Cmds)</span>
-                </>
-              )}
-            </button>
-          )}
+          <button
+            onClick={handleRunBatchHealthCheck}
+            disabled={running || validFleetCount === 0 || selectedCount === 0}
+            className="btn-run-health"
+          >
+            {running ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Executing Fleet Job...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="h-4 w-4" style={{ fill: 'currentColor' }} />
+                <span>
+                  Run Fleet Suite ({selectedCount} Cmds • {validFleetCount} Devs)
+                </span>
+              </>
+            )}
+          </button>
         </div>
 
         {/* ========================================================================= */}
@@ -1303,59 +1216,7 @@ export default function HealthCheckPage({
 
 
 
-      {/* ========================================================================= */}
-      {/* SINGLE DEVICE RESULTS BREAKDOWN (CLI)                                     */}
-      {/* ========================================================================= */}
-      {deviceMode === 'single' && healthData && (
-        <div className="health-results-grid">
-          {/* Left Column: Command List */}
-          <div className="col-span-4 command-list-card">
-            <div className="command-list-header">
-              <span className="command-list-title">
-                <ListChecks className="h-4 w-4" style={{ color: '#818cf8' }} />
-                <span>Command Execution List</span>
-              </span>
-              <span className="total-time">
-                Total: {healthData.overall_time_seconds}s
-              </span>
-            </div>
 
-            <div className="command-items">
-              {healthData.results.map((res, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setSelectedCommandIndex(idx)}
-                  className={`command-item-btn ${selectedCommandIndex === idx ? 'active' : ''}`}
-                >
-                  <div className="command-item-left">
-                    {res.success ? (
-                      <CheckCircle2 className="h-4 w-4" style={{ color: '#34d399', flexShrink: 0 }} />
-                    ) : (
-                      <AlertTriangle className="h-4 w-4" style={{ color: '#f87171', flexShrink: 0 }} />
-                    )}
-                    <span className="command-item-text">{res.command}</span>
-                  </div>
-                  <span className="command-item-time">
-                    {res.execution_time_seconds}s
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Right Column: Terminal Display */}
-          <div className="col-span-8" style={{ height: '500px' }}>
-            <TerminalOutput
-              title={`Health Check Output - ${device?.host || ''}`}
-              deviceHost={device?.host}
-              command={activeResult?.command}
-              output={activeResult?.output || activeResult?.error}
-              executionTime={activeResult?.execution_time_seconds}
-              isError={!activeResult?.success}
-            />
-          </div>
-        </div>
-      )}
 
       {/* ASYNC FLEET HEALTH CHECK MODAL */}
       {activeAsyncJob && (

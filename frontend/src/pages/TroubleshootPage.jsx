@@ -29,7 +29,6 @@ import {
   Sliders,
 } from 'lucide-react';
 import {
-  executeTroubleshootCommand,
   executeBatchTroubleshootCommand,
   submitTroubleshootJob,
   submitHealthCheckJob,
@@ -39,18 +38,14 @@ import {
   deletePlaybook,
   autoTranslateCommands,
 } from '../services/api';
-import TerminalOutput from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
 import './TroubleshootPage.css';
 
 export default function TroubleshootPage({
-  deviceMode = 'multi',
-  device,
   fleet = [],
   nornirWorkers = 10,
   onUpdateWorkers,
 }) {
-  const isHuawei = device?.device_type?.toLowerCase().includes('huawei');
   const [customCommand, setCustomCommand] = useState('');
   const [connectivityTool, setConnectivityTool] = useState('ping'); // 'ping' | 'traceroute'
   const [connectTarget, setConnectTarget] = useState('');
@@ -77,13 +72,6 @@ export default function TroubleshootPage({
   const [editorArubaText, setEditorArubaText] = useState('');
   const [editorMikrotikText, setEditorMikrotikText] = useState('');
   const [translating, setTranslating] = useState(false);
-
-  // Single Device Result State
-  const [currentResult, setCurrentResult] = useState(null);
-
-  // Multi Device Batch Result State
-  const [batchResults, setBatchResults] = useState(null);
-  const [selectedDeviceIndex, setSelectedDeviceIndex] = useState(0);
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
 
@@ -138,7 +126,7 @@ export default function TroubleshootPage({
     }
   };
 
-  // Run execution for Single or Multi Mode
+  // Run execution for Multi Mode
   const runExecution = async (commandString, vendorCommands = null) => {
     const trimmed = (commandString || '').trim();
     if (!trimmed && (!vendorCommands || Object.keys(vendorCommands).length === 0)) return;
@@ -151,33 +139,14 @@ export default function TroubleshootPage({
       setHistory((prev) => [trimmed, ...prev.filter((c) => c !== trimmed)].slice(0, 5));
     }
 
-    if (deviceMode === 'multi') {
-      if (validFleet.length === 0) {
-        setErrorMessage('Please add at least one device in the Target Device fleet list above.');
-        setExecuting(false);
-        return;
-      }
-
-      // Launch Background Async Fleet Job with live progress stream & modal
-      handleLaunchAsyncFleetTroubleshoot(trimmed, vendorCommands);
-    } else {
-      // Single Mode
-      if (!device?.host) {
-        setErrorMessage('Please fill in Target Device Host / IP Address above.');
-        setExecuting(false);
-        return;
-      }
-
-      try {
-        const data = await executeTroubleshootCommand(device, trimmed, vendorCommands);
-        setCurrentResult(data);
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Command execution failed');
-        setCurrentResult(null);
-      } finally {
-        setExecuting(false);
-      }
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device in the Target Device fleet list above.');
+      setExecuting(false);
+      return;
     }
+
+    // Launch Background Async Fleet Job with live progress stream & modal
+    handleLaunchAsyncFleetTroubleshoot(trimmed, vendorCommands);
   };
 
   // Run an entire Command Profile
@@ -195,102 +164,50 @@ export default function TroubleshootPage({
       return;
     }
 
-    if (deviceMode === 'multi') {
-      if (validFleet.length === 0) {
-        setErrorMessage('Please add at least one device in the Target Device fleet list above.');
-        return;
-      }
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device in the Target Device fleet list above.');
+      return;
+    }
 
-      setExecuting(true);
-      setErrorMessage('');
+    setExecuting(true);
+    setErrorMessage('');
 
-      try {
-        const devicesPayload = validFleet.map((d) => ({
-          host: d.host.trim(),
-          port: parseInt(d.port, 10) || 22,
-          device_type: d.device_type || 'cisco_ios',
-          username: d.username || '',
-          password: d.password || '',
-          secret: d.secret || '',
-          connection_mode: 'network',
-        }));
+    try {
+      const devicesPayload = validFleet.map((d) => ({
+        host: d.host.trim(),
+        port: parseInt(d.port, 10) || 22,
+        device_type: d.device_type || 'cisco_ios',
+        username: d.username || '',
+        password: d.password || '',
+        secret: d.secret || '',
+        connection_mode: 'network',
+      }));
 
-        const res = await submitHealthCheckJob(
-          devicesPayload,
-          'custom',
-          genericCmds,
-          {
-            huawei: huaweiCmds,
-            cisco_ios: ciscoCmds,
-            cisco_nxos: nxosCmds,
-            juniper_junos: juniperCmds,
-            aruba_os: arubaCmds,
-            hp_comware: huaweiCmds,
-            mikrotik_routeros: mikrotikCmds,
-          },
-          playbook.name,
-          nornirWorkers
-        );
+      const res = await submitHealthCheckJob(
+        devicesPayload,
+        'custom',
+        genericCmds,
+        {
+          huawei: huaweiCmds,
+          cisco_ios: ciscoCmds,
+          cisco_nxos: nxosCmds,
+          juniper_junos: juniperCmds,
+          aruba_os: arubaCmds,
+          hp_comware: huaweiCmds,
+          mikrotik_routeros: mikrotikCmds,
+        },
+        playbook.name,
+        nornirWorkers
+      );
 
-        setActiveAsyncJob({
-          id: res.job_id,
-          title: `Fleet Profile Run: ${playbook.name} (${genericCmds.length} cmds • ${validFleet.length} Devs)`,
-        });
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit profile job');
-      } finally {
-        setExecuting(false);
-      }
-    } else {
-      // Single Mode execution of profile
-      if (!device?.host) {
-        setErrorMessage('Please fill in Target Device Host / IP Address above.');
-        return;
-      }
-
-      setExecuting(true);
-      setErrorMessage('');
-
-      const devType = (device?.device_type || '').toLowerCase();
-      let targetCmds = huaweiCmds;
-      if (devType.includes('juniper') || devType.includes('junos')) {
-        targetCmds = juniperCmds.length > 0 ? juniperCmds : huaweiCmds;
-      } else if (devType.includes('cisco') || devType.includes('ios') || devType.includes('nxos')) {
-        targetCmds = ciscoCmds.length > 0 ? ciscoCmds : huaweiCmds;
-      } else if (devType.includes('aruba')) {
-        targetCmds = arubaCmds.length > 0 ? arubaCmds : huaweiCmds;
-      } else if (devType.includes('mikrotik')) {
-        targetCmds = mikrotikCmds.length > 0 ? mikrotikCmds : huaweiCmds;
-      }
-      const effectiveCmds = targetCmds.length > 0 ? targetCmds : genericCmds;
-
-      try {
-        let combinedOutputs = [];
-        let isSuccess = true;
-        let lastErr = null;
-
-        for (const cmd of effectiveCmds) {
-          const res = await executeTroubleshootCommand(device, cmd);
-          combinedOutputs.push(`[${res.command || cmd}]\n${res.output || res.error || ''}`);
-          if (!res.success) {
-            isSuccess = false;
-            lastErr = res.error;
-          }
-        }
-
-        setCurrentResult({
-          host: device.host,
-          command: `Profile: ${playbook.name} (${effectiveCmds.length} commands)`,
-          output: combinedOutputs.join('\n\n'),
-          success: isSuccess,
-          error: lastErr,
-          execution_time_seconds: 0.0,
-        });
-      } catch (err) {
-        setErrorMessage(err.response?.data?.detail || err.message || 'Profile execution failed');
-      } finally {
-        setExecuting(false);
-      }
+      setActiveAsyncJob({
+        id: res.job_id,
+        title: `Fleet Profile Run: ${playbook.name} (${genericCmds.length} cmds • ${validFleet.length} Devs)`,
+      });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit profile job');
+    } finally {
+      setExecuting(false);
     }
   };
 
@@ -562,28 +479,16 @@ export default function TroubleshootPage({
     if (!connectTarget.trim()) return;
     const target = connectTarget.trim();
 
-    if (deviceMode === 'multi') {
-      if (connectivityTool === 'traceroute') {
-        setCustomCommand(`traceroute / tracert ${target}`);
-        runExecution(`traceroute ${target}`, {
-          huawei: `tracert ${target}`,
-          cisco_ios: `traceroute ${target}`,
-        });
-      } else {
-        const cmd = `ping ${target}`;
-        setCustomCommand(cmd);
-        runExecution(cmd);
-      }
+    if (connectivityTool === 'traceroute') {
+      setCustomCommand(`traceroute / tracert ${target}`);
+      runExecution(`traceroute ${target}`, {
+        huawei: `tracert ${target}`,
+        cisco_ios: `traceroute ${target}`,
+      });
     } else {
-      if (connectivityTool === 'traceroute') {
-        const cmd = isHuawei ? `tracert ${target}` : `traceroute ${target}`;
-        setCustomCommand(cmd);
-        runExecution(cmd);
-      } else {
-        const cmd = `ping ${target}`;
-        setCustomCommand(cmd);
-        runExecution(cmd);
-      }
+      const cmd = `ping ${target}`;
+      setCustomCommand(cmd);
+      runExecution(cmd);
     }
   };
 
@@ -592,49 +497,30 @@ export default function TroubleshootPage({
     if (!logKeyword.trim()) return;
     const kw = logKeyword.trim();
 
-    if (deviceMode === 'multi') {
-      setCustomCommand(`log search: ${kw}`);
-      runExecution(`log filter ${kw}`, {
-        huawei: `display logbuffer | include ${kw}`,
-        cisco_ios: `show logging | include ${kw}`,
-      });
-    } else {
-      const cmd = isHuawei ? `display logbuffer | include ${kw}` : `show logging | include ${kw}`;
-      setCustomCommand(cmd);
-      runExecution(cmd);
-    }
+    setCustomCommand(`log search: ${kw}`);
+    runExecution(`log filter ${kw}`, {
+      huawei: `display logbuffer | include ${kw}`,
+      cisco_ios: `show logging | include ${kw}`,
+    });
   };
 
-  const activeBatchDeviceResult = batchResults?.results?.[selectedDeviceIndex];
-
   return (
-    <div className={`troubleshoot-page-container ${deviceMode === 'multi' ? 'multi-mode' : 'single-mode'}`}>
+    <div className="troubleshoot-page-container multi-mode">
       {/* Troubleshooting Controls & Profiles */}
-      <div className={`troubleshoot-left ${deviceMode === 'multi' ? 'full-width' : ''}`}>
+      <div className="troubleshoot-left full-width">
 
 
         {/* CLI Execution Card */}
         <div className="troubleshoot-card">
           <div className="card-header-flex">
             <h2 className="card-title">
-              {deviceMode === 'multi' ? (
-                <>
-                  <Layers className="card-icon" style={{ color: '#818cf8' }} />
-                  <span>Fleet CLI Execution ({validFleet.length} Devices)</span>
-                </>
-              ) : (
-                <>
-                  <Terminal className="card-icon" />
-                  <span>Interactive CLI Execution</span>
-                </>
-              )}
+              <Layers className="card-icon" style={{ color: '#818cf8' }} />
+              <span>Fleet CLI Execution ({validFleet.length} Devices)</span>
             </h2>
-            {deviceMode === 'multi' && (
-              <span className="fleet-badge">
-                <Server className="h-3 w-3" />
-                <span>Multi-Device SSH</span>
-              </span>
-            )}
+            <span className="fleet-badge">
+              <Server className="h-3 w-3" />
+              <span>Multi-Device SSH</span>
+            </span>
           </div>
 
           <form onSubmit={handleCustomSubmit} className="cli-form">
@@ -643,28 +529,21 @@ export default function TroubleshootPage({
                 type="text"
                 value={customCommand}
                 onChange={(e) => setCustomCommand(e.target.value)}
-                placeholder={
-                  deviceMode === 'multi'
-                    ? 'e.g. ping 192.168.1.1 or display ip interface brief or show ip route'
-                    : isHuawei
-                    ? 'e.g. display transceiver or display vlan'
-                    : 'e.g. show version or show ip route'
-                }
+                placeholder="e.g. ping 192.168.1.1 or display ip interface brief or show ip route"
                 className="cli-input"
               />
               <button
                 type="submit"
                 disabled={executing || !customCommand.trim()}
                 className="btn-send-cli"
-                title={deviceMode === 'multi' ? 'Execute Across Fleet' : 'Execute Command'}
+                title="Execute Across Fleet"
               >
                 {executing ? (
                   <Loader2 className="action-icon animate-spin" />
-                ) : deviceMode === 'multi' ? (
-                  <Zap className="action-icon" style={{ fill: 'currentColor' }} />
                 ) : (
-                  <Send className="action-icon" />
+                  <Zap className="action-icon" style={{ fill: 'currentColor' }} />
                 )}
+                <span>Run Across Fleet</span>
               </button>
             </div>
           </form>
@@ -898,22 +777,7 @@ export default function TroubleshootPage({
         </div>
       </div>
 
-      {/* Right Column: Terminal Display only for Single Device Mode */}
-      {deviceMode === 'single' && (
-        <div className="troubleshoot-right">
-          <div style={{ minHeight: '550px' }}>
-            <TerminalOutput
-              title={`CLI Output - ${device?.host || ''}`}
-              deviceHost={device?.host}
-              command={currentResult?.command || customCommand}
-              output={currentResult?.output || currentResult?.error}
-              executionTime={currentResult?.execution_time_seconds}
-              onClear={() => setCurrentResult(null)}
-              isError={currentResult && !currentResult.success}
-            />
-          </div>
-        </div>
-      )}
+
 
 
       {/* ========================================================================= */}

@@ -9,8 +9,6 @@ import './App.css';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('healthcheck');
-  const [deviceConnected, setDeviceConnected] = useState(false);
-  const [deviceMode, setDeviceMode] = useState('multi'); // 'single' | 'multi'
 
   // Nornir Concurrent Workers (Default starts at 10, min: 10, max: 100)
   const [nornirWorkers, setNornirWorkers] = useState(() => {
@@ -41,17 +39,6 @@ export default function App() {
     });
   };
 
-  // Single Device State
-  const [device, setDevice] = useState({
-    host: '192.168.1.1',
-    port: 22,
-    username: '',
-    password: '',
-    secret: '',
-    device_type: 'autodetect',
-    connection_mode: 'network',
-  });
-
   // Multi-Device Fleet State
   const [fleet, setFleet] = useState([
     {
@@ -72,7 +59,6 @@ export default function App() {
       password: '',
       secret: '',
     },
-
     {
       id: 'dev-3',
       host: '10.0.0.2',
@@ -84,9 +70,7 @@ export default function App() {
     },
   ]);
 
-  const handleConnectionStatusChange = (status, host) => {
-    setDeviceConnected(status);
-  };
+  const activeFleetCount = fleet.filter((d) => d.host && d.host.trim() !== '').length;
 
   return (
     <div className="app-container">
@@ -94,21 +78,16 @@ export default function App() {
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        deviceConnected={deviceConnected}
-        deviceHost={deviceMode === 'multi' ? `${fleet.filter(d => d.host).length} Devices` : device.host}
+        deviceConnected={activeFleetCount > 0}
+        deviceHost={`${activeFleetCount} Devices`}
       />
 
       {/* Main Content Area */}
       <main className="main-content">
-        {/* Device Credentials / Target Device Component */}
+        {/* Fleet Device Management Component */}
         <DeviceForm
-          deviceMode={deviceMode}
-          setDeviceMode={setDeviceMode}
-          device={device}
-          setDevice={setDevice}
           fleet={fleet}
           setFleet={setFleet}
-          onConnectionStatusChange={handleConnectionStatusChange}
           nornirWorkers={nornirWorkers}
           onUpdateWorkers={handleUpdateWorkers}
         />
@@ -117,8 +96,6 @@ export default function App() {
         <section className="tab-viewport">
           {activeTab === 'healthcheck' && (
             <HealthCheckPage
-              deviceMode={deviceMode}
-              device={device}
               fleet={fleet}
               nornirWorkers={nornirWorkers}
               onUpdateWorkers={handleUpdateWorkers}
@@ -126,8 +103,6 @@ export default function App() {
           )}
           {activeTab === 'troubleshoot' && (
             <TroubleshootPage
-              deviceMode={deviceMode}
-              device={device}
               fleet={fleet}
               nornirWorkers={nornirWorkers}
               onUpdateWorkers={handleUpdateWorkers}
@@ -135,8 +110,6 @@ export default function App() {
           )}
           {activeTab === 'deploy' && (
             <DeployConfigPage
-              deviceMode={deviceMode}
-              device={device}
               fleet={fleet}
               nornirWorkers={nornirWorkers}
               onUpdateWorkers={handleUpdateWorkers}

@@ -2,9 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Network,
   CheckCircle2,
-  XCircle,
   Loader2,
-  RefreshCw,
   Layers,
   Plus,
   Trash2,
@@ -21,7 +19,6 @@ import {
   Compass,
   UserCheck,
   Settings,
-  Bookmark,
   Eye,
   EyeOff,
   Star,
@@ -32,11 +29,9 @@ import {
   Search,
 } from 'lucide-react';
 import {
-  testDeviceConnection,
   getSupportedDeviceTypes,
   importDevicesFromFile,
   downloadInventoryTemplate,
-  detectSingleDeviceType,
   detectFleetTypes,
   getCredentialProfiles,
   createCredentialProfile,
@@ -48,18 +43,11 @@ import NornirWorkersControl from './NornirWorkersControl';
 import './DeviceForm.css';
 
 export default function DeviceForm({
-  deviceMode = 'multi',
-  setDeviceMode,
-  device,
-  setDevice,
   fleet = [],
   setFleet,
-  onConnectionStatusChange,
   nornirWorkers = 10,
   onUpdateWorkers,
 }) {
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
   const [commonType, setCommonType] = useState('autodetect');
   const [commonUser, setCommonUser] = useState('');
   const [commonPass, setCommonPass] = useState('');
@@ -108,12 +96,6 @@ export default function DeviceForm({
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
-
-  // Priority Fallback State (Priority 1 -> 2 -> 3)
-  const [enableFallback, setEnableFallback] = useState(false);
-  const [prio1ProfileId, setPrio1ProfileId] = useState('');
-  const [prio2ProfileId, setPrio2ProfileId] = useState('');
-  const [prio3ProfileId, setPrio3ProfileId] = useState('');
 
   // Fleet Pool Modal State
   const [showFleetPoolModal, setShowFleetPoolModal] = useState(false);
@@ -168,73 +150,23 @@ export default function DeviceForm({
       if (Array.isArray(data) && data.length > 0) {
         setProfiles(data);
         const def = data.find((p) => p.is_default) || data[0];
-        if (def && (!device.username || !device.username.trim())) {
-          applyProfileToSingle(def);
+        if (def) {
           setCommonType(def.device_type || 'autodetect');
           setCommonUser(def.username || '');
           setCommonPass(def.password || '');
-          setPrio1ProfileId(def.id);
           setFleetPrio1Id(def.id);
         }
 
         // Set default 2nd and 3rd priority candidates if available
         if (data.length > 1) {
-          setPrio2ProfileId(data[1].id);
           setFleetPrio2Id(data[1].id);
         }
         if (data.length > 2) {
-          setPrio3ProfileId(data[2].id);
           setFleetPrio3Id(data[2].id);
         }
       }
     } catch (err) {
       console.error('Failed to load credential profiles:', err);
-    }
-  };
-
-  // Sync fallback profile IDs to device state
-  useEffect(() => {
-    if (enableFallback) {
-      const pList = [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean);
-      setDevice((prev) => ({
-        ...prev,
-        fallback_profile_ids: pList,
-      }));
-    } else {
-      setDevice((prev) => ({
-        ...prev,
-        fallback_profile_ids: null,
-      }));
-    }
-  }, [enableFallback, prio1ProfileId, prio2ProfileId, prio3ProfileId]);
-
-  const applyProfileToSingle = (profile) => {
-    if (!profile) return;
-    const prio1 = (profile.credentials && profile.credentials[0]) || profile;
-    setDevice((prev) => ({
-      ...prev,
-      username: prio1.username || '',
-      password: prio1.password || '',
-      secret: prio1.secret || '',
-      device_type: profile.device_type && profile.device_type !== 'autodetect' ? profile.device_type : prev.device_type,
-      port: profile.port || (profile.device_type?.includes('telnet') ? 23 : 22),
-      profile_id: profile.id,
-      credential_pool: profile.credentials && profile.credentials.length > 0 ? profile.credentials : null,
-    }));
-    setSelectedProfileId(profile.id);
-    setPrio1ProfileId(profile.id);
-  };
-
-  const handleSelectProfileSingle = (profileId) => {
-    if (profileId === 'custom' || !profileId) {
-      setSelectedProfileId('custom');
-      setPrio1ProfileId('');
-      setDevice((prev) => ({ ...prev, profile_id: null, credential_pool: null }));
-      return;
-    }
-    const prof = profiles.find((p) => p.id === profileId);
-    if (prof) {
-      applyProfileToSingle(prof);
     }
   };
 
@@ -312,35 +244,6 @@ export default function DeviceForm({
     }
 
     setShowFleetPoolModal(false);
-  };
-
-  // Open modal with prefilled current credentials
-  const handleOpenSaveCurrentAsProfile = () => {
-    const hostLabel = device.host && device.host !== '192.168.1.1' ? ` (${device.host})` : '';
-    setEditingProfile({
-      id: null,
-      name: `Profile${hostLabel}`,
-      description: `Saved credentials for ${device.host || 'device'}`,
-      device_type: device.device_type || 'autodetect',
-      port: device.port || 22,
-      is_default: false,
-      credentials: [
-        {
-          priority: 1,
-          label: 'Primary Admin',
-          username: device.username || '',
-          password: device.password || '',
-          secret: device.secret || '',
-        },
-      ],
-      username: device.username || '',
-      password: device.password || '',
-      secret: device.secret || '',
-    });
-    setProfileError('');
-    setProfileSuccess('');
-    setProfileModalTab('edit');
-    setShowProfileModal(true);
   };
 
   // Open modal to create brand new profile
@@ -479,7 +382,6 @@ export default function DeviceForm({
       } else {
         const created = await createCredentialProfile(payload);
         setProfileSuccess(`Profile "${created.name}" created successfully.`);
-        applyProfileToSingle(created);
       }
 
       await loadProfiles();
@@ -519,87 +421,21 @@ export default function DeviceForm({
     }
   };
 
-  // Single Device Handlers
-  const handleSingleChange = (e) => {
-    const { name, value } = e.target;
-    if (name === 'username' || name === 'password' || name === 'secret') {
-      setSelectedProfileId('custom');
-    }
-
-    if (name === 'device_type') {
-      const isTelnet = value.toLowerCase().includes('telnet');
-      setDevice((prev) => ({
-        ...prev,
-        device_type: value,
-        port: isTelnet ? 23 : 22,
-      }));
-    } else {
-      setDevice((prev) => ({
-        ...prev,
-        [name]: name === 'port' ? parseInt(value, 10) || value : value,
-      }));
-    }
-  };
-
-  const handleTestConnection = async (e) => {
-    e.preventDefault();
-    setTesting(true);
-    setTestResult(null);
-
-    try {
-      const res = await testDeviceConnection(device);
-      setTestResult(res);
-      if (res.connected && res.message && res.message.includes('Auto-Detected:')) {
-        const match = res.message.match(/Auto-Detected:\s*([a-zA-Z0-9_\-]+)/);
-        if (match && match[1]) {
-          setDevice((prev) => ({ ...prev, device_type: match[1] }));
-        }
-      }
-      if (onConnectionStatusChange) {
-        onConnectionStatusChange(res.connected, device.host);
-      }
-    } catch (err) {
-      const errMsg = err.response?.data?.detail || err.message || 'Cannot reach backend server';
-      const failedResult = {
-        connected: false,
-        message: errMsg,
-      };
-      setTestResult(failedResult);
-      if (onConnectionStatusChange) {
-        onConnectionStatusChange(false, device.host);
-      }
-    } finally {
-      setTesting(false);
-    }
-  };
-
   // Fleet Handlers
   const updateFleetDevice = (id, field, value) => {
     setFleet((prev) => prev.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
   };
 
-  // Matching devices for search dropdown (across single device and fleet)
+  // Matching devices for search dropdown (across fleet)
   const matchingDevices = (() => {
     const q = (hostSearchQuery || '').trim().toLowerCase();
     if (!q) return [];
     const results = [];
 
-    // 1. Check Single Device
-    if (device && device.host && device.host.toLowerCase().includes(q)) {
-      results.push({
-        ...device,
-        isSingle: true,
-        originalHost: device.host,
-        uniqueKey: 'single-dev',
-      });
-    }
-
-    // 2. Check Fleet Devices
     fleet.forEach((dev, idx) => {
       if (dev && dev.host && dev.host.toLowerCase().includes(q)) {
         results.push({
           ...dev,
-          isSingle: false,
           originalHost: dev.host,
           fleetIndex: idx,
           uniqueKey: `fleet-${dev.id || idx}`,
@@ -640,19 +476,10 @@ export default function DeviceForm({
 
     const oldHost = editingDevice.originalHost || editingDevice.host;
 
-    if (editingDevice.isSingle) {
-      setDevice((prev) => ({
-        ...prev,
-        ...editForm,
-        host: newHost,
-      }));
-      setEditSuccessToast(`Updated Single Target IP: ${oldHost} -> ${newHost}`);
-    } else {
-      setFleet((prev) =>
-        prev.map((d) => (d.id === editingDevice.id ? { ...d, ...editForm, host: newHost } : d))
-      );
-      setEditSuccessToast(`Updated Fleet Host IP: ${oldHost} -> ${newHost}`);
-    }
+    setFleet((prev) =>
+      prev.map((d) => (d.id === editingDevice.id ? { ...d, ...editForm, host: newHost } : d))
+    );
+    setEditSuccessToast(`Updated Fleet Host IP: ${oldHost} -> ${newHost}`);
 
     setEditingDevice(null);
     setTimeout(() => setEditSuccessToast(''), 3500);
@@ -670,7 +497,6 @@ export default function DeviceForm({
       secret: fallbackSecret || '',
     };
     setFleet((prev) => [newDev, ...prev]);
-    if (setDeviceMode) setDeviceMode('multi');
     setHostSearchQuery(ipToAdd);
     setShowSearchDropdown(false);
     setEditSuccessToast(`Added ${ipToAdd} to fleet device list`);
@@ -680,6 +506,7 @@ export default function DeviceForm({
   const addFleetDevice = () => {
     const newId = `dev-${Date.now()}`;
     const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
+    const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
     setFleet((prev) => [
       ...prev,
       {
@@ -691,7 +518,7 @@ export default function DeviceForm({
         password: defProf?.password || commonPass,
         secret: defProf?.secret || '',
         profile_id: defProf?.id || null,
-        fallback_profile_ids: enableFallback ? [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean) : null,
+        fallback_profile_ids: pool.length > 0 ? pool : null,
       },
     ]);
   };
@@ -804,16 +631,17 @@ export default function DeviceForm({
     }
 
     const newDevices = parsedPreview.devices;
-    const pool = enableFallback ? [prio1ProfileId, prio2ProfileId, prio3ProfileId].filter(Boolean) : null;
+    const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
+    const fallbackIds = pool.length > 0 ? pool : null;
 
     if (importMode === 'replace') {
-      setFleet(newDevices.map((d) => ({ ...d, fallback_profile_ids: pool })));
+      setFleet(newDevices.map((d) => ({ ...d, fallback_profile_ids: fallbackIds })));
     } else {
       const timestamp = Date.now();
       const mapped = newDevices.map((d, i) => ({
         ...d,
         id: `dev-${timestamp}-${i}`,
-        fallback_profile_ids: pool,
+        fallback_profile_ids: fallbackIds,
       }));
       setFleet((prev) => [...prev.filter((d) => d.host && d.host.trim()), ...mapped]);
     }
@@ -823,11 +651,11 @@ export default function DeviceForm({
 
   return (
     <div className="device-card">
-      {/* Header with Title, Host IP Search Bar, and Mode Switcher */}
+      {/* Header with Title and Host IP Search Bar */}
       <div className="device-card-header">
         <div className="device-header-title">
-          <Network className="device-header-icon" />
-          <h2 className="device-header-text">Target Device (Switch / Router)</h2>
+          <Layers className="device-header-icon" />
+          <h2 className="device-header-text">Fleet Device Inventory ({fleet.filter((d) => d.host).length} Devices)</h2>
         </div>
 
         {/* Global Host IP Search Bar */}
@@ -893,8 +721,8 @@ export default function DeviceForm({
                       <div className="search-result-info">
                         <div className="flex items-center gap-2">
                           <span className="search-result-ip font-mono">{dev.host}</span>
-                          <span className={`search-badge ${dev.isSingle ? 'badge-single' : 'badge-fleet'}`}>
-                            {dev.isSingle ? 'Single Target' : `Fleet #${dev.fleetIndex + 1}`}
+                          <span className="search-badge badge-fleet">
+                            {`Fleet #${dev.fleetIndex + 1}`}
                           </span>
                         </div>
                         <div className="search-result-meta">
@@ -914,35 +742,21 @@ export default function DeviceForm({
                           <Edit2 className="h-3.5 w-3.5" />
                           <span>Edit IP</span>
                         </button>
-                        {dev.isSingle ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (setDeviceMode) setDeviceMode('single');
-                              setShowSearchDropdown(false);
-                            }}
-                            className="btn-search-action-jump"
-                          >
-                            <span>View</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (setDeviceMode) setDeviceMode('multi');
-                              setShowSearchDropdown(false);
-                              const rowEl = document.getElementById(`fleet-row-${dev.id}`);
-                              if (rowEl) {
-                                rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                rowEl.classList.add('highlight-pulse');
-                                setTimeout(() => rowEl.classList.remove('highlight-pulse'), 2000);
-                              }
-                            }}
-                            className="btn-search-action-jump"
-                          >
-                            <span>View Row</span>
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowSearchDropdown(false);
+                            const rowEl = document.getElementById(`fleet-row-${dev.id}`);
+                            if (rowEl) {
+                              rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              rowEl.classList.add('highlight-pulse');
+                              setTimeout(() => rowEl.classList.remove('highlight-pulse'), 2000);
+                            }
+                          }}
+                          className="btn-search-action-jump"
+                        >
+                          <span>View Row</span>
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -950,26 +764,6 @@ export default function DeviceForm({
               )}
             </div>
           )}
-        </div>
-
-        {/* Mode Selector Toggle */}
-        <div className="mode-toggle-group">
-          <button
-            type="button"
-            className={`btn-mode-toggle ${deviceMode === 'single' ? 'active' : ''}`}
-            onClick={() => setDeviceMode && setDeviceMode('single')}
-          >
-            <Network className="h-3.5 w-3.5" />
-            <span>Single Device</span>
-          </button>
-          <button
-            type="button"
-            className={`btn-mode-toggle ${deviceMode === 'multi' ? 'active' : ''}`}
-            onClick={() => setDeviceMode && setDeviceMode('multi')}
-          >
-            <Layers className="h-3.5 w-3.5" />
-            <span>Multi-Device Fleet ({fleet.filter((d) => d.host).length})</span>
-          </button>
         </div>
       </div>
 
@@ -981,326 +775,8 @@ export default function DeviceForm({
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* SINGLE DEVICE FORM                                                        */}
-      {/* ========================================================================= */}
-      {deviceMode === 'single' ? (
-        <>
-          {/* User Profile Selector Bar for Single Device */}
-          <div className="profile-selector-bar">
-            <div className="profile-bar-left">
-              <UserCheck className="profile-bar-icon" />
-              <span className="profile-bar-label">Profile:</span>
-              <select
-                value={selectedProfileId}
-                onChange={(e) => handleSelectProfileSingle(e.target.value)}
-                className="profile-select"
-              >
-                <option value="custom">-- Custom / Manual Entry --</option>
-                {profiles.map((p) => {
-                  const credCount = p.credentials?.length || 1;
-                  return (
-                    <option key={p.id} value={p.id}>
-                      {p.is_default ? '[Default] ' : ''}{p.name} ({credCount > 1 ? `${credCount} priorities` : (p.username || 'no user')})
-                    </option>
-                  );
-                })}
-              </select>
-
-              {/* Priority Fallback Toggle Button */}
-              <button
-                type="button"
-                className={`fallback-toggle-btn ${enableFallback ? 'active' : ''}`}
-                onClick={() => setEnableFallback(!enableFallback)}
-                title="Toggle 3-tier sequential credential fallback (Priority 1 -> 2 -> 3)"
-              >
-                <ListOrdered className="h-3.5 w-3.5" />
-                <span>{enableFallback ? '3-Priority Fallback: ON' : 'Enable 3-Tier Fallback'}</span>
-              </button>
-            </div>
-
-            <div className="profile-bar-right">
-              <button
-                type="button"
-                className="btn-profile-quick-save"
-                onClick={handleOpenSaveCurrentAsProfile}
-                title="Save currently entered username and password as a reusable profile"
-              >
-                <Bookmark className="h-3.5 w-3.5 text-indigo-400" />
-                <span>Save as Profile</span>
-              </button>
-              <button
-                type="button"
-                className="btn-profile-manage"
-                onClick={() => {
-                  setProfileModalTab('list');
-                  setProfileError('');
-                  setProfileSuccess('');
-                  setShowProfileModal(true);
-                }}
-                title="Manage, create, and edit user credential profiles"
-              >
-                <Settings className="h-3.5 w-3.5" />
-                <span>Profiles ({profiles.length})</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Profile Priority Preview Strip */}
-          {selectedProfileId && selectedProfileId !== 'custom' && (() => {
-            const currentProf = profiles.find((p) => p.id === selectedProfileId);
-            const creds = currentProf?.credentials || [];
-            if (!currentProf || creds.length <= 1) return null;
-            return (
-              <div className="profile-priority-summary-strip">
-                <div className="flex items-center gap-1.5 text-xs text-sky-400 font-medium">
-                  <ShieldCheck className="h-3.5 w-3.5 text-sky-400" />
-                  <span>Profile Multi-Priority Pool ({creds.length} Tiers Active):</span>
-                </div>
-                <div className="profile-priority-pills">
-                  {creds.map((c, idx) => (
-                    <span key={idx} className="profile-priority-pill" title={c.label || `Priority ${c.priority}`}>
-                      <span className={`prio-tag prio-tag-${Math.min(c.priority, 3)}`}>P{c.priority}</span>
-                      <span className="prio-user font-mono">{c.username || '(empty)'}</span>
-                      {c.label && <span className="prio-lbl">({c.label})</span>}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Expandable Multi-Credential Priority Fallback Panel */}
-          {enableFallback && (
-            <div className="priority-fallback-panel">
-              <div className="priority-panel-header">
-                <div className="priority-panel-title">
-                  <ListOrdered className="h-4 w-4 text-sky-400" />
-                  <span>Multi-Credential Priority Order (Attempts 1 &rarr; 2 &rarr; 3)</span>
-                </div>
-                <span className="priority-panel-desc">
-                  If Priority 1 fails authentication, the system will automatically probe Priority 2, then Priority 3.
-                </span>
-              </div>
-
-              <div className="priority-slots-grid">
-                {/* Priority 1 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-1">Priority 1 (Primary)</span>
-                  </div>
-                  <select
-                    value={prio1ProfileId}
-                    onChange={(e) => {
-                      setPrio1ProfileId(e.target.value);
-                      const p = profiles.find((prof) => prof.id === e.target.value);
-                      if (p) applyProfileToSingle(p);
-                    }}
-                    className="priority-slot-select"
-                  >
-                    <option value="">-- Direct Form Credentials --</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                  <span className="priority-slot-summary">
-                    User: {device.username || '(manual)'}
-                  </span>
-                </div>
-
-                {/* Priority 2 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-2">Priority 2 (Secondary)</span>
-                  </div>
-                  <select
-                    value={prio2ProfileId}
-                    onChange={(e) => setPrio2ProfileId(e.target.value)}
-                    className="priority-slot-select"
-                  >
-                    <option value="">-- None --</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                  <span className="priority-slot-summary">
-                    {prio2ProfileId ? `User: ${profiles.find((p) => p.id === prio2ProfileId)?.username || '-'}` : 'Disabled'}
-                  </span>
-                </div>
-
-                {/* Priority 3 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-3">Priority 3 (Emergency)</span>
-                  </div>
-                  <select
-                    value={prio3ProfileId}
-                    onChange={(e) => setPrio3ProfileId(e.target.value)}
-                    className="priority-slot-select"
-                  >
-                    <option value="">-- None --</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                  <span className="priority-slot-summary">
-                    {prio3ProfileId ? `User: ${profiles.find((p) => p.id === prio3ProfileId)?.username || '-'}` : 'Disabled'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleTestConnection} className="device-grid">
-            {/* Host IP */}
-            <div className="form-group col-span-3">
-              <label className="form-label">Host / IP Address *</label>
-              <input
-                type="text"
-                name="host"
-                value={device.host}
-                onChange={handleSingleChange}
-                placeholder="192.168.1.1"
-                required
-                className="form-input font-mono"
-              />
-            </div>
-
-            {/* Protocol / Driver */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Protocol / Driver *</label>
-              <select
-                name="device_type"
-                value={device.device_type}
-                onChange={handleSingleChange}
-                className="form-select"
-              >
-                {deviceTypes.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Test Button */}
-            <div className="form-group col-span-1" style={{ justifyContent: 'flex-end' }}>
-              <button
-                type="submit"
-                disabled={testing || !device.host}
-                className="btn-test"
-                title="Test SSH/Telnet connectivity to this device"
-              >
-                {testing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Testing...</span>
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-4 w-4" />
-                    <span>Test</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Port */}
-            <div className="form-group col-span-1">
-              <label className="form-label">Port</label>
-              <input
-                type="number"
-                name="port"
-                value={device.port}
-                onChange={handleSingleChange}
-                placeholder="22"
-                className="form-input font-mono"
-              />
-            </div>
-
-            {/* Username */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Username</label>
-              <input
-                type="text"
-                name="username"
-                value={device.username}
-                onChange={handleSingleChange}
-                placeholder="admin"
-                className="form-input"
-              />
-            </div>
-
-            {/* Password */}
-            <div className="form-group col-span-2">
-              <label className="form-label">Password</label>
-              <input
-                type="password"
-                name="password"
-                value={device.password}
-                onChange={handleSingleChange}
-                placeholder="Password"
-                className="form-input"
-              />
-            </div>
-
-            {/* Secret */}
-            <div className="form-group col-span-1">
-              <label className="form-label">Secret (Enable)</label>
-              <input
-                type="password"
-                name="secret"
-                value={device.secret}
-                onChange={handleSingleChange}
-                placeholder="Enable secret (if needed)"
-                className="form-input"
-              />
-            </div>
-          </form>
-
-          {/* Test Connection Banner */}
-          {testResult && (
-            <div className={`test-banner ${testResult.connected ? 'success' : 'failed'}`}>
-              {testResult.connected ? (
-                <CheckCircle2 className="banner-icon" />
-              ) : (
-                <XCircle className="banner-icon" />
-              )}
-              <div className="banner-content">
-                <p className="banner-message">{testResult.message}</p>
-                {testResult.device_prompt && (
-                  <p className="banner-prompt">Prompt: {testResult.device_prompt}</p>
-                )}
-                {testResult.authenticated_credential && (
-                  <div className="winning-cred-tag">
-                    <CheckCircle2 className="h-3 w-3" />
-                    <span>Active Authenticated Credential: {testResult.authenticated_credential}</span>
-                  </div>
-                )}
-                {/* Attempt Sequence Logs */}
-                {testResult.attempt_logs && testResult.attempt_logs.length > 1 && (
-                  <div className="attempt-logs-container">
-                    <span className="text-[11px] font-semibold text-slate-400">Sequential Probing History:</span>
-                    {testResult.attempt_logs.map((log, lIdx) => (
-                      <div
-                        key={lIdx}
-                        className={`attempt-log-row ${log.includes('Successful') || log.includes('Success') ? 'success' : 'failed'}`}
-                      >
-                        <span className="font-mono text-[10px]">{log.includes('Successful') || log.includes('Success') ? '[PASS]' : '[FAIL]'}</span>
-                        <span>{log}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </>
-      ) : (
-        /* ========================================================================= */
-        /* MULTI-DEVICE FLEET TABLE                                                  */
-        /* ========================================================================= */
-        <div className="fleet-section" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
+      {/* MULTI-DEVICE FLEET TABLE */}
+      <div className="fleet-section" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
           <div className="fleet-header">
             <div className="fleet-header-left">
               <span className="fleet-title">Fleet Device List ({fleet.filter((d) => d.host).length} Devices)</span>
@@ -1576,7 +1052,7 @@ export default function DeviceForm({
                           <div className="flex items-center justify-center gap-1">
                             <button
                               type="button"
-                              onClick={() => handleOpenEditDevice({ ...dev, isSingle: false })}
+                              onClick={() => handleOpenEditDevice(dev)}
                               className="btn-edit-row"
                               title="Edit this Host IP and settings"
                             >
@@ -1600,7 +1076,6 @@ export default function DeviceForm({
             </table>
           </div>
         </div>
-      )}
 
       {/* ========================================================================= */}
       {/* FLEET PRIORITY CREDENTIAL POOL MODAL                                      */}
@@ -2366,7 +1841,7 @@ export default function DeviceForm({
                   {editingDevice.originalHost || editingDevice.host}
                 </span>
                 <span className="text-[11px] text-indigo-400">
-                  ({editingDevice.isSingle ? 'Single Target' : 'Fleet Device'})
+                  (Fleet Device)
                 </span>
               </div>
 

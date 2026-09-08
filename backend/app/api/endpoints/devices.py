@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.core.config import settings
 from app.schemas.device import DeviceCredentials, DeviceTestResult
 from app.services.netmiko_service import NetmikoService
 
@@ -92,7 +93,8 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
             "reason": reason,
         }
 
-    with ThreadPoolExecutor(max_workers=min(len(devices), 25)) as executor:
+    workers_val = max(10, min(getattr(settings, "DEFAULT_NUM_WORKERS", 10), 100))
+    with ThreadPoolExecutor(max_workers=min(len(devices), workers_val)) as executor:
         future_map = {executor.submit(_probe_dev, dev, idx): idx for idx, dev in enumerate(devices)}
         for future in future_map:
             idx = future_map[future]
