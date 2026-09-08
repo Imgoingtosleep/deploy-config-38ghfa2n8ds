@@ -27,6 +27,10 @@ import {
   ShieldAlert,
   ShieldCheck,
   Search,
+  ChevronUp,
+  ChevronDown,
+  Shield,
+  Lock,
 } from 'lucide-react';
 import {
   getSupportedDeviceTypes,
@@ -151,10 +155,32 @@ export default function DeviceForm({
         setProfiles(data);
         const def = data.find((p) => p.is_default) || data[0];
         if (def) {
+          setSelectedProfileId((prev) => prev || def.id);
           setCommonType(def.device_type || 'autodetect');
-          setCommonUser(def.username || '');
-          setCommonPass(def.password || '');
+          const prio1 = (def.credentials && def.credentials[0]) || def;
+          setCommonUser(prio1.username || '');
+          setCommonPass(prio1.password || '');
           setFleetPrio1Id(def.id);
+
+          // Automatically assign default profile to any fleet device without profile_id
+          setFleet((prev) =>
+            prev.map((d) =>
+              d.profile_id
+                ? d
+                : {
+                    ...d,
+                    profile_id: def.id,
+                    credential_pool: def.credentials && def.credentials.length > 0 ? def.credentials : null,
+                    username: d.username || prio1.username || '',
+                    password: d.password || prio1.password || '',
+                    secret: d.secret !== undefined && d.secret !== '' ? d.secret : (prio1.secret || ''),
+                    device_type:
+                      d.device_type && d.device_type !== 'autodetect'
+                        ? d.device_type
+                        : (def.device_type || 'autodetect'),
+                  }
+            )
+          );
         }
 
         // Set default 2nd and 3rd priority candidates if available
@@ -171,6 +197,18 @@ export default function DeviceForm({
   };
 
   const handleApplyProfileToFleet = (profileId) => {
+    setSelectedProfileId(profileId);
+    if (!profileId || profileId === 'custom') {
+      setFleet((prev) =>
+        prev.map((d) => ({
+          ...d,
+          profile_id: null,
+          credential_pool: null,
+        }))
+      );
+      return;
+    }
+
     const prof = profiles.find((p) => p.id === profileId);
     if (!prof) return;
 
@@ -185,12 +223,14 @@ export default function DeviceForm({
         device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
         username: prio1.username || '',
         password: prio1.password || '',
-        secret: prio1.secret !== undefined ? prio1.secret : d.secret,
+        secret: prio1.secret !== undefined && prio1.secret !== '' ? prio1.secret : (d.secret || ''),
         profile_id: prof.id,
         credential_pool: prof.credentials && prof.credentials.length > 0 ? prof.credentials : null,
       }))
     );
   };
+
+  const activeSelectedProfile = profiles.find((p) => p.id === selectedProfileId);
 
   const updateFleetDeviceProfile = (deviceId, profileId) => {
     if (profileId === 'custom' || !profileId) {
@@ -256,8 +296,8 @@ export default function DeviceForm({
       port: 22,
       is_default: false,
       credentials: [
-        { priority: 1, label: 'Primary (TACACS / Local)', username: '', password: '', secret: '' },
-        { priority: 2, label: 'Secondary Backup', username: '', password: '', secret: '' },
+        { priority: 1, label: 'SSH ลำดับที่ 1', username: '', password: '', secret: '' },
+        { priority: 2, label: 'SSH ลำดับที่ 2', username: '', password: '', secret: '' },
       ],
       username: '',
       password: '',
@@ -275,7 +315,7 @@ export default function DeviceForm({
       : [
           {
             priority: 1,
-            label: 'Primary',
+            label: 'SSH ลำดับที่ 1',
             username: profile.username || '',
             password: profile.password || '',
             secret: profile.secret || '',
@@ -291,7 +331,7 @@ export default function DeviceForm({
       is_default: !!profile.is_default,
       credentials: creds.map((c, i) => ({
         priority: c.priority || i + 1,
-        label: c.label || `Priority ${i + 1}`,
+        label: c.label || `SSH ลำดับที่ ${i + 1}`,
         username: c.username || '',
         password: c.password || '',
         secret: c.secret || '',
@@ -315,7 +355,7 @@ export default function DeviceForm({
         ...creds,
         {
           priority: nextPrio,
-          label: `Priority ${nextPrio} Fallback`,
+          label: `SSH ลำดับที่ ${nextPrio}`,
           username: '',
           password: '',
           secret: '',
@@ -336,6 +376,27 @@ export default function DeviceForm({
       ...c,
       priority: i + 1,
     }));
+    setEditingProfile((prev) => ({
+      ...prev,
+      credentials: reindexed,
+    }));
+  };
+
+  const handleMoveProfileCredential = (index, direction) => {
+    if (!editingProfile) return;
+    const creds = [...(editingProfile.credentials || [])];
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= creds.length) return;
+
+    const temp = creds[index];
+    creds[index] = creds[targetIdx];
+    creds[targetIdx] = temp;
+
+    const reindexed = creds.map((c, i) => ({
+      ...c,
+      priority: i + 1,
+    }));
+
     setEditingProfile((prev) => ({
       ...prev,
       credentials: reindexed,
@@ -507,6 +568,7 @@ export default function DeviceForm({
     const newId = `dev-${Date.now()}`;
     const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
     const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
+    const prio1 = (defProf?.credentials && defProf.credentials[0]) || defProf;
     setFleet((prev) => [
       ...prev,
       {
@@ -514,10 +576,11 @@ export default function DeviceForm({
         host: '',
         port: defProf?.port || 22,
         device_type: defProf?.device_type || commonType || 'autodetect',
-        username: defProf?.username || commonUser,
-        password: defProf?.password || commonPass,
-        secret: defProf?.secret || '',
+        username: prio1?.username || commonUser,
+        password: prio1?.password || commonPass,
+        secret: prio1?.secret || '',
         profile_id: defProf?.id || null,
+        credential_pool: defProf?.credentials && defProf.credentials.length > 0 ? defProf.credentials : null,
         fallback_profile_ids: pool.length > 0 ? pool : null,
       },
     ]);
@@ -562,13 +625,12 @@ export default function DeviceForm({
     }
   };
 
-  const applyCredentialsToAll = () => {
+  const applyTypeToAll = () => {
+    if (!commonType) return;
     setFleet((prev) =>
       prev.map((d) => ({
         ...d,
-        device_type: commonType || d.device_type,
-        ...(commonUser !== '' ? { username: commonUser } : {}),
-        ...(commonPass !== '' ? { password: commonPass } : {}),
+        device_type: commonType,
       }))
     );
   };
@@ -631,18 +693,29 @@ export default function DeviceForm({
     }
 
     const newDevices = parsedPreview.devices;
+    const prof = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default) || profiles[0];
+    const prio1 = prof?.credentials?.[0] || prof;
     const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
     const fallbackIds = pool.length > 0 ? pool : null;
 
+    const formatDevice = (d, id) => ({
+      id: id || d.id || `dev-${Date.now()}-${Math.random()}`,
+      host: d.host || '',
+      port: d.port || prof?.port || 22,
+      device_type: d.device_type && d.device_type !== 'autodetect' ? d.device_type : (prof?.device_type || 'autodetect'),
+      username: prio1?.username || '',
+      password: prio1?.password || '',
+      secret: prio1?.secret || '',
+      profile_id: prof?.id || null,
+      credential_pool: prof?.credentials && prof.credentials.length > 0 ? prof.credentials : null,
+      fallback_profile_ids: fallbackIds,
+    });
+
     if (importMode === 'replace') {
-      setFleet(newDevices.map((d) => ({ ...d, fallback_profile_ids: fallbackIds })));
+      setFleet(newDevices.map((d, i) => formatDevice(d, `dev-${Date.now()}-${i}`)));
     } else {
       const timestamp = Date.now();
-      const mapped = newDevices.map((d, i) => ({
-        ...d,
-        id: `dev-${timestamp}-${i}`,
-        fallback_profile_ids: fallbackIds,
-      }));
+      const mapped = newDevices.map((d, i) => formatDevice(d, `dev-${timestamp}-${i}`));
       setFleet((prev) => [...prev.filter((d) => d.host && d.host.trim()), ...mapped]);
     }
 
@@ -777,87 +850,98 @@ export default function DeviceForm({
 
       {/* MULTI-DEVICE FLEET TABLE */}
       <div className="fleet-section" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
-          <div className="fleet-header">
-            <div className="fleet-header-left">
-              <span className="fleet-title">Fleet Device List ({fleet.filter((d) => d.host).length} Devices)</span>
-              <NornirWorkersControl
-                workers={nornirWorkers}
-                onChange={onUpdateWorkers}
-              />
-            </div>
+        {/* Active SSH Credential Profile Selector on Main Page */}
+        <div className="profile-selector-bar">
+          <div className="profile-bar-left">
+            <Shield className="profile-bar-icon" />
+            <span className="profile-bar-label">SSH Credential Profile:</span>
+            <select
+              value={selectedProfileId}
+              onChange={(e) => handleApplyProfileToFleet(e.target.value)}
+              className="profile-select font-mono"
+              title="Select credential profile for SSH connection across all devices"
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.is_default ? '[Default] ' : ''}{p.name} ({p.credentials?.length || 1} Priorities)
+                </option>
+              ))}
+            </select>
 
-            {/* Quick Credentials Filler & Actions */}
-            <div className="quick-creds-bar">
-              {/* Profile Quick Picker for Fleet */}
-              <div className="flex items-center gap-1.5">
-                <UserCheck className="h-3.5 w-3.5 text-indigo-400 flex-shrink-0" />
-                <select
-                  defaultValue=""
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      handleApplyProfileToFleet(e.target.value);
-                      e.target.value = '';
-                    }
-                  }}
-                  className="quick-select"
-                  title="Apply username and password from profile to all devices in list"
-                >
-                  <option value="" disabled>Apply Profile to All...</option>
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.is_default ? '[Default] ' : ''}{p.name} ({p.username})
-                    </option>
-                  ))}
-                </select>
+            {/* Priority Sequence Pills Strip */}
+            {activeSelectedProfile && activeSelectedProfile.credentials && activeSelectedProfile.credentials.length > 0 && (
+              <div className="profile-priority-pills">
+                {activeSelectedProfile.credentials.map((cred, idx) => (
+                  <div key={idx} className="profile-priority-pill" title={`Priority ${cred.priority || idx + 1}: ${cred.username || '(no user)'}`}>
+                    <span className={`prio-tag prio-tag-${Math.min(cred.priority || idx + 1, 3)}`}>
+                      P{cred.priority || idx + 1}
+                    </span>
+                    <span className="prio-user font-mono">{cred.username || '(empty)'}</span>
+                    {cred.label && <span className="prio-lbl">({cred.label})</span>}
+                  </div>
+                ))}
               </div>
+            )}
 
-              {/* 3-Tier Priority Pool Modal Button */}
-              <button
-                type="button"
-                className="fallback-toggle-btn"
-                onClick={() => setShowFleetPoolModal(true)}
-                title="Configure 3-tier sequential credential fallback pool for the entire fleet"
-              >
-                <ListOrdered className="h-3.5 w-3.5" />
-                <span>Priority Pool (1-2-3)</span>
-              </button>
+            {activeSelectedProfile && (
+              <span className="profile-auto-note" title="All SSH credentials are handled exclusively by this profile.">
+                <Lock className="h-3 w-3 text-sky-400" />
+                <span>SSH Managed via Profile</span>
+              </span>
+            )}
+          </div>
 
-              <span className="quick-creds-label">Manual Batch:</span>
-              <select
-                value={commonType}
-                onChange={(e) => setCommonType(e.target.value)}
-                className="quick-select"
-                title="Select device type to apply to all"
-              >
-                <option value="autodetect">Auto Detect (Recommended)</option>
-                <option value="huawei">Huawei (VRP)</option>
-                <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                <option value="hp_comware">HP / H3C Comware</option>
-                <option value="aruba_os">Aruba OS</option>
-                <option value="juniper_junos">Juniper JunOS</option>
-              </select>
-              <input
-                type="text"
-                placeholder="User"
-                value={commonUser}
-                onChange={(e) => setCommonUser(e.target.value)}
-                className="quick-input"
-              />
-              <input
-                type="password"
-                placeholder="Pass"
-                value={commonPass}
-                onChange={(e) => setCommonPass(e.target.value)}
-                className="quick-input"
-              />
-              <button
-                type="button"
-                className="quick-apply-btn"
-                onClick={applyCredentialsToAll}
-                title="Apply Type, Username, and Password to all devices in list"
-              >
-                Apply to All
-              </button>
+          <div className="profile-bar-right">
+            <button
+              type="button"
+              className="btn-profile-manage"
+              onClick={() => {
+                setProfileModalTab('list');
+                setProfileError('');
+                setProfileSuccess('');
+                setShowProfileModal(true);
+              }}
+              title="Manage all user credential profiles"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span>Profiles ({profiles.length})</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="fleet-header">
+          <div className="fleet-header-left">
+            <span className="fleet-title">Fleet Device List ({fleet.filter((d) => d.host).length} Devices)</span>
+            <NornirWorkersControl
+              workers={nornirWorkers}
+              onChange={onUpdateWorkers}
+            />
+          </div>
+
+          {/* Quick Actions Bar */}
+          <div className="quick-creds-bar">
+            <span className="quick-creds-label">Set All Vendors:</span>
+            <select
+              value={commonType}
+              onChange={(e) => setCommonType(e.target.value)}
+              className="quick-select"
+              title="Select device driver to apply to all devices in list"
+            >
+              <option value="autodetect">Auto Detect (Recommended)</option>
+              <option value="huawei">Huawei (VRP)</option>
+              <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
+              <option value="hp_comware">HP / H3C Comware</option>
+              <option value="aruba_os">Aruba OS</option>
+              <option value="juniper_junos">Juniper JunOS</option>
+            </select>
+            <button
+              type="button"
+              className="quick-apply-btn"
+              onClick={applyTypeToAll}
+              title="Apply selected vendor driver to all devices in list"
+            >
+              Apply Driver
+            </button>
 
               <button
                 type="button"
@@ -899,21 +983,6 @@ export default function DeviceForm({
                 <span>Import Fleet</span>
               </button>
 
-              <button
-                type="button"
-                className="btn-profile-manage"
-                onClick={() => {
-                  setProfileModalTab('list');
-                  setProfileError('');
-                  setProfileSuccess('');
-                  setShowProfileModal(true);
-                }}
-                title="Manage saved profiles"
-              >
-                <Settings className="h-3.5 w-3.5" />
-                <span>Profiles</span>
-              </button>
-
               {fleet.length > 0 && (
                 <button
                   type="button"
@@ -952,18 +1021,17 @@ export default function DeviceForm({
             <table className="fleet-table">
               <thead>
                 <tr>
+                  <th style={{ width: '45px', textAlign: 'center' }}>#</th>
                   <th>IP Address (Host)</th>
-                  <th>Profile / Fallback</th>
-                  <th>Type</th>
-                  <th>Username</th>
-                  <th>Password</th>
+                  <th style={{ width: '240px' }}>Device Type / Driver</th>
+                  <th style={{ width: '100px' }}>Port</th>
                   <th style={{ width: '85px', textAlign: 'center' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredFleet.length === 0 ? (
                   <tr>
-                    <td colSpan="6" className="text-center py-8 text-slate-400 text-xs">
+                    <td colSpan="5" className="text-center py-8 text-slate-400 text-xs">
                       <div className="flex flex-col items-center gap-2">
                         <Search className="h-6 w-6 text-slate-600" />
                         <p>No devices found matching Host IP "{hostSearchQuery}"</p>
@@ -978,204 +1046,72 @@ export default function DeviceForm({
                     </td>
                   </tr>
                 ) : (
-                  filteredFleet.map((dev) => {
-                    const assignedProf = profiles.find((p) => p.id === dev.profile_id);
-                    const credCount = assignedProf?.credentials?.length || (dev.fallback_profile_ids?.length) || (dev.credential_pool?.length) || 1;
-                    const hasPool = credCount > 1;
-                    return (
-                      <tr key={dev.id} id={`fleet-row-${dev.id}`}>
-                        <td>
-                          <input
-                            type="text"
-                            value={dev.host}
-                            onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
-                            placeholder="e.g. 192.168.1.1"
-                            className="fleet-input font-mono"
-                          />
-                        </td>
-                        <td style={{ width: '155px' }}>
-                          <div className="flex items-center gap-1">
-                            <select
-                              value={dev.profile_id || ''}
-                              onChange={(e) => updateFleetDeviceProfile(dev.id, e.target.value)}
-                              className="fleet-profile-select"
-                              title="Select profile for this device (includes all prioritized credentials)"
-                            >
-                              <option value="">Custom</option>
-                              {profiles.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.name} {p.credentials?.length > 1 ? `(P:${p.credentials.length})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                            {hasPool && (
-                              <span className="text-[10px] px-1 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700 font-mono flex-shrink-0" title={`Multi-Priority Credentials active: ${credCount} priorities in profile`}>
-                                P:{credCount}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td>
-                          <select
-                            value={dev.device_type}
-                            onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
-                            className="fleet-select"
+                  filteredFleet.map((dev, idx) => (
+                    <tr key={dev.id} id={`fleet-row-${dev.id}`}>
+                      <td style={{ textAlign: 'center' }} className="font-mono text-xs text-slate-500">
+                        {idx + 1}
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          value={dev.host}
+                          onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
+                          placeholder="e.g. 192.168.1.1"
+                          className="fleet-input font-mono"
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={dev.device_type}
+                          onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
+                          className="fleet-select"
+                        >
+                          <option value="autodetect">Auto Detect</option>
+                          <option value="huawei">Huawei (VRP)</option>
+                          <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
+                          <option value="hp_comware">HP / H3C Comware</option>
+                          <option value="aruba_os">Aruba OS</option>
+                          <option value="juniper_junos">Juniper JunOS</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          value={dev.port || 22}
+                          onChange={(e) => updateFleetDevice(dev.id, 'port', parseInt(e.target.value, 10) || 22)}
+                          placeholder="22"
+                          className="fleet-input font-mono"
+                        />
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditDevice(dev)}
+                            className="btn-edit-row"
+                            title="Edit this Host IP and settings"
                           >
-                            <option value="autodetect">Auto Detect</option>
-                            <option value="huawei">Huawei (VRP)</option>
-                            <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                            <option value="hp_comware">HP / H3C Comware</option>
-                            <option value="aruba_os">Aruba OS</option>
-                            <option value="juniper_junos">Juniper JunOS</option>
-                          </select>
-                        </td>
-
-                        <td>
-                          <input
-                            type="text"
-                            value={dev.username}
-                            onChange={(e) => updateFleetDevice(dev.id, 'username', e.target.value)}
-                            placeholder="Username"
-                            className="fleet-input"
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="password"
-                            value={dev.password}
-                            onChange={(e) => updateFleetDevice(dev.id, 'password', e.target.value)}
-                            placeholder="Password"
-                            className="fleet-input"
-                          />
-                        </td>
-                        <td style={{ textAlign: 'center' }}>
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditDevice(dev)}
-                              className="btn-edit-row"
-                              title="Edit this Host IP and settings"
-                            >
-                              <Edit2 className="h-3.5 w-3.5 text-indigo-400" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeFleetDevice(dev.id)}
-                              className="btn-remove-row"
-                              title="Remove device from fleet"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
+                            <Edit2 className="h-3.5 w-3.5 text-indigo-400" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeFleetDevice(dev.id)}
+                            className="btn-remove-row"
+                            title="Remove device from fleet"
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
           </div>
         </div>
 
-      {/* ========================================================================= */}
-      {/* FLEET PRIORITY CREDENTIAL POOL MODAL                                      */}
-      {/* ========================================================================= */}
-      {showFleetPoolModal && (
-        <div className="modal-backdrop">
-          <div className="save-playbook-box fleet-pool-modal">
-            <div className="save-playbook-header">
-              <div className="flex items-center gap-2">
-                <ListOrdered className="h-4 w-4 text-sky-400" />
-                <h3 className="save-playbook-title font-semibold">
-                  Configure Fleet Priority Credential Pool
-                </h3>
-              </div>
-              <button onClick={() => setShowFleetPoolModal(false)} className="modal-close-btn">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
 
-            <div className="save-playbook-body">
-              <p className="text-xs text-slate-300 mb-3">
-                Select up to 3 credential profiles in priority order. When running batch commands or deployment, each switch will probe <strong>Priority 1</strong>, then <strong>Priority 2</strong>, then <strong>Priority 3</strong> until authentication succeeds.
-              </p>
-
-              <div className="flex flex-col gap-3">
-                {/* Priority 1 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-1">Priority 1 (Primary TACACS/RADIUS)</span>
-                  </div>
-                  <select
-                    value={fleetPrio1Id}
-                    onChange={(e) => setFleetPrio1Id(e.target.value)}
-                    className="priority-slot-select mt-1"
-                  >
-                    <option value="" disabled>Select Priority 1 Profile...</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Priority 2 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-2">Priority 2 (Secondary / Site Local Admin)</span>
-                  </div>
-                  <select
-                    value={fleetPrio2Id}
-                    onChange={(e) => setFleetPrio2Id(e.target.value)}
-                    className="priority-slot-select mt-1"
-                  >
-                    <option value="">-- None --</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Priority 3 */}
-                <div className="priority-slot-card">
-                  <div className="priority-slot-header">
-                    <span className="priority-badge priority-badge-3">Priority 3 (Emergency / Vendor Default)</span>
-                  </div>
-                  <select
-                    value={fleetPrio3Id}
-                    onChange={(e) => setFleetPrio3Id(e.target.value)}
-                    className="priority-slot-select mt-1"
-                  >
-                    <option value="">-- None --</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name} ({p.username})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            <div className="save-playbook-footer">
-              <button
-                type="button"
-                onClick={() => setShowFleetPoolModal(false)}
-                className="btn-modal-cancel"
-              >
-                <X className="h-4 w-4" />
-                <span>Cancel</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleApplyFleetPoolToAll}
-                className="btn-modal-save"
-                disabled={!fleetPrio1Id}
-              >
-                <Check className="h-4 w-4" />
-                <span>Apply Priority Pool to All ({fleet.length} Devices)</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* MANAGE CREDENTIAL PROFILES MODAL                                          */}
@@ -1263,6 +1199,15 @@ export default function DeviceForm({
                             </div>
 
                             <div className="profile-card-actions">
+                              <button
+                                type="button"
+                                className={`btn-profile-card-action ${selectedProfileId === p.id ? 'active-fleet-btn' : ''}`}
+                                onClick={() => handleApplyProfileToFleet(p.id)}
+                                title="Use this profile for Fleet SSH"
+                              >
+                                <Shield className="h-3 w-3" />
+                                <span>{selectedProfileId === p.id ? 'Active Profile' : 'Select for Fleet'}</span>
+                              </button>
                               {!p.is_default && (
                                 <button
                                   type="button"
@@ -1305,7 +1250,7 @@ export default function DeviceForm({
 
                           {/* Prioritized Credentials Breakdown */}
                           <div className="profile-card-creds-list">
-                            {(p.credentials && p.credentials.length > 0 ? p.credentials : [{ priority: 1, username: p.username, password: p.password, label: 'Primary' }]).map((c, cIdx) => {
+                            {(p.credentials && p.credentials.length > 0 ? p.credentials : [{ priority: 1, username: p.username, password: p.password, label: 'SSH ลำดับที่ 1' }]).map((c, cIdx) => {
                               const credKey = `${p.id}_prio_${cIdx}`;
                               const isCredRevealed = !!showProfilePassMap[credKey];
                               return (
@@ -1441,7 +1386,7 @@ export default function DeviceForm({
                       </button>
                     </div>
                     <p className="text-[11px] text-slate-400 mb-2">
-                      ระบบจะลองเชื่อมต่อด้วย Priority 1 ก่อน หาก Authentication ล้มเหลวจะ Failover ไปลอง Priority ถัดไปอัตโนมัติ
+                      ระบบจะลองเชื่อมต่อด้วย SSH ลำดับที่ 1 ก่อน หาก Authentication ล้มเหลวจะ Failover ไปลองลำดับถัดไปอัตโนมัติ
                     </p>
 
                     <div className="profile-credentials-list">
@@ -1451,15 +1396,37 @@ export default function DeviceForm({
                         return (
                           <div key={cIdx} className="profile-cred-card">
                             <div className="profile-cred-card-top">
-                              <span className={`cred-prio-badge prio-badge-${Math.min(cred.priority, 3)}`}>
-                                Priority {cred.priority} {cIdx === 0 ? '(Primary)' : cIdx === 1 ? '(Secondary)' : '(Emergency)'}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`cred-prio-badge prio-badge-${Math.min(cred.priority, 3)}`}>
+                                  SSH ลำดับที่ {cred.priority}
+                                </span>
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    className="btn-move-prio"
+                                    onClick={() => handleMoveProfileCredential(cIdx, -1)}
+                                    disabled={cIdx === 0}
+                                    title="Move priority up (higher precedence)"
+                                  >
+                                    <ChevronUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-move-prio"
+                                    onClick={() => handleMoveProfileCredential(cIdx, 1)}
+                                    disabled={cIdx === (editingProfile.credentials || []).length - 1}
+                                    title="Move priority down (lower precedence)"
+                                  >
+                                    <ChevronDown className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
                               <div className="flex items-center gap-2">
                                 <input
                                   type="text"
                                   value={cred.label || ''}
                                   onChange={(e) => handleUpdateProfileCredential(cIdx, 'label', e.target.value)}
-                                  placeholder="Label (e.g. TACACS, Local Admin)"
+                                  placeholder="หมายเหตุ / Label (เช่น TACACS, Local Admin)"
                                   className="cred-label-input"
                                 />
                                 {(editingProfile.credentials || []).length > 1 && (
@@ -1669,38 +1636,20 @@ export default function DeviceForm({
                 </button>
               </div>
 
-              {/* Inherited Batch Setup Credentials Notice with Profile Picker */}
+              {/* Profile for Imported Devices */}
               <div className="import-batch-notice">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-slate-300 font-semibold">
-                    Fallback Credentials for Imported Devices:
+                    Profile for Imported Devices:
                   </span>
-                  <select
-                    defaultValue=""
-                    onChange={(e) => {
-                      const prof = profiles.find((p) => p.id === e.target.value);
-                      if (prof) {
-                        setFallbackType(prof.device_type || 'huawei');
-                        setFallbackUser(prof.username || '');
-                        setFallbackPass(prof.password || '');
-                        setFallbackPort(prof.port || 22);
-                        setFallbackSecret(prof.secret || '');
-                      }
-                      e.target.value = '';
-                    }}
-                    className="quick-select text-[11px]"
-                  >
-                    <option value="" disabled>Apply from Profile...</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <span className="text-xs font-mono text-indigo-300 font-semibold">
+                    {activeSelectedProfile ? activeSelectedProfile.name : 'Default Profile'}
+                  </span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400">
+                <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
                   <span>Vendor: <strong className="text-indigo-300">{fallbackType || commonType || 'huawei'}</strong></span>
-                  <span>User: <strong className="text-slate-200">{fallbackUser || commonUser || '(blank)'}</strong></span>
-                  <span>Password: <strong className="text-slate-200">{(fallbackPass || commonPass) ? '••••••' : '(blank)'}</strong></span>
                   <span>Port: <strong className="text-slate-200">{fallbackPort || 22}</strong></span>
+                  <span className="text-sky-300 font-mono">Credentials: <strong>Profile Managed</strong></span>
                 </div>
               </div>
 
@@ -1765,23 +1714,24 @@ export default function DeviceForm({
                         <tr>
                           <th>#</th>
                           <th>Host / IP</th>
+                          <th>Profile</th>
                           <th>Type</th>
                           <th>Port</th>
-                          <th>Username</th>
-                          <th>Password</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {parsedPreview.devices.slice(0, 5).map((d, i) => (
-                          <tr key={i}>
-                            <td className="font-mono text-slate-500">{i + 1}</td>
-                            <td className="font-mono font-semibold text-white">{d.host}</td>
-                            <td className="text-slate-300">{d.device_type}</td>
-                            <td className="font-mono text-slate-400">{d.port}</td>
-                            <td className="text-slate-300">{d.username || '-'}</td>
-                            <td className="text-slate-400">{d.password ? '••••••' : '-'}</td>
-                          </tr>
-                        ))}
+                        {parsedPreview.devices.slice(0, 5).map((d, i) => {
+                          const prof = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default) || profiles[0];
+                          return (
+                            <tr key={i}>
+                              <td className="font-mono text-slate-500">{i + 1}</td>
+                              <td className="font-mono font-semibold text-white">{d.host}</td>
+                              <td className="text-sky-300 font-mono text-xs">{prof?.name || 'Default'}</td>
+                              <td className="text-slate-300">{d.device_type || prof?.device_type || 'autodetect'}</td>
+                              <td className="font-mono text-slate-400">{d.port || prof?.port || 22}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1860,7 +1810,7 @@ export default function DeviceForm({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="grid grid-cols-2 gap-3 mb-4">
                 <div className="form-group">
                   <label className="form-label">Port</label>
                   <input
@@ -1881,29 +1831,6 @@ export default function DeviceForm({
                       <option key={t.value} value={t.value}>{t.label}</option>
                     ))}
                   </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <div className="form-group">
-                  <label className="form-label">Username</label>
-                  <input
-                    type="text"
-                    value={editForm.username}
-                    onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
-                    placeholder="Username"
-                    className="form-input"
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Password</label>
-                  <input
-                    type="password"
-                    value={editForm.password}
-                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                    placeholder="Password"
-                    className="form-input"
-                  />
                 </div>
               </div>
 

@@ -17,8 +17,8 @@ DEFAULT_PROFILES = [
         "port": 22,
         "is_default": True,
         "credentials": [
-            {"priority": 1, "username": "admin", "password": "", "secret": "", "label": "Primary Admin"},
-            {"priority": 2, "username": "huawei", "password": "", "secret": "", "label": "Secondary Backup"}
+            {"priority": 1, "username": "admin", "password": "", "secret": "", "label": "SSH ลำดับที่ 1"},
+            {"priority": 2, "username": "huawei", "password": "", "secret": "", "label": "SSH ลำดับที่ 2"}
         ],
         "username": "admin",
         "password": "",
@@ -34,8 +34,8 @@ DEFAULT_PROFILES = [
         "port": 22,
         "is_default": False,
         "credentials": [
-            {"priority": 1, "username": "admin", "password": "", "secret": "", "label": "TACACS / Primary"},
-            {"priority": 2, "username": "cisco", "password": "", "secret": "", "label": "Local Fallback"}
+            {"priority": 1, "username": "admin", "password": "", "secret": "", "label": "SSH ลำดับที่ 1"},
+            {"priority": 2, "username": "cisco", "password": "", "secret": "", "label": "SSH ลำดับที่ 2"}
         ],
         "username": "admin",
         "password": "",
@@ -81,23 +81,22 @@ class ProfileService:
                     "username": top_user,
                     "password": top_pass,
                     "secret": top_secret,
-                    "label": "Primary",
+                    "label": "SSH ลำดับที่ 1",
                 }
             ]
         else:
             # Sort by priority ascending and re-index sequentially if needed
             cleaned_creds = []
             for idx, c in enumerate(sorted(creds, key=lambda x: int(x.get("priority", 999))), start=1):
-                prio = int(c.get("priority") or idx)
                 cleaned_creds.append({
-                    "priority": prio,
+                    "priority": idx,
                     "username": (c.get("username") or "").strip(),
                     "password": c.get("password") or "",
                     "secret": c.get("secret") or "",
-                    "label": (c.get("label") or f"Priority {prio}").strip(),
+                    "label": (c.get("label") or f"SSH ลำดับที่ {idx}").strip(),
                 })
             creds = cleaned_creds if cleaned_creds else [
-                {"priority": 1, "username": "", "password": "", "secret": "", "label": "Primary"}
+                {"priority": 1, "username": "", "password": "", "secret": "", "label": "SSH ลำดับที่ 1"}
             ]
 
         p["credentials"] = creds
@@ -174,7 +173,7 @@ class ProfileService:
                 "username": data.get("username") or "",
                 "password": data.get("password") or "",
                 "secret": data.get("secret") or "",
-                "label": "Primary",
+                "label": "SSH ลำดับที่ 1",
             }]
 
         new_profile = {
@@ -240,7 +239,7 @@ class ProfileService:
                 "username": data.get("username", target.get("username", "")),
                 "password": data.get("password", target.get("password", "")),
                 "secret": data.get("secret", target.get("secret", "")),
-                "label": "Primary",
+                "label": "SSH ลำดับที่ 1",
             }]
 
         target["updated_at"] = now

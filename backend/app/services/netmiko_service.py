@@ -129,29 +129,38 @@ class NetmikoService:
         seen = set()
 
         # 1. Check if device is linked to a Credential Profile (which contains multi-tier prioritized credentials)
+        prof = None
         if device.profile_id:
             try:
                 from app.services.profile_service import ProfileService
                 prof = ProfileService.get_profile_by_id(device.profile_id)
-                if prof and prof.get("credentials"):
-                    sorted_creds = sorted(prof["credentials"], key=lambda x: int(x.get("priority", 999)))
-                    for c in sorted_creds:
-                        u = (c.get("username") or "").strip()
-                        p = c.get("password") or ""
-                        key = (u, p)
-                        if key not in seen and (u or p):
-                            lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
-                            candidates.append({
-                                "name": f"{prof.get('name', 'Profile')} - {lbl}",
-                                "username": u,
-                                "password": p,
-                                "secret": c.get("secret") or "",
-                                "device_type": prof.get("device_type") or device.device_type,
-                                "port": prof.get("port") or device.port,
-                            })
-                            seen.add(key)
             except Exception:
                 pass
+        elif not device.username and not device.password:
+            try:
+                from app.services.profile_service import ProfileService
+                all_p = ProfileService.get_profiles()
+                prof = next((p for p in all_p if p.get("is_default")), (all_p[0] if all_p else None))
+            except Exception:
+                pass
+
+        if prof and prof.get("credentials"):
+            sorted_creds = sorted(prof["credentials"], key=lambda x: int(x.get("priority", 999)))
+            for c in sorted_creds:
+                u = (c.get("username") or "").strip()
+                p = c.get("password") or ""
+                key = (u, p)
+                if key not in seen and (u or p):
+                    lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
+                    candidates.append({
+                        "name": f"{prof.get('name', 'Profile')} - {lbl}",
+                        "username": u,
+                        "password": p,
+                        "secret": c.get("secret") or "",
+                        "device_type": prof.get("device_type") or device.device_type,
+                        "port": prof.get("port") or device.port,
+                    })
+                    seen.add(key)
 
         # 2. Directly supplied credential_pool dicts (explicit multi-priority pool)
         if device.credential_pool:

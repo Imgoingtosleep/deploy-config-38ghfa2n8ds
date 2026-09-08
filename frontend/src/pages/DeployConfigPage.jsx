@@ -463,6 +463,9 @@ export default function DeployConfigPage({
         password: d.password || '',
         secret: d.secret || '',
         connection_mode: 'network',
+        profile_id: d.profile_id || null,
+        credential_pool: d.credential_pool || null,
+        fallback_profile_ids: d.fallback_profile_ids || null,
       }));
 
       const res = await submitDeployJob(
@@ -501,6 +504,9 @@ export default function DeployConfigPage({
         password: d.password || '',
         secret: d.secret || '',
         connection_mode: 'network',
+        profile_id: d.profile_id || null,
+        credential_pool: d.credential_pool || null,
+        fallback_profile_ids: d.fallback_profile_ids || null,
       }));
       const res = await submitBackupJob(payloadDevices, nornirWorkers);
       setShowBackupModal(false);

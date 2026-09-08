@@ -746,6 +746,13 @@
   border-color: #ef4444;
 }
 
+.btn-profile-card-action.active-fleet-btn {
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  border-color: #0ea5e9;
+  font-weight: 600;
+}
+
 .profile-card-details {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -1095,6 +1102,86 @@
   font-size: 0.68rem;
 }
 
+.profile-auto-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: #38bdf8;
+  background: rgba(14, 165, 233, 0.12);
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.fleet-cred-cell-managed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px dashed rgba(56, 189, 248, 0.35);
+  padding: 0.25rem 0.45rem;
+  border-radius: 0.25rem;
+  font-size: 0.73rem;
+  color: #cbd5e1;
+  user-select: none;
+  height: 28px;
+  transition: all 0.15s ease;
+}
+
+.fleet-cred-cell-managed:hover {
+  background: rgba(14, 165, 233, 0.14);
+  border-color: rgba(56, 189, 248, 0.6);
+}
+
+.fleet-cred-cell-managed .cred-val {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: monospace;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-cred-cell-managed .cred-tag {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 0.2rem;
+  background: rgba(14, 165, 233, 0.22);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.4);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.fleet-profile-pills-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.fleet-prio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+}
+
+.edit-ip-profile-info {
+  background: rgba(14, 165, 233, 0.08);
+  border: 1px solid rgba(14, 165, 233, 0.25);
+  border-radius: 0.375rem;
+  padding: 0.6rem 0.75rem;
+}
+
 /* Modal List View: Prioritized Credentials Breakdown */
 .profile-card-creds-list {
   display: flex;
@@ -1223,6 +1310,30 @@
 
 .btn-del-prio:hover {
   background: rgba(239, 68, 68, 0.15);
+}
+
+.btn-move-prio {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.2rem 0.25rem;
+  border-radius: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.btn-move-prio:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.25);
+  color: #c7d2fe;
+  border-color: #6366f1;
+}
+
+.btn-move-prio:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
 }
 
 .profile-cred-grid {
