@@ -84,37 +84,55 @@ class AutoDetectService:
             pass
 
         # --- Stage 3 & 4: Authenticated SSH Banner, Prompt Signature & Command Probe ---
+        from app.services.netmiko_service import NetmikoService
+        candidates = NetmikoService._resolve_credential_candidates(device)
+
         is_unreachable = False
         is_auth_failure = False
-        try:
-            detected_ssh, reason_ssh = cls._probe_via_ssh(
-                host=host,
-                port=port,
-                username=username,
-                password=password,
-                timeout=min(max(timeout, 6), 10)
-            )
-            if detected_ssh:
-                cls._cache[host] = detected_ssh
-                return detected_ssh, reason_ssh
-        except paramiko.ssh_exception.AuthenticationException as auth_err:
-            is_auth_failure = True
-            err_reason = f"Authentication failed for {username}@{host}: Username or password incorrect"
-        except (socket.timeout, TimeoutError, OSError) as net_err:
-            is_unreachable = True
-            err_reason = f"Device unreachable on port {port}: {str(net_err)}"
-        except paramiko.ssh_exception.SSHException as ssh_err:
-            err_str = str(ssh_err).lower()
-            if "auth" in err_str:
+        err_reason = ""
+
+        for c_idx, c in enumerate(candidates, 1):
+            c_user = c.get("username") or ""
+            c_pass = c.get("password") or ""
+            if not c_user and not c_pass:
+                continue
+
+            try:
+                detected_ssh, reason_ssh = cls._probe_via_ssh(
+                    host=host,
+                    port=port,
+                    username=c_user,
+                    password=c_pass,
+                    timeout=min(max(timeout, 6), 10)
+                )
+                if detected_ssh:
+                    device.username = c_user
+                    cls._cache[host] = detected_ssh
+                    return detected_ssh, f"{reason_ssh} (via user: {c_user})"
+            except paramiko.ssh_exception.AuthenticationException as auth_err:
                 is_auth_failure = True
-                err_reason = f"Authentication failed: {str(ssh_err)}"
-            elif "timed out" in err_str or "refused" in err_str or "unreachable" in err_str or "no route" in err_str:
+                err_reason = f"Authentication failed for {c_user}@{host}: Username or password incorrect"
+                if c_idx < len(candidates):
+                    continue
+            except (socket.timeout, TimeoutError, OSError) as net_err:
                 is_unreachable = True
-                err_reason = f"Connection failed on port {port}: {str(ssh_err)}"
-            else:
-                err_reason = f"SSH Protocol error: {str(ssh_err)}"
-        except Exception as e:
-            err_reason = f"SSH Probe error: {str(e)}"
+                err_reason = f"Device unreachable on port {port}: {str(net_err)}"
+                break
+            except paramiko.ssh_exception.SSHException as ssh_err:
+                err_str = str(ssh_err).lower()
+                if "auth" in err_str or "channel" in err_str:
+                    is_auth_failure = True
+                    err_reason = f"Authentication or channel failed for {c_user}@{host}: {str(ssh_err)}"
+                    if c_idx < len(candidates):
+                        continue
+                elif "timed out" in err_str or "refused" in err_str or "unreachable" in err_str or "no route" in err_str:
+                    is_unreachable = True
+                    err_reason = f"Connection failed on port {port}: {str(ssh_err)}"
+                    break
+                else:
+                    err_reason = f"SSH Protocol error: {str(ssh_err)}"
+            except Exception as e:
+                err_reason = f"SSH Probe error: {str(e)}"
 
         # If device is unreachable, return immediately with reason
         if is_unreachable:
@@ -122,14 +140,21 @@ class AutoDetectService:
             return fallback, err_reason
 
         # --- Stage 4: Prioritized Fast Prober (If not auth failure and credentials exist) ---
-        if not is_auth_failure and username:
-            try:
-                detected_fast, reason_fast = cls._probe_prioritized_cli(device)
-                if detected_fast:
-                    cls._cache[host] = detected_fast
-                    return detected_fast, reason_fast
-            except Exception:
-                pass
+        if not is_auth_failure and any(c.get("username") for c in candidates):
+            for c in candidates:
+                if not c.get("username"):
+                    continue
+                try:
+                    probe_dev = device.copy()
+                    probe_dev.username = c["username"]
+                    probe_dev.password = c["password"]
+                    detected_fast, reason_fast = cls._probe_prioritized_cli(probe_dev)
+                    if detected_fast:
+                        device.username = c["username"]
+                        cls._cache[host] = detected_fast
+                        return detected_fast, f"{reason_fast} (via user: {c['username']})"
+                except Exception:
+                    pass
 
         # --- Stage 5: Fallback with clear explanation ---
         fallback = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"

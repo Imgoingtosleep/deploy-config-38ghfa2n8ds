@@ -64,6 +64,8 @@ class CommandResponse(BaseModel):
     success: bool
     error: Optional[str] = None
     execution_time_seconds: Optional[float] = None
+    authenticated_username: Optional[str] = None
+    authenticated_credential: Optional[str] = None
 
 class MultiCommandResponse(BaseModel):
     host: str
@@ -73,6 +75,8 @@ class MultiCommandResponse(BaseModel):
     error: Optional[str] = None
     overall_time_seconds: Optional[float] = None
     summary: Optional[Dict[str, Any]] = None
+    authenticated_username: Optional[str] = None
+    authenticated_credential: Optional[str] = None
 
 class BatchHealthCheckRequest(BaseModel):
     devices: List[DeviceCredentials]
@@ -143,6 +147,8 @@ class AdvancedDeployResponse(BaseModel):
     post_check_results: List[CommandResponse] = Field(default_factory=list)
     rollback_commands: List[str] = Field(default_factory=list)
     step_logs: List[Dict[str, Any]] = Field(default_factory=list)
+    authenticated_username: Optional[str] = None
+    authenticated_credential: Optional[str] = None
 
 class BatchDeployRequest(BaseModel):
     devices: List[DeviceCredentials]

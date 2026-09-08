@@ -48,7 +48,7 @@ def get_available_serial_ports():
 @router.post("/test-connection", response_model=DeviceTestResult)
 def test_connection(device: DeviceCredentials):
     """Test SSH connectivity and credentials on the target network device with priority fallback"""
-    connected, message, prompt, winning_cred, attempt_logs = NetmikoService.test_connection(device)
+    connected, message, prompt, winning_cred, attempt_logs, winning_user = NetmikoService.test_connection(device)
     return DeviceTestResult(
         host=device.host,
         status="connected" if connected else "failed",
@@ -56,6 +56,7 @@ def test_connection(device: DeviceCredentials):
         message=message,
         device_prompt=prompt if connected else None,
         authenticated_credential=winning_cred,
+        authenticated_username=winning_user,
         attempt_logs=attempt_logs,
     )
 
@@ -72,6 +73,7 @@ def detect_single_device_type(device: DeviceCredentials):
         "host": device.host,
         "device_type": detected_type,
         "reason": reason,
+        "authenticated_username": getattr(device, "username", None),
     }
 
 
@@ -91,6 +93,7 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
             "host": dev.host,
             "device_type": d_type,
             "reason": reason,
+            "authenticated_username": getattr(dev, "username", None),
         }
 
     workers_val = max(10, min(getattr(settings, "DEFAULT_NUM_WORKERS", 10), 100))

@@ -294,7 +294,16 @@ class NornirService:
                     break
                 except Exception as ce:
                     err_l = str(ce).lower()
-                    if ("auth" in err_l or "password" in err_l or "login" in err_l) and c_idx < len(candidates):
+                    is_cred_err = (
+                        "auth" in err_l
+                        or "password" in err_l
+                        or "login" in err_l
+                        or "permission" in err_l
+                        or "unable to open channel" in err_l
+                        or "channel" in err_l
+                        or "administratively prohibited" in err_l
+                    )
+                    if is_cred_err and c_idx < len(candidates):
                         try:
                             task.host.close_connection("netmiko")
                         except Exception:
@@ -303,10 +312,14 @@ class NornirService:
                     raise ce
             t_elapsed = round(time.time() - t_start, 2)
             masked = NetmikoService.clean_cli_output(res.result or "")
+            winning_user = task.host.username or (cred.get("username") if cred else "")
+            winning_label = cred.get("name") if cred else None
             return {
                 "command": actual_cmd,
                 "output": masked,
                 "execution_time_seconds": t_elapsed,
+                "authenticated_username": winning_user,
+                "authenticated_credential": winning_label,
             }
 
         agg_result = nr.run(task=_nornir_cmd_task)
@@ -335,6 +348,8 @@ class NornirService:
                     success=True,
                     error=None,
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
+                    authenticated_username=task_data.get("authenticated_username"),
+                    authenticated_credential=task_data.get("authenticated_credential"),
                 )
 
         # Fill any missing entries safely
@@ -503,6 +518,7 @@ class NornirService:
                 "rollback_commands": rollback_cmds,
                 "step_logs": step_logs,
                 "execution_time_seconds": t_elapsed,
+                "authenticated_username": task.host.username,
             }
 
         agg_result = nr.run(task=_nornir_deploy_task)
@@ -545,6 +561,7 @@ class NornirService:
                     post_check_results=task_data.get("post_check_results", []),
                     rollback_commands=task_data.get("rollback_commands", []),
                     step_logs=task_data.get("step_logs", []),
+                    authenticated_username=task_data.get("authenticated_username") or task.host.username,
                 )
 
         # Fill any missing entries safely

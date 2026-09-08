@@ -604,6 +604,7 @@ export default function AsyncJobModal({
                       <th className="w-12">#</th>
                       <th>Device Host IP</th>
                       <th>Status & Reason</th>
+                      <th>SSH User</th>
                       <th>Command / Task</th>
                       <th>Time</th>
                       <th className="text-right">Actions</th>
@@ -614,6 +615,7 @@ export default function AsyncJobModal({
                       const itemIdx = (page - 1) * pageSize + idx + 1;
                       const isSuccess = item.success;
                       const errorMsg = item.error || (item.output && item.output.includes('Error:') ? item.output : '');
+                      const sshUser = item.authenticated_username || item.authenticated_credential || '';
                       return (
                         <tr key={idx} className={!isSuccess ? 'bg-rose-950/20' : ''}>
                           <td className="font-mono text-xs text-slate-500 whitespace-nowrap">{itemIdx}</td>
@@ -634,6 +636,13 @@ export default function AsyncJobModal({
                                 </span>
                               )}
                             </div>
+                          </td>
+                          <td className="font-mono text-xs whitespace-nowrap">
+                            {sshUser ? (
+                              <span className={isSuccess ? 'text-emerald-300' : 'text-slate-500'}>{sshUser}</span>
+                            ) : (
+                              <span className="text-slate-600">-</span>
+                            )}
                           </td>
                           <td className="font-mono text-xs text-slate-300 whitespace-nowrap">
                             {item.command || 'Batch Execution'}

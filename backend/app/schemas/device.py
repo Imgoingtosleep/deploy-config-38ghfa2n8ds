@@ -44,4 +44,5 @@ class DeviceTestResult(BaseModel):
     message: str
     device_prompt: Optional[str] = None
     authenticated_credential: Optional[str] = None
+    authenticated_username: Optional[str] = None
     attempt_logs: Optional[List[str]] = None

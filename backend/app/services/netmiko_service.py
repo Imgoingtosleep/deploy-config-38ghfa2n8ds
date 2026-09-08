@@ -278,7 +278,12 @@ class NetmikoService:
         
         last_auth_error = None
         for idx, cred in enumerate(candidates, 1):
-            cred_label = cred.get("name") or f"Priority {idx}"
+            u_name = cred.get("username") or ""
+            raw_label = cred.get("name") or f"Priority {idx}"
+            if u_name and f"(User: {u_name})" not in raw_label:
+                cred_label = f"{raw_label} (User: {u_name})"
+            else:
+                cred_label = raw_label
             
             attempt_device = device.copy()
             attempt_device.username = cred["username"]
@@ -335,15 +340,28 @@ class NetmikoService:
                     except Exception:
                         pass
                 err_lower = str(e).lower()
-                if "auth fail" in err_lower or "authentication to device failed" in err_lower or "permission denied" in err_lower:
+                is_auth_or_channel_issue = (
+                    "auth fail" in err_lower
+                    or "authentication to device failed" in err_lower
+                    or "permission denied" in err_lower
+                    or "unable to open channel" in err_lower
+                    or "channel" in err_lower
+                    or "administratively prohibited" in err_lower
+                )
+                if is_auth_or_channel_issue:
                     last_auth_error = e
-                    attempt_logs.append(f"Priority {idx} [{cred_label}]: Auth Failed ({str(e)})")
+                    attempt_logs.append(f"Priority {idx} [{cred_label}]: Auth/Channel Failed ({str(e)})")
                     if idx < len(candidates):
                         continue
+                    else:
+                        summary = " -> ".join(attempt_logs)
+                        raise NetmikoAuthenticationException(
+                            f"Authentication or channel allocation failed across all {len(candidates)} credential sets on {target_name}. [{summary}]"
+                        )
                 raise e
 
     @classmethod
-    def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str, Optional[str], List[str]]:
+    def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str, Optional[str], List[str], Optional[str]]:
         """Test SSH or Serial connectivity with priority-based credential fallback"""
         detected_info = ""
         was_auto = (device.device_type or "").lower() in ["autodetect", "auto", ""]
@@ -354,20 +372,21 @@ class NetmikoService:
         try:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, attempt_logs):
                 prompt = net_connect.find_prompt()
-                prio_note = f" (via {winning_cred})" if winning_cred and len(attempt_logs) > 1 else ""
+                winning_user = device.username or None
+                prio_note = f" (via {winning_cred})" if winning_cred else ""
                 msg = f"Successfully connected to device on {target_name}{detected_info}{prio_note}"
-                return True, msg, prompt, winning_cred, attempt_logs
+                return True, msg, prompt, winning_cred, attempt_logs, winning_user
         except NetmikoAuthenticationException as e:
-            return False, f"Authentication failed: {str(e)}", "", None, [str(e)]
+            return False, f"Authentication failed: {str(e)}", "", None, [str(e)], None
         except NetmikoTimeoutException as e:
             err_str = str(e)
             if "terminal width 511" in err_str.lower():
-                return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", "", None, [err_str]
-            return False, f"Connection timed out on {target_name}: {err_str}", "", None, [err_str]
+                return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", "", None, [err_str], None
+            return False, f"Connection timed out on {target_name}: {err_str}", "", None, [err_str], None
         except SSHException as e:
-            return False, f"SSH error: {str(e)}", "", None, [str(e)]
+            return False, f"SSH error: {str(e)}", "", None, [str(e)], None
         except Exception as e:
-            return False, f"Connection error: {str(e)}", "", None, [str(e)]
+            return False, f"Connection error: {str(e)}", "", None, [str(e)], None
 
     @classmethod
     def send_command(cls, device: DeviceCredentials, command: str) -> Dict[str, Any]:
@@ -387,6 +406,7 @@ class NetmikoService:
                     "error": None,
                     "execution_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,
+                    "authenticated_username": device.username,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -398,6 +418,7 @@ class NetmikoService:
                 "error": str(e),
                 "execution_time_seconds": elapsed,
                 "authenticated_credential": None,
+                "authenticated_username": None,
             }
 
     @classmethod
@@ -474,6 +495,7 @@ class NetmikoService:
                     "success": all(r["success"] for r in results),
                     "overall_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,
+                    "authenticated_username": device.username,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -484,6 +506,7 @@ class NetmikoService:
                 "error": str(e),
                 "overall_time_seconds": elapsed,
                 "authenticated_credential": None,
+                "authenticated_username": None,
             }
 
     @staticmethod
@@ -691,6 +714,7 @@ class NetmikoService:
                     "error": None,
                     "execution_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,
+                    "authenticated_username": device.username,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -702,6 +726,7 @@ class NetmikoService:
                 "error": str(e),
                 "execution_time_seconds": elapsed,
                 "authenticated_credential": None,
+                "authenticated_username": None,
             }
 
     @classmethod
@@ -830,6 +855,7 @@ class NetmikoService:
                     "rollback_commands": rollback_cmds,
                     "step_logs": step_logs,
                     "authenticated_credential": winning_cred,
+                    "authenticated_username": device.username,
                 }
         except Exception as e:
             elapsed = round(time.time() - start_time, 2)
@@ -849,4 +875,5 @@ class NetmikoService:
                 "rollback_commands": rollback_cmds,
                 "step_logs": step_logs,
                 "authenticated_credential": None,
+                "authenticated_username": None,
             }

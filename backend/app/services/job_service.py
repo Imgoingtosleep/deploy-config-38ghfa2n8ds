@@ -254,6 +254,8 @@ class JobService:
                                 success=res.get("success", False),
                                 error=res.get("error"),
                                 execution_time_seconds=res.get("overall_time_seconds") or 0.0,
+                                authenticated_username=res.get("authenticated_username") or getattr(dev, "username", None),
+                                authenticated_credential=res.get("authenticated_credential"),
                             )
                         except Exception as dev_err:
                             chunk_results[idx] = CommandResponse(
@@ -500,6 +502,8 @@ class JobService:
                             success=res.success,
                             error=res.error,
                             execution_time_seconds=res.overall_time_seconds or 0.0,
+                            authenticated_username=getattr(res, "authenticated_username", None) or getattr(dev, "username", None),
+                            authenticated_credential=getattr(res, "authenticated_credential", None),
                         )
                     except Exception as e:
                         chunk_results[idx] = CommandResponse(
