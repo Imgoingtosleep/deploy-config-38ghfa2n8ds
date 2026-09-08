@@ -17,12 +17,18 @@ import {
   HardDrive,
   Send,
   Square,
+  FileText,
+  Filter,
+  Layers,
+  ChevronDown,
 } from 'lucide-react';
 import {
   getJobStatus,
   getJobResults,
+  getAllJobResults,
   cancelJob,
   createJobEventSource,
+  getTemplates,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from './TerminalOutput';
 import './AsyncJobModal.css';
@@ -47,6 +53,39 @@ export default function AsyncJobModal({
 
   // Inspected Single Device Result
   const [inspectedDevice, setInspectedDevice] = useState(null);
+
+  // Templates for Regex Export
+  const [templateList, setTemplateList] = useState([]);
+
+  // Fleet Export State
+  const [showExportDropdown, setShowExportDropdown] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [showFleetRegexModal, setShowFleetRegexModal] = useState(false);
+  const [fleetExportFeedback, setFleetExportFeedback] = useState('');
+  const exportDropdownRef = useRef(null);
+
+  // Load templates
+  useEffect(() => {
+    getTemplates()
+      .then((data) => {
+        if (Array.isArray(data)) setTemplateList(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target)) {
+        setShowExportDropdown(false);
+      }
+    };
+    if (showExportDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showExportDropdown]);
 
   const eventSourceRef = useRef(null);
 
@@ -142,6 +181,146 @@ export default function AsyncJobModal({
     } finally {
       setCancelling(false);
     }
+  };
+
+  // Export all fleet logs (Raw File)
+  const exportAllRaw = async () => {
+    if (!jobId) return;
+    setExporting(true);
+    try {
+      const allResults = await getAllJobResults(jobId);
+      if (!allResults || allResults.length === 0) {
+        alert('No job records available to export.');
+        return;
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const header = [
+        '# ==============================================================================',
+        '# FLEET AUTOMATION RAW BATCH LOG',
+        `# Job ID   : ${jobId}`,
+        `# Title    : ${title}`,
+        `# Devices  : ${allResults.length} total (${jobStatus?.success_count || 0} success, ${jobStatus?.failed_count || 0} failed)`,
+        `# Generated: ${new Date().toLocaleString()}`,
+        '# ==============================================================================',
+        '',
+      ].join('\n');
+
+      const body = allResults.map((r, i) => {
+        const statusText = r.success ? 'SUCCESS' : 'FAILED';
+        const errorText = r.error ? `\n[ERROR]: ${r.error}` : '';
+        const outputText = maskSensitiveCli(r.output || '');
+        return [
+          `# ------------------------------------------------------------------------------`,
+          `# [Device ${i + 1}/${allResults.length}] Host: ${r.host} | Status: ${statusText} | Time: ${r.execution_time_seconds || 0}s`,
+          `# Command: ${r.command || 'N/A'}`,
+          `# ------------------------------------------------------------------------------`,
+          outputText || (r.error ? `Error: ${r.error}` : 'No output'),
+          errorText,
+          '',
+        ].join('\n');
+      }).join('\n');
+
+      const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fleet_raw_logs_${jobId.slice(0, 8)}_${timestamp}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setFleetExportFeedback('Saved Fleet Raw Logs (.txt)');
+      setTimeout(() => setFleetExportFeedback(''), 3000);
+      setShowExportDropdown(false);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Export all fleet logs (Regex Filtered File from Template)
+  const exportAllRegex = async (tpl) => {
+    if (!jobId) return;
+    if (!tpl || !tpl.regex) {
+      setShowFleetRegexModal(true);
+      setShowExportDropdown(false);
+      return;
+    }
+
+    let regexObj;
+    try {
+      regexObj = new RegExp(tpl.regex, 'im');
+    } catch (err) {
+      alert(`Invalid Regex in Template '${tpl.name}': ${err.message}`);
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const allResults = await getAllJobResults(jobId);
+      if (!allResults || allResults.length === 0) {
+        alert('No job records available to export.');
+        return;
+      }
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const tplSlug = (tpl.name || 'template').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 30);
+      let totalMatchedLines = 0;
+
+      const body = allResults.map((r, i) => {
+        const text = maskSensitiveCli(r.output || r.error || '');
+        const lines = text.split('\n');
+        const matched = lines.filter((l) => regexObj.test(l));
+        totalMatchedLines += matched.length;
+
+        if (matched.length === 0) return null;
+
+        return [
+          `# ------------------------------------------------------------------------------`,
+          `# [Device ${i + 1}/${allResults.length}] Host: ${r.host} | Matched: ${matched.length} lines`,
+          `# Command: ${r.command || 'N/A'}`,
+          `# ------------------------------------------------------------------------------`,
+          matched.join('\n'),
+          '',
+        ].join('\n');
+      }).filter(Boolean).join('\n');
+
+      const header = [
+        '# ==============================================================================',
+        '# FLEET AUTOMATION REGEX FILTERED BATCH LOG (FROM TEMPLATE)',
+        `# Job ID        : ${jobId}`,
+        `# Title         : ${title}`,
+        `# Template Name : ${tpl.name}`,
+        `# Regex Pattern : /${tpl.regex}/`,
+        `# Total Matches : ${totalMatchedLines} lines across devices`,
+        `# Generated     : ${new Date().toLocaleString()}`,
+        '# ==============================================================================',
+        '',
+      ].join('\n');
+
+      const content = header + (body || `--- No devices matched regex /${tpl.regex}/ from template '${tpl.name}' ---\n`);
+
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fleet_regex_${tplSlug}_${jobId.slice(0, 8)}_${timestamp}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setFleetExportFeedback(`Saved Fleet Regex Logs (${tpl.name})`);
+      setTimeout(() => setFleetExportFeedback(''), 3000);
+      setShowExportDropdown(false);
+      setShowFleetRegexModal(false);
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportBothFleet = async () => {
+    await exportAllRaw();
+    setTimeout(() => {
+      exportAllRegex();
+    }, 400);
   };
 
   const progress = jobStatus?.progress_percent || 0;
@@ -286,6 +465,76 @@ export default function AsyncJobModal({
                   Failed ({jobStatus?.failed_count || 0})
                 </button>
               </div>
+
+              {/* Fleet Logs Save Dropdown */}
+              <div className="terminal-save-wrapper ml-auto" ref={exportDropdownRef} style={{ marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowExportDropdown(!showExportDropdown)}
+                  disabled={exporting || !jobStatus?.completed_devices}
+                  className="btn-terminal-save"
+                  title="Save all fleet logs as raw or regex filtered file"
+                >
+                  {exporting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5 text-indigo-400" />
+                  )}
+                  <span>Save Fleet Logs</span>
+                  <ChevronDown className="h-3 w-3 text-slate-400" />
+                </button>
+
+                {showExportDropdown && (
+                  <div className="terminal-save-menu">
+                    <div className="save-menu-header">Fleet Log Options</div>
+
+                    <button
+                      type="button"
+                      onClick={exportAllRaw}
+                      className="save-menu-item"
+                    >
+                      <FileText className="h-4 w-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                      <div className="save-menu-text">
+                        <span className="save-menu-title">Save All Raw Logs (.txt)</span>
+                        <span className="save-menu-desc">Export raw logs of all devices</span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => exportAllRegex()}
+                      className="save-menu-item"
+                    >
+                      <Filter className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="save-menu-text">
+                        <span className="save-menu-title">Save All Regex Logs (.txt)</span>
+                        <span className="save-menu-desc">Filter all device logs with regex</span>
+                      </div>
+                    </button>
+
+                    <div className="save-menu-divider" />
+
+                    <button
+                      type="button"
+                      onClick={exportBothFleet}
+                      className="save-menu-item"
+                    >
+                      <Layers className="h-4 w-4 text-indigo-400 flex-shrink-0 mt-0.5" />
+                      <div className="save-menu-text">
+                        <span className="save-menu-title">Save Both (Raw + Regex)</span>
+                        <span className="save-menu-desc">Download raw and regex logs</span>
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {fleetExportFeedback && (
+                <span className="save-feedback-badge">
+                  <Check className="h-3 w-3" />
+                  <span>{fleetExportFeedback}</span>
+                </span>
+              )}
             </div>
 
             {/* Results Table */}
@@ -411,6 +660,71 @@ export default function AsyncJobModal({
         </div>
       </div>
 
+      {/* Fleet Template Picker Modal for Regex Export */}
+      {showFleetRegexModal && (
+        <div className="template-modal-overlay" onClick={() => setShowFleetRegexModal(false)}>
+          <div className="template-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="template-modal-header">
+              <div className="template-modal-title">
+                <Filter className="modal-header-icon" />
+                <span>Select Template for Fleet Regex Export</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFleetRegexModal(false)}
+                className="template-modal-close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-4">
+              <p className="text-xs text-slate-300 mb-3">
+                การบันทึก Fleet Regex File ต้องเลือก Template ก่อน กรุณาเลือก Template ด้านล่างเพื่อใช้ Regex กรอง Log ของทุกอุปกรณ์:
+              </p>
+
+              {templateList.length === 0 ? (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  <p>ยังไม่มี Template ในระบบ</p>
+                </div>
+              ) : (
+                <div className="template-picker-list">
+                  {templateList.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => exportAllRegex(tpl)}
+                      className="template-picker-item"
+                    >
+                      <div className="template-picker-info">
+                        <span className="template-picker-name">{tpl.name}</span>
+                        <span className="template-picker-regex">/{tpl.regex}/</span>
+                        {tpl.description && (
+                          <span className="text-[11px] text-slate-400">{tpl.description}</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-indigo-400 font-semibold whitespace-nowrap">
+                        Select & Export
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="template-modal-actions mt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowFleetRegexModal(false)}
+                  className="btn-modal-cancel"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Nested Single Device Inspection Modal */}
       {inspectedDevice && (
         <div className="modal-backdrop z-60">
@@ -429,6 +743,7 @@ export default function AsyncJobModal({
             <div className="p-4" style={{ height: '480px' }}>
               <TerminalOutput
                 title={`CLI Output - ${inspectedDevice.host}`}
+                deviceHost={inspectedDevice.host}
                 command={inspectedDevice.command || 'Task Output'}
                 output={maskSensitiveCli(inspectedDevice.output || inspectedDevice.error || 'No content')}
                 executionTime={inspectedDevice.execution_time_seconds}

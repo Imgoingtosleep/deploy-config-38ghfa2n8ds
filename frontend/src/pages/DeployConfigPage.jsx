@@ -1814,6 +1814,7 @@ export default function DeployConfigPage({
                     <div style={{ height: '520px' }}>
                       <TerminalOutput
                         title={`Deployment Console Output - ${activeResult.host}`}
+                        deviceHost={activeResult.host}
                         command={maskSensitiveCli(activeResult.command || 'send_config_set')}
                         output={maskSensitiveCli(activeResult.output || activeResult.error)}
                         executionTime={activeResult.execution_time_seconds}

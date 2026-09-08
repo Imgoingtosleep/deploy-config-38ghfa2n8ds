@@ -903,7 +903,8 @@ export default function TroubleshootPage({
         <div className="troubleshoot-right">
           <div style={{ minHeight: '550px' }}>
             <TerminalOutput
-              title="CLI Output"
+              title={`CLI Output - ${device?.host || ''}`}
+              deviceHost={device?.host}
               command={currentResult?.command || customCommand}
               output={currentResult?.output || currentResult?.error}
               executionTime={currentResult?.execution_time_seconds}

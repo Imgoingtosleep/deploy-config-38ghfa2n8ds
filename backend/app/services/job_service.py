@@ -501,6 +501,17 @@ class JobService:
         )
 
     @classmethod
+    def get_all_results(cls, job_id: str) -> Optional[List[Dict[str, Any]]]:
+        job = cls._jobs.get(job_id)
+        if not job:
+            return None
+        with cls._lock:
+            return [
+                r.dict() if hasattr(r, "dict") else dict(r)
+                for r in job.results
+            ]
+
+    @classmethod
     def cancel_job(cls, job_id: str) -> bool:
         job = cls._jobs.get(job_id)
         if not job:

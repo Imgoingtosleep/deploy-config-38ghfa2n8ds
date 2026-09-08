@@ -285,6 +285,11 @@ export const getJobResults = async (jobId, page = 1, pageSize = 50, search = '',
   return response.data;
 };
 
+export const getAllJobResults = async (jobId) => {
+  const response = await apiClient.get(`/jobs/${jobId}/results/all`);
+  return response.data;
+};
+
 export const cancelJob = async (jobId) => {
   const response = await apiClient.post(`/jobs/${jobId}/cancel`);
   return response.data;

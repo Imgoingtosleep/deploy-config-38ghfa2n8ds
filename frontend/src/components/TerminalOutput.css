@@ -488,3 +488,206 @@
   font-weight: 600;
   color: #818cf8;
 }
+
+/* ========================================================================= */
+/* SAVE OUTPUT DROPDOWN & REGEX FILTER BAR                                   */
+/* ========================================================================= */
+
+.terminal-save-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-terminal-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  background-color: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.25rem 0.625rem;
+  height: 28px;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-terminal-save:hover:not(:disabled) {
+  background-color: rgba(49, 46, 129, 0.6);
+  border-color: #6366f1;
+  color: #ffffff;
+}
+
+.btn-terminal-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.terminal-save-menu {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  right: 0;
+  width: 250px;
+  background-color: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  padding: 0.375rem;
+  z-index: 100;
+  animation: saveMenuFade 0.12s ease-out;
+}
+
+@keyframes saveMenuFade {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.save-menu-header {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 0.25rem;
+}
+
+.save-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 0.45rem 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.12s ease;
+}
+
+.save-menu-item:hover {
+  background-color: #1e293b;
+}
+
+.save-menu-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.save-menu-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.save-menu-desc {
+  font-size: 0.6875rem;
+  color: #94a3b8;
+  line-height: 1.25;
+  margin-top: 0.125rem;
+}
+
+.save-menu-divider {
+  height: 1px;
+  background-color: #1e293b;
+  margin: 0.25rem 0;
+}
+
+/* --- Template Picker Modal for Regex Save --- */
+.template-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0.75rem 0;
+}
+
+.template-picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 0.75rem;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.template-picker-item:hover {
+  background-color: #273549;
+  border-color: #6366f1;
+}
+
+.template-picker-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  overflow: hidden;
+}
+
+.template-picker-name {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.template-picker-regex {
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #fbbf24;
+}
+
+.template-picker-match {
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #34d399;
+  background-color: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+}
+
+.terminal-match-badge {
+  font-size: 0.6875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  color: #fbbf24;
+  background-color: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+}
+
+.save-feedback-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #34d399;
+  background-color: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  animation: fadeIn 0.15s ease-out;
+  white-space: nowrap;
+}
+
+

@@ -95,6 +95,14 @@ def get_job_results(
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return results
 
+@router.get("/{job_id}/results/all")
+def get_all_job_results(job_id: str):
+    """Fetch all results for a job for export purposes"""
+    results = JobService.get_all_results(job_id)
+    if results is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return results
+
 @router.get("/{job_id}/stream")
 async def stream_job_progress(job_id: str):
     """Server-Sent Events (SSE) stream for live real-time progress bar"""

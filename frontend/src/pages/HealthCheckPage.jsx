@@ -1346,7 +1346,8 @@ export default function HealthCheckPage({
           {/* Right Column: Terminal Display */}
           <div className="col-span-8" style={{ height: '500px' }}>
             <TerminalOutput
-              title="Health Check Output"
+              title={`Health Check Output - ${device?.host || ''}`}
+              deviceHost={device?.host}
               command={activeResult?.command}
               output={activeResult?.output || activeResult?.error}
               executionTime={activeResult?.execution_time_seconds}

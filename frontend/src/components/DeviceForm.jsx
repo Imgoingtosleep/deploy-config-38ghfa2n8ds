@@ -29,6 +29,7 @@ import {
   ListOrdered,
   ShieldAlert,
   ShieldCheck,
+  Search,
 } from 'lucide-react';
 import {
   testDeviceConnection,
@@ -63,6 +64,37 @@ export default function DeviceForm({
   const [commonUser, setCommonUser] = useState('');
   const [commonPass, setCommonPass] = useState('');
   const [detectingFleet, setDetectingFleet] = useState(false);
+
+  // Host IP Search & Edit State
+  const [hostSearchQuery, setHostSearchQuery] = useState('');
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [editingDevice, setEditingDevice] = useState(null);
+  const [editForm, setEditForm] = useState({
+    host: '',
+    port: 22,
+    device_type: 'autodetect',
+    username: '',
+    password: '',
+    secret: '',
+    profile_id: '',
+  });
+  const [editSuccessToast, setEditSuccessToast] = useState('');
+  const searchContainerRef = useRef(null);
+
+  // Close search dropdown when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target)) {
+        setShowSearchDropdown(false);
+      }
+    };
+    if (showSearchDropdown) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [showSearchDropdown]);
 
   // Profiles State
   const [profiles, setProfiles] = useState([]);
@@ -546,6 +578,105 @@ export default function DeviceForm({
     setFleet((prev) => prev.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
   };
 
+  // Matching devices for search dropdown (across single device and fleet)
+  const matchingDevices = (() => {
+    const q = (hostSearchQuery || '').trim().toLowerCase();
+    if (!q) return [];
+    const results = [];
+
+    // 1. Check Single Device
+    if (device && device.host && device.host.toLowerCase().includes(q)) {
+      results.push({
+        ...device,
+        isSingle: true,
+        originalHost: device.host,
+        uniqueKey: 'single-dev',
+      });
+    }
+
+    // 2. Check Fleet Devices
+    fleet.forEach((dev, idx) => {
+      if (dev && dev.host && dev.host.toLowerCase().includes(q)) {
+        results.push({
+          ...dev,
+          isSingle: false,
+          originalHost: dev.host,
+          fleetIndex: idx,
+          uniqueKey: `fleet-${dev.id || idx}`,
+        });
+      }
+    });
+
+    return results;
+  })();
+
+  // Filtered fleet for table display
+  const filteredFleet = hostSearchQuery.trim()
+    ? fleet.filter((dev) => dev.host && dev.host.toLowerCase().includes(hostSearchQuery.trim().toLowerCase()))
+    : fleet;
+
+  const handleOpenEditDevice = (dev) => {
+    setEditingDevice(dev);
+    setEditForm({
+      host: dev.host || '',
+      port: dev.port || 22,
+      device_type: dev.device_type || 'autodetect',
+      username: dev.username || '',
+      password: dev.password || '',
+      secret: dev.secret || '',
+      profile_id: dev.profile_id || '',
+    });
+    setShowSearchDropdown(false);
+  };
+
+  const handleSaveEditedDevice = (e) => {
+    e.preventDefault();
+    if (!editingDevice) return;
+    const newHost = (editForm.host || '').trim();
+    if (!newHost) {
+      alert('Host / IP Address cannot be empty');
+      return;
+    }
+
+    const oldHost = editingDevice.originalHost || editingDevice.host;
+
+    if (editingDevice.isSingle) {
+      setDevice((prev) => ({
+        ...prev,
+        ...editForm,
+        host: newHost,
+      }));
+      setEditSuccessToast(`Updated Single Target IP: ${oldHost} -> ${newHost}`);
+    } else {
+      setFleet((prev) =>
+        prev.map((d) => (d.id === editingDevice.id ? { ...d, ...editForm, host: newHost } : d))
+      );
+      setEditSuccessToast(`Updated Fleet Host IP: ${oldHost} -> ${newHost}`);
+    }
+
+    setEditingDevice(null);
+    setTimeout(() => setEditSuccessToast(''), 3500);
+  };
+
+  const handleQuickAddSearchedHost = (ipToAdd) => {
+    const newId = `dev-${Date.now()}`;
+    const newDev = {
+      id: newId,
+      host: ipToAdd,
+      port: fallbackPort || 22,
+      device_type: commonType || 'autodetect',
+      username: commonUser || '',
+      password: commonPass || '',
+      secret: fallbackSecret || '',
+    };
+    setFleet((prev) => [newDev, ...prev]);
+    if (setDeviceMode) setDeviceMode('multi');
+    setHostSearchQuery(ipToAdd);
+    setShowSearchDropdown(false);
+    setEditSuccessToast(`Added ${ipToAdd} to fleet device list`);
+    setTimeout(() => setEditSuccessToast(''), 3000);
+  };
+
   const addFleetDevice = () => {
     const newId = `dev-${Date.now()}`;
     const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
@@ -692,11 +823,133 @@ export default function DeviceForm({
 
   return (
     <div className="device-card">
-      {/* Header with Mode Switcher */}
+      {/* Header with Title, Host IP Search Bar, and Mode Switcher */}
       <div className="device-card-header">
         <div className="device-header-title">
           <Network className="device-header-icon" />
           <h2 className="device-header-text">Target Device (Switch / Router)</h2>
+        </div>
+
+        {/* Global Host IP Search Bar */}
+        <div className="device-search-wrapper" ref={searchContainerRef}>
+          <div className="device-search-box">
+            <Search className="search-icon h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              value={hostSearchQuery}
+              onChange={(e) => {
+                setHostSearchQuery(e.target.value);
+                setShowSearchDropdown(true);
+              }}
+              onFocus={() => {
+                if (hostSearchQuery.trim()) setShowSearchDropdown(true);
+              }}
+              placeholder="Search Host IP (e.g. 192.168.1.1)..."
+              className="device-search-input font-mono"
+            />
+            {hostSearchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHostSearchQuery('');
+                  setShowSearchDropdown(false);
+                }}
+                className="btn-search-clear"
+                title="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Autocomplete / Search Results Dropdown */}
+          {showSearchDropdown && hostSearchQuery.trim() && (
+            <div className="device-search-dropdown">
+              <div className="search-dropdown-header">
+                <span className="font-semibold text-slate-300">
+                  Matching Devices ({matchingDevices.length})
+                </span>
+                <span className="text-[11px] text-slate-400">Select an action to edit</span>
+              </div>
+
+              {matchingDevices.length === 0 ? (
+                <div className="search-no-results">
+                  <p className="text-xs text-slate-400 mb-2">
+                    No devices found with Host IP matching "{hostSearchQuery}"
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickAddSearchedHost(hostSearchQuery.trim())}
+                    className="btn-quick-add-searched"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>Add "{hostSearchQuery.trim()}" to Fleet</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="search-dropdown-list">
+                  {matchingDevices.map((dev) => (
+                    <div key={dev.uniqueKey} className="search-result-item">
+                      <div className="search-result-info">
+                        <div className="flex items-center gap-2">
+                          <span className="search-result-ip font-mono">{dev.host}</span>
+                          <span className={`search-badge ${dev.isSingle ? 'badge-single' : 'badge-fleet'}`}>
+                            {dev.isSingle ? 'Single Target' : `Fleet #${dev.fleetIndex + 1}`}
+                          </span>
+                        </div>
+                        <div className="search-result-meta">
+                          <span>Type: {dev.device_type}</span>
+                          <span>Port: {dev.port || 22}</span>
+                          {dev.username && <span>User: {dev.username}</span>}
+                        </div>
+                      </div>
+
+                      <div className="search-result-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditDevice(dev)}
+                          className="btn-search-action-edit"
+                          title="Edit this Host IP"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          <span>Edit IP</span>
+                        </button>
+                        {dev.isSingle ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (setDeviceMode) setDeviceMode('single');
+                              setShowSearchDropdown(false);
+                            }}
+                            className="btn-search-action-jump"
+                          >
+                            <span>View</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (setDeviceMode) setDeviceMode('multi');
+                              setShowSearchDropdown(false);
+                              const rowEl = document.getElementById(`fleet-row-${dev.id}`);
+                              if (rowEl) {
+                                rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                rowEl.classList.add('highlight-pulse');
+                                setTimeout(() => rowEl.classList.remove('highlight-pulse'), 2000);
+                              }
+                            }}
+                            className="btn-search-action-jump"
+                          >
+                            <span>View Row</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Mode Selector Toggle */}
@@ -719,6 +972,14 @@ export default function DeviceForm({
           </button>
         </div>
       </div>
+
+      {/* Edit Feedback Toast Banner */}
+      {editSuccessToast && (
+        <div className="edit-toast-banner">
+          <CheckCircle2 className="h-4 w-4 text-emerald-400 flex-shrink-0" />
+          <span>{editSuccessToast}</span>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* SINGLE DEVICE FORM                                                        */}
@@ -1025,7 +1286,7 @@ export default function DeviceForm({
                         key={lIdx}
                         className={`attempt-log-row ${log.includes('Successful') || log.includes('Success') ? 'success' : 'failed'}`}
                       >
-                        <span>{log.includes('Successful') || log.includes('Success') ? '✓' : '✗'}</span>
+                        <span className="font-mono text-[10px]">{log.includes('Successful') || log.includes('Success') ? '[PASS]' : '[FAIL]'}</span>
                         <span>{log}</span>
                       </div>
                     ))}
@@ -1190,6 +1451,27 @@ export default function DeviceForm({
             </div>
           </div>
 
+          {hostSearchQuery.trim() && (
+            <div className="fleet-filter-indicator">
+              <div className="flex items-center gap-2">
+                <Search className="h-3.5 w-3.5 text-indigo-400" />
+                <span className="text-xs text-slate-300">
+                  Filtered by Host IP: <strong className="font-mono text-indigo-300">"{hostSearchQuery}"</strong>
+                  {' '}(Showing {filteredFleet.length} of {fleet.length} devices)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHostSearchQuery('')}
+                className="btn-clear-filter"
+                title="Clear filter and show all devices"
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>Clear Filter</span>
+              </button>
+            </div>
+          )}
+
           <div className="fleet-table-container">
             <table className="fleet-table">
               <thead>
@@ -1199,93 +1481,121 @@ export default function DeviceForm({
                   <th>Type</th>
                   <th>Username</th>
                   <th>Password</th>
-                  <th style={{ width: '50px' }}>Action</th>
+                  <th style={{ width: '85px', textAlign: 'center' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {fleet.map((dev) => {
-                  const assignedProf = profiles.find((p) => p.id === dev.profile_id);
-                  const credCount = assignedProf?.credentials?.length || (dev.fallback_profile_ids?.length) || (dev.credential_pool?.length) || 1;
-                  const hasPool = credCount > 1;
-                  return (
-                    <tr key={dev.id}>
-                      <td>
-                        <input
-                          type="text"
-                          value={dev.host}
-                          onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
-                          placeholder="e.g. 192.168.1.1"
-                          className="fleet-input font-mono"
-                        />
-                      </td>
-                      <td style={{ width: '155px' }}>
-                        <div className="flex items-center gap-1">
-                          <select
-                            value={dev.profile_id || ''}
-                            onChange={(e) => updateFleetDeviceProfile(dev.id, e.target.value)}
-                            className="fleet-profile-select"
-                            title="Select profile for this device (includes all prioritized credentials)"
-                          >
-                            <option value="">Custom</option>
-                            {profiles.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name} {p.credentials?.length > 1 ? `(P:${p.credentials.length})` : ''}
-                              </option>
-                            ))}
-                          </select>
-                          {hasPool && (
-                            <span className="text-[10px] px-1 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700 font-mono flex-shrink-0" title={`Multi-Priority Credentials active: ${credCount} priorities in profile`}>
-                              P:{credCount}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <select
-                          value={dev.device_type}
-                          onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
-                          className="fleet-select"
-                        >
-                          <option value="autodetect">Auto Detect</option>
-                          <option value="huawei">Huawei (VRP)</option>
-                          <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                          <option value="hp_comware">HP / H3C Comware</option>
-                          <option value="aruba_os">Aruba OS</option>
-                          <option value="juniper_junos">Juniper JunOS</option>
-                        </select>
-                      </td>
-
-                      <td>
-                        <input
-                          type="text"
-                          value={dev.username}
-                          onChange={(e) => updateFleetDevice(dev.id, 'username', e.target.value)}
-                          placeholder="Username"
-                          className="fleet-input"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="password"
-                          value={dev.password}
-                          onChange={(e) => updateFleetDevice(dev.id, 'password', e.target.value)}
-                          placeholder="Password"
-                          className="fleet-input"
-                        />
-                      </td>
-                      <td style={{ textAlign: 'center' }}>
+                {filteredFleet.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="text-center py-8 text-slate-400 text-xs">
+                      <div className="flex flex-col items-center gap-2">
+                        <Search className="h-6 w-6 text-slate-600" />
+                        <p>No devices found matching Host IP "{hostSearchQuery}"</p>
                         <button
                           type="button"
-                          onClick={() => removeFleetDevice(dev.id)}
-                          className="btn-remove-row"
-                          title="Remove device from fleet"
+                          onClick={() => setHostSearchQuery('')}
+                          className="text-indigo-400 hover:underline cursor-pointer text-xs"
                         >
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                          Clear search filter
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filteredFleet.map((dev) => {
+                    const assignedProf = profiles.find((p) => p.id === dev.profile_id);
+                    const credCount = assignedProf?.credentials?.length || (dev.fallback_profile_ids?.length) || (dev.credential_pool?.length) || 1;
+                    const hasPool = credCount > 1;
+                    return (
+                      <tr key={dev.id} id={`fleet-row-${dev.id}`}>
+                        <td>
+                          <input
+                            type="text"
+                            value={dev.host}
+                            onChange={(e) => updateFleetDevice(dev.id, 'host', e.target.value)}
+                            placeholder="e.g. 192.168.1.1"
+                            className="fleet-input font-mono"
+                          />
+                        </td>
+                        <td style={{ width: '155px' }}>
+                          <div className="flex items-center gap-1">
+                            <select
+                              value={dev.profile_id || ''}
+                              onChange={(e) => updateFleetDeviceProfile(dev.id, e.target.value)}
+                              className="fleet-profile-select"
+                              title="Select profile for this device (includes all prioritized credentials)"
+                            >
+                              <option value="">Custom</option>
+                              {profiles.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} {p.credentials?.length > 1 ? `(P:${p.credentials.length})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {hasPool && (
+                              <span className="text-[10px] px-1 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700 font-mono flex-shrink-0" title={`Multi-Priority Credentials active: ${credCount} priorities in profile`}>
+                                P:{credCount}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <select
+                            value={dev.device_type}
+                            onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
+                            className="fleet-select"
+                          >
+                            <option value="autodetect">Auto Detect</option>
+                            <option value="huawei">Huawei (VRP)</option>
+                            <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
+                            <option value="hp_comware">HP / H3C Comware</option>
+                            <option value="aruba_os">Aruba OS</option>
+                            <option value="juniper_junos">Juniper JunOS</option>
+                          </select>
+                        </td>
+
+                        <td>
+                          <input
+                            type="text"
+                            value={dev.username}
+                            onChange={(e) => updateFleetDevice(dev.id, 'username', e.target.value)}
+                            placeholder="Username"
+                            className="fleet-input"
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="password"
+                            value={dev.password}
+                            onChange={(e) => updateFleetDevice(dev.id, 'password', e.target.value)}
+                            placeholder="Password"
+                            className="fleet-input"
+                          />
+                        </td>
+                        <td style={{ textAlign: 'center' }}>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditDevice({ ...dev, isSingle: false })}
+                              className="btn-edit-row"
+                              title="Edit this Host IP and settings"
+                            >
+                              <Edit2 className="h-3.5 w-3.5 text-indigo-400" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeFleetDevice(dev.id)}
+                              className="btn-remove-row"
+                              title="Remove device from fleet"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -2025,6 +2335,121 @@ export default function DeviceForm({
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* EDIT HOST IP MODAL                                                        */}
+      {/* ========================================================================= */}
+      {editingDevice && (
+        <div className="modal-backdrop" onClick={() => setEditingDevice(null)}>
+          <div className="edit-ip-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="edit-ip-modal-header">
+              <div className="flex items-center gap-2">
+                <Edit2 className="h-4 w-4 text-indigo-400" />
+                <h3 className="font-semibold text-white text-sm">Edit Host IP Address</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingDevice(null)}
+                className="modal-close-btn"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedDevice} className="edit-ip-modal-body">
+              <div className="edit-ip-target-pill">
+                <span className="text-slate-400 text-xs">Target Device:</span>
+                <span className="font-mono text-xs font-bold text-white">
+                  {editingDevice.originalHost || editingDevice.host}
+                </span>
+                <span className="text-[11px] text-indigo-400">
+                  ({editingDevice.isSingle ? 'Single Target' : 'Fleet Device'})
+                </span>
+              </div>
+
+              <div className="form-group mb-3">
+                <label className="form-label font-semibold text-slate-300">
+                  Host / IP Address *
+                </label>
+                <input
+                  type="text"
+                  value={editForm.host}
+                  onChange={(e) => setEditForm({ ...editForm, host: e.target.value })}
+                  placeholder="e.g. 192.168.1.50"
+                  className="form-input font-mono"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div className="form-group">
+                  <label className="form-label">Port</label>
+                  <input
+                    type="number"
+                    value={editForm.port || 22}
+                    onChange={(e) => setEditForm({ ...editForm, port: parseInt(e.target.value, 10) || 22 })}
+                    className="form-input font-mono"
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Device Type / Driver</label>
+                  <select
+                    value={editForm.device_type}
+                    onChange={(e) => setEditForm({ ...editForm, device_type: e.target.value })}
+                    className="form-select"
+                  >
+                    {deviceTypes.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="form-group">
+                  <label className="form-label">Username</label>
+                  <input
+                    type="text"
+                    value={editForm.username}
+                    onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                    placeholder="Username"
+                    className="form-input"
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Password</label>
+                  <input
+                    type="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                    placeholder="Password"
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              <div className="edit-ip-modal-actions">
+                <button
+                  type="button"
+                  onClick={() => setEditingDevice(null)}
+                  className="btn-modal-cancel"
+                >
+                  <X className="h-4 w-4" />
+                  <span>Cancel</span>
+                </button>
+                <button
+                  type="submit"
+                  className="btn-modal-save"
+                >
+                  <Check className="h-4 w-4" />
+                  <span>Save Changes</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

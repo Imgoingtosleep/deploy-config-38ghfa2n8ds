@@ -283,7 +283,8 @@ export default function TemplateStudioPage({ device, userRole }) {
               {/* Single Test Result Preview */}
               <div style={{ height: '220px' }}>
                 <TerminalOutput
-                  title="Live Switch Test Output"
+                  title={`Live Switch Test Output - ${device?.host || ''}`}
+                  deviceHost={device?.host}
                   command={singleTestResult?.command}
                   output={singleTestResult?.output || singleTestResult?.error}
                   executionTime={singleTestResult?.execution_time_seconds}
@@ -562,7 +563,8 @@ export default function TemplateStudioPage({ device, userRole }) {
           {/* Right Column: Terminal Display */}
           <div className="col-span-8" style={{ height: '480px' }}>
             <TerminalOutput
-              title="Template Execution Output"
+              title={`Template Execution Output - ${device?.host || ''}`}
+              deviceHost={device?.host}
               command={activeResult?.command}
               output={activeResult?.output || activeResult?.error}
               executionTime={activeResult?.execution_time_seconds}
