@@ -188,15 +188,19 @@ export const executeTemplate = async (device, templateId, commands = null) => {
 // Async Fleet Job APIs (10,000+ Devices Scale)
 export const submitTroubleshootJob = async (
   devices,
-  command,
+  command = '',
   vendorCommands = null,
   huaweiCommand = null,
   ciscoCommand = null,
-  numWorkers = null
+  numWorkers = null,
+  commands = [],
+  commandRegexes = {}
 ) => {
   const payload = {
     devices,
     command,
+    commands: commands || [],
+    command_regexes: commandRegexes || {},
     vendor_commands: vendorCommands,
     huawei_command: huaweiCommand,
     cisco_command: ciscoCommand,
@@ -241,12 +245,14 @@ export const submitHealthCheckJob = async (
   commands = [],
   vendorCommands = {},
   suiteName = null,
-  numWorkers = null
+  numWorkers = null,
+  commandRegexes = {}
 ) => {
   const payload = {
     devices,
     check_type: checkType,
     commands,
+    command_regexes: commandRegexes || {},
     vendor_commands: vendorCommands,
     suite_name: suiteName,
   };

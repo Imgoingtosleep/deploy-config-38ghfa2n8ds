@@ -106,8 +106,107 @@
   gap: 0.75rem;
 }
 
-.input-with-button {
-  position: relative;
+/* Multi CLI Command & Per-Command Regex */
+.cli-commands-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cli-command-card {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.cli-command-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cli-cmd-number {
+  font-family: monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #818cf8;
+  background: rgba(99, 102, 241, 0.15);
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+}
+
+.cli-regex-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.cli-regex-input {
+  flex: 1;
+  background-color: #020617;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 0.375rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  color: #a5b4fc;
+  font-family: ui-monospace, monospace;
+  outline: none;
+}
+
+.cli-regex-input:focus {
+  border-color: #6366f1;
+}
+
+.cli-regex-input::placeholder {
+  color: #64748b;
+  font-family: system-ui, sans-serif;
+  font-size: 0.72rem;
+}
+
+.btn-remove-cli-row {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.35rem;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.btn-remove-cli-row:hover {
+  color: #f87171;
+}
+
+.cli-form-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.btn-add-cli-row {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.45rem 0.75rem;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px dashed rgba(99, 102, 241, 0.4);
+  border-radius: 0.375rem;
+  color: #c7d2fe;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-add-cli-row:hover {
+  background: rgba(99, 102, 241, 0.25);
+  color: #ffffff;
+  border-color: #6366f1;
 }
 
 .cli-input {
@@ -115,8 +214,8 @@
   background-color: #020617;
   border: 1px solid #334155;
   border-radius: 0.5rem;
-  padding: 0.625rem 2.5rem 0.625rem 0.75rem;
-  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
   color: #f1f5f9;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   outline: none;
@@ -128,18 +227,17 @@
 }
 
 .btn-send-cli {
-  position: absolute;
-  right: 0.5rem;
-  top: 0.5rem;
-  padding: 0.375rem;
+  padding: 0.5rem 1rem;
   background-color: #4f46e5;
   color: #ffffff;
   border: none;
   border-radius: 0.375rem;
+  font-size: 0.8rem;
+  font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 0.4rem;
   transition: background-color 0.2s ease;
 }
 

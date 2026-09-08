@@ -58,6 +58,9 @@ class CommandResponse(BaseModel):
     host: str
     command: str
     output: str
+    regex: Optional[str] = None
+    regex_output: Optional[str] = None
+    matched_lines: Optional[int] = None
     success: bool
     error: Optional[str] = None
     execution_time_seconds: Optional[float] = None
@@ -75,10 +78,10 @@ class BatchHealthCheckRequest(BaseModel):
     devices: List[DeviceCredentials]
     check_type: Optional[str] = Field("standard", description="standard, interfaces, transceiver, environment, routing, logs, custom")
     commands: Optional[List[str]] = Field(default_factory=list, description="Optional custom list of CLI commands to execute across fleet")
+    command_regexes: Optional[Dict[str, str]] = Field(default_factory=dict, description="Optional regex pattern per command")
     vendor_commands: Optional[Dict[str, List[str]]] = Field(default_factory=dict, description="Optional vendor-specific command lists")
     suite_name: Optional[str] = Field(None, description="Optional custom test suite/playbook name")
     num_workers: Optional[int] = Field(None, ge=10, le=100, description="Nornir concurrent workers count (min 10, max 100)")
-
 
 class BatchHealthCheckResponse(BaseModel):
     devices_count: int
@@ -90,6 +93,8 @@ class BatchHealthCheckResponse(BaseModel):
 class BatchCommandRequest(BaseModel):
     devices: List[DeviceCredentials]
     command: Optional[str] = Field(None, description="Default command to execute across devices")
+    commands: Optional[List[str]] = Field(default_factory=list, description="List of commands to execute")
+    command_regexes: Optional[Dict[str, str]] = Field(default_factory=dict, description="Optional regex pattern per command")
     vendor_commands: Optional[Dict[str, str]] = Field(default_factory=dict, description="Vendor specific commands e.g. {'huawei': 'display ...', 'cisco_ios': 'show ...'}")
     huawei_command: Optional[str] = Field(None, description="Command override for Huawei")
     cisco_command: Optional[str] = Field(None, description="Command override for Cisco")

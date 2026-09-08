@@ -75,6 +75,7 @@ export default function TerminalOutput({
   title,
   command,
   output,
+  regexOutput,
   executionTime,
   onClear,
   isError,
@@ -88,7 +89,10 @@ export default function TerminalOutput({
 }) {
   const [copied, setCopied] = useState(false);
   const [templateList, setTemplateList] = useState([]);
-  const [activeTemplateId, setActiveTemplateId] = useState(propSelectedTemplateId || '');
+  const hasCmdRegex = Boolean(regexOutput && regexOutput.trim() && regexOutput !== output);
+  const [activeTemplateId, setActiveTemplateId] = useState(
+    propSelectedTemplateId !== undefined ? propSelectedTemplateId : (hasCmdRegex ? '__command_regex__' : '')
+  );
   const [showSaveDropdown, setShowSaveDropdown] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState('');
   const saveDropdownRef = useRef(null);
@@ -137,8 +141,10 @@ export default function TerminalOutput({
   useEffect(() => {
     if (propSelectedTemplateId !== undefined) {
       setActiveTemplateId(propSelectedTemplateId);
+    } else if (regexOutput && regexOutput.trim() && regexOutput !== output && !activeTemplateId) {
+      setActiveTemplateId('__command_regex__');
     }
-  }, [propSelectedTemplateId]);
+  }, [propSelectedTemplateId, regexOutput]);
 
   const handleTemplateChange = (e) => {
     const val = e.target.value;
@@ -229,13 +235,26 @@ export default function TerminalOutput({
 
   const selectedTemplate = templateList.find((t) => t.id === activeTemplateId);
   const safeOutput = maskSensitiveCli(output || '');
+  const safeRegexOutput = maskSensitiveCli(regexOutput || '');
 
-  // Live filter calculation driven strictly by the selected template
+  // Live filter calculation driven strictly by selected template or command regex
   const filterResult = (() => {
-    if (!safeOutput) {
+    if (!safeOutput && !safeRegexOutput) {
       return { valid: true, matchedCount: 0, totalCount: 0, lines: [], display: '' };
     }
-    const allLines = safeOutput.split('\n');
+    const allLines = (safeOutput || '').split('\n');
+
+    if (activeTemplateId === '__command_regex__' && safeRegexOutput) {
+      const regexLines = safeRegexOutput.split('\n');
+      return {
+        valid: true,
+        matchedCount: regexLines.length,
+        totalCount: allLines.length,
+        lines: regexLines,
+        display: safeRegexOutput,
+      };
+    }
+
     if (!selectedTemplate || !selectedTemplate.regex) {
       return {
         valid: true,
@@ -358,10 +377,42 @@ export default function TerminalOutput({
     setTimeout(() => setSaveFeedback(''), 3000);
   };
 
-  // 2. Save Regex File: [ip]_regex_[template name].txt - MUST come from selected template
+  // 2. Save Regex File:
+  // - If per-command regexOutput exists and no template is selected: save [ip]_regex.txt
+  // - If template is selected: save [ip]_regex_[template name].txt
   const saveRegexFile = (templateOverride) => {
-    if (!output) return;
+    if (!output && !regexOutput) return;
     const tpl = templateOverride || selectedTemplate;
+
+    // If per-command regexOutput is present and either __command_regex__ is active or no template is chosen
+    if ((!tpl || !tpl.regex) && safeRegexOutput && safeRegexOutput.trim()) {
+      const targetIp = sanitizeFilenamePart(resolveTargetIp(), 'device');
+      const fileName = `${targetIp}_regex.txt`;
+      const fileContent = [
+        '# ==============================================================================',
+        '# CLI REGEX FILTERED OUTPUT (PER-COMMAND REGEX)',
+        `# Target IP : ${targetIp}`,
+        `# Command   : ${command || 'N/A'}`,
+        `# Title     : ${title || 'Terminal Console'}`,
+        `# Timestamp : ${new Date().toLocaleString()}`,
+        '# ==============================================================================',
+        '',
+        safeRegexOutput,
+      ].join('\n');
+
+      const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      setShowSaveDropdown(false);
+      setShowSelectTemplateModal(false);
+      setSaveFeedback(`Saved ${fileName}`);
+      setTimeout(() => setSaveFeedback(''), 3000);
+      return;
+    }
 
     // If no template is selected, open the template selector modal
     if (!tpl || !tpl.regex) {
@@ -420,10 +471,10 @@ export default function TerminalOutput({
     setTimeout(() => setSaveFeedback(''), 3000);
   };
 
-  // 3. Save Both Files: [ip]_raw.txt and [ip]_regex_[template name].txt
+  // 3. Save Both Files: [ip]_raw.txt and regex file
   const saveBothFiles = () => {
-    if (!output) return;
-    if (!selectedTemplate || !selectedTemplate.regex) {
+    if (!output && !regexOutput) return;
+    if ((!selectedTemplate || !selectedTemplate.regex) && (!safeRegexOutput || !safeRegexOutput.trim())) {
       setShowSelectTemplateModal(true);
       setShowSaveDropdown(false);
       return;
@@ -475,6 +526,9 @@ export default function TerminalOutput({
               aria-label="Select Template"
             >
               <option value="">Raw Output</option>
+              {safeRegexOutput && safeRegexOutput !== safeOutput && (
+                <option value="__command_regex__">Command Regex Output</option>
+              )}
               {templateList.map((tpl) => (
                 <option key={tpl.id} value={tpl.id}>
                   {tpl.name}
@@ -489,6 +543,11 @@ export default function TerminalOutput({
           {selectedTemplate && selectedTemplate.regex && filterResult.valid && (
             <span className="terminal-match-badge" title={`Matched lines: ${filterResult.matchedCount} of ${filterResult.totalCount}`}>
               {filterResult.matchedCount}/{filterResult.totalCount} lines
+            </span>
+          )}
+          {activeTemplateId === '__command_regex__' && safeRegexOutput && (
+            <span className="terminal-match-badge" title="Per-Command Regex Filter">
+              Command Regex
             </span>
           )}
 
@@ -508,7 +567,7 @@ export default function TerminalOutput({
               type="button"
               onClick={() => setShowSaveDropdown(!showSaveDropdown)}
               disabled={!output}
-              title="Save Output (Raw file / Regex file from Template)"
+              title="Save Output (Raw file / Regex file from Template or Command)"
               className="btn-terminal-save"
             >
               <Download className="h-3.5 w-3.5 text-indigo-400" />
@@ -535,7 +594,7 @@ export default function TerminalOutput({
                   </div>
                 </button>
 
-                {/* 2. Save Regex File - from Selected Template */}
+                {/* 2. Save Regex File */}
                 <button
                   type="button"
                   onClick={() => saveRegexFile()}
@@ -547,7 +606,9 @@ export default function TerminalOutput({
                     <span className="save-menu-desc font-mono text-[11px]">
                       {selectedTemplate?.regex
                         ? `${sanitizeFilenamePart(resolveTargetIp(), 'device')}_regex_${sanitizeFilenamePart(selectedTemplate.name, 'template')}.txt`
-                        : 'Select a Template first to save regex'}
+                        : (safeRegexOutput && safeRegexOutput.trim())
+                          ? `${sanitizeFilenamePart(resolveTargetIp(), 'device')}_regex.txt`
+                          : 'Select a Template first to save regex'}
                     </span>
                   </div>
                 </button>
@@ -566,7 +627,9 @@ export default function TerminalOutput({
                     <span className="save-menu-desc font-mono text-[11px]">
                       {selectedTemplate?.regex
                         ? `Save [ip]_raw.txt and [ip]_regex_${sanitizeFilenamePart(selectedTemplate.name, 'template')}.txt`
-                        : 'Requires selecting a template first'}
+                        : (safeRegexOutput && safeRegexOutput.trim())
+                          ? `Save [ip]_raw.txt and [ip]_regex.txt`
+                          : 'Requires selecting a template first'}
                     </span>
                   </div>
                 </button>

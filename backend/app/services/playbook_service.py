@@ -305,6 +305,7 @@ class PlaybookService:
                         "aruba": a_cmd or cmd.get("aruba") or auto_ar or base_cmd,
                         "mikrotik": m_cmd or cmd.get("mikrotik") or auto_mk or base_cmd,
                         "comware": cmd.get("comware") or auto_cw or base_cmd,
+                        "regex": (cmd.get("regex") or "").strip() or None,
                         "isCustom": cmd.get("isCustom", False),
                     })
             elif isinstance(cmd, str):

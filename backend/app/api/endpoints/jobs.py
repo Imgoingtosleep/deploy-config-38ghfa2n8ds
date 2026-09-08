@@ -23,6 +23,8 @@ def submit_troubleshoot_job(request: BatchCommandRequest):
     return JobService.create_troubleshoot_job(
         devices=request.devices,
         command=request.command or "",
+        commands=request.commands,
+        command_regexes=request.command_regexes,
         vendor_commands=request.vendor_commands,
         huawei_command=request.huawei_command,
         cisco_command=request.cisco_command,
@@ -60,6 +62,7 @@ def submit_healthcheck_job(request: BatchHealthCheckRequest):
         devices=request.devices,
         check_type=request.check_type or "standard",
         commands=request.commands,
+        command_regexes=request.command_regexes,
         vendor_commands=request.vendor_commands,
         suite_name=request.suite_name,
         num_workers=request.num_workers,

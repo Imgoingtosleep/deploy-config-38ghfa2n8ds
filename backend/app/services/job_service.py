@@ -47,7 +47,9 @@ class JobService:
     def create_troubleshoot_job(
         cls,
         devices: List[DeviceCredentials],
-        command: str,
+        command: str = "",
+        commands: List[str] = None,
+        command_regexes: Dict[str, str] = None,
         vendor_commands: Dict[str, str] = None,
         huawei_command: str = None,
         cisco_command: str = None,
@@ -55,12 +57,16 @@ class JobService:
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
         workers_val = max(10, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
+        cleaned_commands = [c.strip() for c in (commands or []) if c and c.strip()]
+        primary_command = command.strip() if command else (cleaned_commands[0] if cleaned_commands else "")
         job = JobRecord(
             job_id=job_id,
             job_type="troubleshoot",
             devices=devices,
             payload={
-                "command": command,
+                "command": primary_command,
+                "commands": cleaned_commands if cleaned_commands else ([primary_command] if primary_command else []),
+                "command_regexes": command_regexes or {},
                 "vendor_commands": vendor_commands,
                 "huawei_command": huawei_command,
                 "cisco_command": cisco_command,
@@ -151,6 +157,7 @@ class JobService:
         devices: List[DeviceCredentials],
         check_type: str = "standard",
         commands: List[str] = None,
+        command_regexes: Dict[str, str] = None,
         vendor_commands: Dict[str, List[str]] = None,
         suite_name: str = None,
         num_workers: Optional[int] = None,
@@ -164,6 +171,7 @@ class JobService:
             payload={
                 "check_type": check_type,
                 "commands": commands or [],
+                "command_regexes": command_regexes or {},
                 "vendor_commands": vendor_commands or {},
                 "suite_name": suite_name or check_type.capitalize(),
                 "num_workers": workers_val,
@@ -195,6 +203,8 @@ class JobService:
         job.start_time = time.time()
         chunk_size = max(10, min(int(job.payload.get("num_workers") or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
         devices = job.devices
+        cmds = [c for c in (job.payload.get("commands") or []) if c and c.strip()]
+        cmd_regexes = job.payload.get("command_regexes") or {}
 
         for i in range(0, len(devices), chunk_size):
             if job.cancel_requested:
@@ -203,34 +213,110 @@ class JobService:
                 return
 
             chunk = devices[i : i + chunk_size]
-            try:
-                batch_res = NornirService.run_batch_command(
-                    devices=chunk,
-                    command=job.payload.get("command", ""),
-                    vendor_resolve=True,
-                    vendor_commands=job.payload.get("vendor_commands"),
-                    huawei_command=job.payload.get("huawei_command"),
-                    cisco_command=job.payload.get("cisco_command"),
-                    num_workers=chunk_size,
-                )
+
+            if len(cmds) > 1:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                chunk_results = [None] * len(chunk)
+                with ThreadPoolExecutor(max_workers=min(len(chunk), chunk_size)) as executor:
+                    future_to_idx = {
+                        executor.submit(
+                            NetmikoService.send_multiple_commands,
+                            dev,
+                            cmds,
+                            cmd_regexes,
+                        ): idx
+                        for idx, dev in enumerate(chunk)
+                    }
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        dev = chunk[idx]
+                        try:
+                            res = future.result()
+                            combined_raw = "\n\n".join([f"[{r['command']}]\n{r['output']}" for r in res.get("results", []) if r.get("output")])
+                            regex_parts = []
+                            for r in res.get("results", []):
+                                if not r.get("output"):
+                                    continue
+                                if r.get("regex") and r.get("regex").strip():
+                                    regex_parts.append(
+                                        f"[{r['command']}] [Regex: /{r['regex']}/ - {r.get('matched_lines', 0)} matches]\n"
+                                        + (r.get("regex_output") or "--- No lines matched regex filter ---")
+                                    )
+                                else:
+                                    regex_parts.append(f"[{r['command']}] [No Regex Filter]\n{r['output']}")
+                            combined_regex = "\n\n".join(regex_parts)
+
+                            chunk_results[idx] = CommandResponse(
+                                host=dev.host or "Unknown",
+                                command=f"{len(cmds)} command(s)",
+                                output=combined_raw or "Completed",
+                                regex_output=combined_regex or combined_raw,
+                                success=res.get("success", False),
+                                error=res.get("error"),
+                                execution_time_seconds=res.get("overall_time_seconds") or 0.0,
+                            )
+                        except Exception as dev_err:
+                            chunk_results[idx] = CommandResponse(
+                                host=dev.host or "Unknown",
+                                command=f"{len(cmds)} command(s)",
+                                output="",
+                                success=False,
+                                error=str(dev_err),
+                                execution_time_seconds=0.0,
+                            )
                 with cls._lock:
-                    job.results.extend(batch_res.results)
+                    valid_results = [r for r in chunk_results if r is not None]
+                    job.results.extend(valid_results)
                     job.completed_devices += len(chunk)
-                    job.success_count += batch_res.success_count
-                    job.failed_count += batch_res.failed_count
-            except Exception as e:
-                with cls._lock:
-                    for dev in chunk:
-                        job.results.append(CommandResponse(
-                            host=dev.host or "Unknown",
-                            command=job.payload.get("command", ""),
-                            output="",
-                            success=False,
-                            error=str(e),
-                            execution_time_seconds=0.0,
-                        ))
-                    job.completed_devices += len(chunk)
-                    job.failed_count += len(chunk)
+                    job.success_count += sum(1 for r in valid_results if r.success)
+                    job.failed_count += sum(1 for r in valid_results if not r.success)
+            else:
+                try:
+                    single_cmd = job.payload.get("command", "") or (cmds[0] if cmds else "")
+                    batch_res = NornirService.run_batch_command(
+                        devices=chunk,
+                        command=single_cmd,
+                        vendor_resolve=True,
+                        vendor_commands=job.payload.get("vendor_commands"),
+                        huawei_command=job.payload.get("huawei_command"),
+                        cisco_command=job.payload.get("cisco_command"),
+                        num_workers=chunk_size,
+                    )
+                    cmd_regex = (
+                        cmd_regexes.get(single_cmd)
+                        or cmd_regexes.get(single_cmd.strip())
+                        or (next(iter(cmd_regexes.values()), None) if len(cmd_regexes) == 1 else None)
+                    )
+                    if cmd_regex and cmd_regex.strip():
+                        import re
+                        try:
+                            rx = re.compile(cmd_regex.strip(), re.MULTILINE | re.IGNORECASE)
+                            for r in batch_res.results:
+                                r.regex = cmd_regex.strip()
+                                lines = (r.output or "").splitlines()
+                                matched = [l for l in lines if rx.search(l)]
+                                r.regex_output = "\n".join(matched)
+                                r.matched_lines = len(matched)
+                        except Exception:
+                            pass
+                    with cls._lock:
+                        job.results.extend(batch_res.results)
+                        job.completed_devices += len(chunk)
+                        job.success_count += batch_res.success_count
+                        job.failed_count += batch_res.failed_count
+                except Exception as e:
+                    with cls._lock:
+                        for dev in chunk:
+                            job.results.append(CommandResponse(
+                                host=dev.host or "Unknown",
+                                command=job.payload.get("command", ""),
+                                output="",
+                                success=False,
+                                error=str(e),
+                                execution_time_seconds=0.0,
+                            ))
+                        job.completed_devices += len(chunk)
+                        job.failed_count += len(chunk)
 
             time.sleep(0.01)
 
@@ -355,6 +441,7 @@ class JobService:
         devices = job.devices
         check_type = job.payload.get("check_type", "standard")
         commands = job.payload.get("commands", [])
+        command_regexes = job.payload.get("command_regexes", {})
         vendor_commands = job.payload.get("vendor_commands", {})
         suite_name = job.payload.get("suite_name", check_type.capitalize())
 
@@ -375,6 +462,7 @@ class JobService:
                         check_type,
                         commands,
                         vendor_commands,
+                        command_regexes,
                     ): idx
                     for idx, dev in enumerate(chunk)
                 }
@@ -383,7 +471,20 @@ class JobService:
                     dev = chunk[idx]
                     try:
                         res = future.result()
-                        combined_output = "\n".join([f"[{r.command}]\n{r.output}" for r in res.results if r.output])
+                        combined_output = "\n\n".join([f"[{r.command}]\n{r.output}" for r in res.results if r.output])
+                        regex_parts = []
+                        for r in res.results:
+                            if not r.output:
+                                continue
+                            if r.regex and r.regex.strip():
+                                regex_parts.append(
+                                    f"[{r.command}] [Regex: /{r.regex}/ - {r.matched_lines or 0} matches]\n"
+                                    + (r.regex_output if r.regex_output else "--- No lines matched regex filter ---")
+                                )
+                            else:
+                                regex_parts.append(f"[{r.command}] [No Regex Filter]\n{r.output}")
+                        combined_regex_output = "\n\n".join(regex_parts)
+
                         summary_str = ""
                         if res.summary:
                             perf = res.summary.get("performance", {})
@@ -395,6 +496,7 @@ class JobService:
                             host=res.host or dev.host or "Unknown",
                             command=f"[{suite_name}] {len(res.results)} cmd(s) {summary_str}".strip(),
                             output=combined_output or "Health Check Completed",
+                            regex_output=combined_regex_output or combined_output,
                             success=res.success,
                             error=res.error,
                             execution_time_seconds=res.overall_time_seconds or 0.0,

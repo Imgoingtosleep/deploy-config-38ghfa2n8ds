@@ -237,10 +237,59 @@ export default function AsyncJobModal({
     }
   };
 
-  // Export all fleet logs (Regex Filtered File from Template)
+  // Export all fleet logs (Regex Filtered File from Per-Command Regex or Template)
   const exportAllRegex = async (tpl) => {
     if (!jobId) return;
     if (!tpl || !tpl.regex) {
+      setExporting(true);
+      try {
+        const allResults = await getAllJobResults(jobId);
+        const hasPerCommandRegex = allResults && allResults.some(
+          (r) => r.regex_output && r.regex_output.trim() && r.regex_output !== r.output
+        );
+        if (hasPerCommandRegex) {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const body = allResults.map((r, i) => {
+            const text = maskSensitiveCli(r.regex_output || r.output || r.error || '');
+            return [
+              `# ------------------------------------------------------------------------------`,
+              `# [Device ${i + 1}/${allResults.length}] Host: ${r.host}`,
+              `# Command: ${r.command || 'N/A'}`,
+              `# ------------------------------------------------------------------------------`,
+              text,
+              '',
+            ].join('\n');
+          }).join('\n');
+
+          const header = [
+            '# ==============================================================================',
+            '# FLEET AUTOMATION PER-COMMAND REGEX FILTERED BATCH LOG',
+            `# Job ID    : ${jobId}`,
+            `# Title     : ${title}`,
+            `# Generated : ${new Date().toLocaleString()}`,
+            '# ==============================================================================',
+            '',
+          ].join('\n');
+
+          const content = header + body;
+          const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `fleet_regex_commands_${jobId.slice(0, 8)}_${timestamp}.txt`;
+          a.click();
+          URL.revokeObjectURL(url);
+          setFleetExportFeedback('Saved Fleet Regex Logs (Per-Command Filter)');
+          setTimeout(() => setFleetExportFeedback(''), 3000);
+          setShowExportDropdown(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Check per-command regex error:', err);
+      } finally {
+        setExporting(false);
+      }
+
       setShowFleetRegexModal(true);
       setShowExportDropdown(false);
       return;
@@ -746,6 +795,7 @@ export default function AsyncJobModal({
                 deviceHost={inspectedDevice.host}
                 command={inspectedDevice.command || 'Task Output'}
                 output={maskSensitiveCli(inspectedDevice.output || inspectedDevice.error || 'No content')}
+                regexOutput={inspectedDevice.regex_output}
                 executionTime={inspectedDevice.execution_time_seconds}
                 isError={!inspectedDevice.success}
               />

@@ -392,8 +392,14 @@ class NetmikoService:
             }
 
     @classmethod
-    def send_multiple_commands(cls, device: DeviceCredentials, commands: List[str]) -> Dict[str, Any]:
-        """Execute multiple show commands sequentially over a single connection with priority credential fallback"""
+    def send_multiple_commands(
+        cls,
+        device: DeviceCredentials,
+        commands: List[str],
+        command_regexes: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Execute multiple show commands sequentially over a single connection with priority credential fallback and per-command regex"""
+        import re
         start_time = time.time()
         results = []
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
@@ -401,13 +407,41 @@ class NetmikoService:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 for cmd in commands:
                     cmd_start = time.time()
+                    cmd_regex = None
+                    regex_output = None
+                    matched_lines = None
+                    if command_regexes:
+                        raw_pat = (
+                            command_regexes.get(cmd)
+                            or command_regexes.get(cmd.strip())
+                            or command_regexes.get(cmd.lower())
+                            or command_regexes.get(cmd.strip().lower())
+                        )
+                        if raw_pat and raw_pat.strip():
+                            cmd_regex = raw_pat.strip()
+
                     try:
                         raw_output = net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
                         output = cls.clean_cli_output(raw_output)
+
+                        if cmd_regex:
+                            try:
+                                rx = re.compile(cmd_regex, re.MULTILINE | re.IGNORECASE)
+                                lines = output.splitlines()
+                                matched = [l for l in lines if rx.search(l)]
+                                regex_output = "\n".join(matched)
+                                matched_lines = len(matched)
+                            except Exception as rx_err:
+                                regex_output = f"[Regex Syntax Error: {str(rx_err)}]\n{output}"
+                                matched_lines = 0
+
                         results.append({
                             "host": target_name,
                             "command": cmd,
                             "output": output,
+                            "regex": cmd_regex,
+                            "regex_output": regex_output,
+                            "matched_lines": matched_lines,
                             "success": True,
                             "error": None,
                             "execution_time_seconds": round(time.time() - cmd_start, 2),
@@ -417,6 +451,9 @@ class NetmikoService:
                             "host": target_name,
                             "command": cmd,
                             "output": "",
+                            "regex": cmd_regex,
+                            "regex_output": None,
+                            "matched_lines": 0,
                             "success": False,
                             "error": str(cmd_err),
                             "execution_time_seconds": round(time.time() - cmd_start, 2),

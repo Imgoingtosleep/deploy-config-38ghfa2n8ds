@@ -28,6 +28,7 @@ import {
   Edit2,
   X,
   Sparkles,
+  Filter,
 } from 'lucide-react';
 import {
   submitHealthCheckJob,
@@ -127,6 +128,7 @@ export default function HealthCheckPage({
 
   // Custom User Commands added via quick inline input
   const [customInput, setCustomInput] = useState('');
+  const [customRegex, setCustomRegex] = useState('');
 
   // Multi-Device Fleet State
   const [activeAsyncJob, setActiveAsyncJob] = useState(null);
@@ -170,6 +172,13 @@ export default function HealthCheckPage({
     });
   };
 
+  // Update regex filter pattern for a specific command
+  const handleUpdateCommandRegex = (cmdId, regexVal) => {
+    setActiveCommands((prev) =>
+      prev.map((c) => (c.id === cmdId ? { ...c, regex: regexVal } : c))
+    );
+  };
+
   // Select / Deselect All
   const handleSelectAll = () => {
     setSelectedCommandIds(new Set(activeCommands.map((c) => c.id)));
@@ -179,7 +188,7 @@ export default function HealthCheckPage({
     setSelectedCommandIds(new Set());
   };
 
-  // Add Custom Command via Quick Input
+  // Add Custom Command via Quick Input with regex below
   const handleAddCustomCommand = (e) => {
     e.preventDefault();
     const trimmed = customInput.trim();
@@ -191,12 +200,14 @@ export default function HealthCheckPage({
       name: trimmed,
       cisco: trimmed,
       huawei: trimmed,
+      regex: customRegex.trim() || '',
       isCustom: true,
     };
 
     setActiveCommands((prev) => [...prev, newCmd]);
     setSelectedCommandIds((prev) => new Set([...prev, newId]));
     setCustomInput('');
+    setCustomRegex('');
   };
 
   // Remove Custom Command
@@ -224,6 +235,7 @@ export default function HealthCheckPage({
         nxos: typeof c === 'string' ? c : (c.nxos || c.cisco || cmdName),
         aruba: typeof c === 'string' ? c : (c.aruba || cmdName),
         mikrotik: typeof c === 'string' ? c : (c.mikrotik || cmdName),
+        regex: typeof c === 'object' ? (c.regex || '') : '',
         isCustom: typeof c === 'string' ? false : (c.isCustom || false),
       };
     });
@@ -527,8 +539,23 @@ export default function HealthCheckPage({
     const mikrotikCmds = selected.map((c) => c.mikrotik || c.name);
     const genericCmds = selected.map((c) => c.huawei || c.name);
 
+    const commandRegexMap = {};
+    selected.forEach((c) => {
+      const reg = (c.regex || '').trim();
+      if (reg) {
+        if (c.huawei) commandRegexMap[c.huawei] = reg;
+        if (c.cisco) commandRegexMap[c.cisco] = reg;
+        if (c.juniper) commandRegexMap[c.juniper] = reg;
+        if (c.nxos) commandRegexMap[c.nxos] = reg;
+        if (c.aruba) commandRegexMap[c.aruba] = reg;
+        if (c.mikrotik) commandRegexMap[c.mikrotik] = reg;
+        if (c.name) commandRegexMap[c.name] = reg;
+      }
+    });
+
     return {
       commands: genericCmds,
+      commandRegexes: commandRegexMap,
       vendorCommands: {
         huawei: huaweiCmds,
         cisco_ios: ciscoCmds,
@@ -550,7 +577,7 @@ export default function HealthCheckPage({
       return;
     }
 
-    const { commands, vendorCommands, selectedCount } = getExecutableCommandPayload();
+    const { commands, commandRegexes, vendorCommands, selectedCount } = getExecutableCommandPayload();
     if (selectedCount === 0) {
       setErrorMessage('Please select at least one command from the checklist below.');
       return;
@@ -580,12 +607,14 @@ export default function HealthCheckPage({
         commands,
         vendorCommands,
         categoryName,
-        nornirWorkers
+        nornirWorkers,
+        commandRegexes
       );
 
       setActiveAsyncJob({
         id: res.job_id,
         title: `Fleet Health Check: ${categoryName} (${selectedCount} cmds • ${validDevices.length.toLocaleString()} Devices)`,
+        commandRegexes,
       });
     } catch (err) {
       setErrorMessage(err.response?.data?.detail || err.message || 'Multi-device batch health check failed');
@@ -777,6 +806,24 @@ export default function HealthCheckPage({
                       <span className="syntax-pill cisco">Cisco: {cmd.cisco}</span>
                       <span className="syntax-pill huawei">Huawei: {cmd.huawei}</span>
                     </div>
+
+                    {/* Dedicated Regex Input Row Underneath Command */}
+                    <div
+                      className="command-regex-row"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1 text-[11px] text-slate-400 font-medium">
+                        <Filter className="h-3 w-3 text-indigo-400 flex-shrink-0" />
+                        <span>Regex Filter (Optional):</span>
+                      </div>
+                      <input
+                        type="text"
+                        value={cmd.regex || ''}
+                        onChange={(e) => handleUpdateCommandRegex(cmd.id, e.target.value)}
+                        placeholder="e.g. ^.*\\b(up|down|error)\\b.* (Leave empty for no regex)"
+                        className="command-regex-input"
+                      />
+                    </div>
                   </div>
 
                   {cmd.isCustom && (
@@ -797,24 +844,36 @@ export default function HealthCheckPage({
             })}
           </div>
 
-          {/* Add Custom Command Bar */}
-          <form onSubmit={handleAddCustomCommand} className="add-custom-command-bar">
-            <Terminal className="h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              placeholder="Add any custom CLI command to this suite (e.g. display lacp verbose, show ip ospf neighbor)..."
-              className="custom-cmd-input"
-            />
-            <button
-              type="submit"
-              disabled={!customInput.trim()}
-              className="btn-add-custom-cmd"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Add Command</span>
-            </button>
+          {/* Add Custom Command Box with Regex Input Directly Below */}
+          <form onSubmit={handleAddCustomCommand} className="add-custom-command-box">
+            <div className="custom-cmd-input-row">
+              <Terminal className="h-4 w-4 text-slate-400 flex-shrink-0" />
+              <input
+                type="text"
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                placeholder="CLI Command (e.g. display lacp verbose or show ip ospf neighbor)..."
+                className="custom-cmd-input"
+              />
+              <button
+                type="submit"
+                disabled={!customInput.trim()}
+                className="btn-add-custom-cmd flex-shrink-0"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Command</span>
+              </button>
+            </div>
+            <div className="custom-regex-input-row">
+              <Filter className="h-3.5 w-3.5 text-indigo-400 flex-shrink-0" />
+              <input
+                type="text"
+                value={customRegex}
+                onChange={(e) => setCustomRegex(e.target.value)}
+                placeholder="Regex filter for this command (Optional - leave empty for no regex)..."
+                className="custom-regex-input"
+              />
+            </div>
           </form>
         </div>
 

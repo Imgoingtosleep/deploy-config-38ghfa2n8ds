@@ -27,6 +27,7 @@ import {
   Sparkles,
   Check,
   Sliders,
+  Filter,
 } from 'lucide-react';
 import {
   executeBatchTroubleshootCommand,
@@ -46,6 +47,9 @@ export default function TroubleshootPage({
   nornirWorkers = 10,
   onUpdateWorkers,
 }) {
+  const [cliCommandList, setCliCommandList] = useState([
+    { id: '1', command: '', regex: '' },
+  ]);
   const [customCommand, setCustomCommand] = useState('');
   const [connectivityTool, setConnectivityTool] = useState('ping'); // 'ping' | 'traceroute'
   const [connectTarget, setConnectTarget] = useState('');
@@ -55,6 +59,25 @@ export default function TroubleshootPage({
   const [errorMessage, setErrorMessage] = useState('');
   const [successToast, setSuccessToast] = useState('');
   const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id, title }
+
+  const addCliCommandRow = () => {
+    setCliCommandList((prev) => [
+      ...prev,
+      { id: `cmd-${Date.now()}`, command: '', regex: '' },
+    ]);
+  };
+
+  const removeCliCommandRow = (id) => {
+    setCliCommandList((prev) =>
+      prev.length > 1 ? prev.filter((c) => c.id !== id) : [{ id: '1', command: '', regex: '' }]
+    );
+  };
+
+  const updateCliCommandRow = (id, field, value) => {
+    setCliCommandList((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
+    );
+  };
 
   // Permanent Command Profiles from Backend
   const [playbooks, setPlaybooks] = useState([]);
@@ -93,9 +116,15 @@ export default function TroubleshootPage({
   }, []);
 
   // Launch Massive Fleet Background Job (10,000+ Scale with live stream & pagination)
-  const handleLaunchAsyncFleetTroubleshoot = async (commandString, vendorCommands = null) => {
+  const handleLaunchAsyncFleetTroubleshoot = async (
+    commandString,
+    vendorCommands = null,
+    commandsList = null,
+    commandRegexes = null
+  ) => {
     const trimmed = (commandString || '').trim();
-    if (!trimmed && (!vendorCommands || Object.keys(vendorCommands).length === 0)) return;
+    const cmds = commandsList || (trimmed ? [trimmed] : []);
+    if (cmds.length === 0 && (!vendorCommands || Object.keys(vendorCommands).length === 0)) return;
 
     if (validFleet.length === 0) {
       setErrorMessage('Please add at least one device in the Target Device fleet list above.');
@@ -114,10 +143,21 @@ export default function TroubleshootPage({
         connection_mode: 'network',
       }));
 
-      const res = await submitTroubleshootJob(payloadDevices, trimmed, vendorCommands, null, null, nornirWorkers);
+      const res = await submitTroubleshootJob(
+        payloadDevices,
+        trimmed,
+        vendorCommands,
+        null,
+        null,
+        nornirWorkers,
+        cmds,
+        commandRegexes || {}
+      );
+      const titleLabel = cmds.length > 1 ? `${cmds.length} CLI Commands` : (trimmed || 'Multi-Vendor Task');
       setActiveAsyncJob({
         id: res.job_id,
-        title: `Fleet Diagnostic: ${trimmed || 'Multi-Vendor Task'} (${validFleet.length.toLocaleString()} Devices)`,
+        title: `Fleet Diagnostic: ${titleLabel} (${validFleet.length.toLocaleString()} Devices)`,
+        commandRegexes: commandRegexes || {},
       });
     } catch (err) {
       setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit fleet troubleshoot job');
@@ -169,6 +209,16 @@ export default function TroubleshootPage({
       return;
     }
 
+    const commandRegexMap = {};
+    (playbook.commands || []).forEach((c) => {
+      if (typeof c === 'object' && c.regex && c.regex.trim()) {
+        const reg = c.regex.trim();
+        if (c.huawei) commandRegexMap[c.huawei] = reg;
+        if (c.cisco) commandRegexMap[c.cisco] = reg;
+        if (c.name) commandRegexMap[c.name] = reg;
+      }
+    });
+
     setExecuting(true);
     setErrorMessage('');
 
@@ -197,12 +247,14 @@ export default function TroubleshootPage({
           mikrotik_routeros: mikrotikCmds,
         },
         playbook.name,
-        nornirWorkers
+        nornirWorkers,
+        commandRegexMap
       );
 
       setActiveAsyncJob({
         id: res.job_id,
         title: `Fleet Profile Run: ${playbook.name} (${genericCmds.length} cmds • ${validFleet.length} Devs)`,
+        commandRegexes: commandRegexMap,
       });
     } catch (err) {
       setErrorMessage(err.response?.data?.detail || err.message || 'Failed to submit profile job');
@@ -471,7 +523,25 @@ export default function TroubleshootPage({
 
   const handleCustomSubmit = (e) => {
     e.preventDefault();
-    runExecution(customCommand);
+    const validCmds = cliCommandList.filter((c) => c.command && c.command.trim() !== '');
+    if (validCmds.length === 0) return;
+
+    const commandStrings = validCmds.map((c) => c.command.trim());
+    const commandRegexes = {};
+    validCmds.forEach((c) => {
+      if (c.regex && c.regex.trim()) {
+        commandRegexes[c.command.trim()] = c.regex.trim();
+      }
+    });
+
+    setHistory((prev) => [commandStrings[0], ...prev.filter((c) => c !== commandStrings[0])].slice(0, 5));
+
+    handleLaunchAsyncFleetTroubleshoot(
+      commandStrings[0],
+      null,
+      commandStrings,
+      Object.keys(commandRegexes).length > 0 ? commandRegexes : null
+    );
   };
 
   const handleConnectivitySubmit = (e) => {
@@ -524,17 +594,56 @@ export default function TroubleshootPage({
           </div>
 
           <form onSubmit={handleCustomSubmit} className="cli-form">
-            <div className="input-with-button">
-              <input
-                type="text"
-                value={customCommand}
-                onChange={(e) => setCustomCommand(e.target.value)}
-                placeholder="e.g. ping 192.168.1.1 or display ip interface brief or show ip route"
-                className="cli-input"
-              />
+            <div className="cli-commands-container">
+              {cliCommandList.map((cmdItem, idx) => (
+                <div key={cmdItem.id || idx} className="cli-command-card">
+                  <div className="cli-command-header-row">
+                    <span className="cli-cmd-number">#{idx + 1}</span>
+                    <input
+                      type="text"
+                      value={cmdItem.command}
+                      onChange={(e) => updateCliCommandRow(cmdItem.id, 'command', e.target.value)}
+                      placeholder="CLI Command (e.g. display ip interface brief or show ip route)"
+                      className="cli-input"
+                    />
+                    {cliCommandList.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeCliCommandRow(cmdItem.id)}
+                        className="btn-remove-cli-row"
+                        title="Remove Command"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="cli-regex-row" style={{ marginTop: '0.45rem' }}>
+                    <Filter className="h-3.5 w-3.5 text-indigo-400 flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={cmdItem.regex}
+                      onChange={(e) => updateCliCommandRow(cmdItem.id, 'regex', e.target.value)}
+                      placeholder="Filter regex for this command (optional, e.g. Up|Down or GigabitEthernet.*)"
+                      className="cli-regex-input"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="cli-form-actions-row">
+              <button
+                type="button"
+                onClick={addCliCommandRow}
+                className="btn-add-cli-row"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add Another Command</span>
+              </button>
+
               <button
                 type="submit"
-                disabled={executing || !customCommand.trim()}
+                disabled={executing || !cliCommandList.some((c) => c.command && c.command.trim())}
                 className="btn-send-cli"
                 title="Execute Across Fleet"
               >
@@ -558,7 +667,7 @@ export default function TroubleshootPage({
                     key={idx}
                     type="button"
                     onClick={() => {
-                      setCustomCommand(hCmd);
+                      setCliCommandList([{ id: '1', command: hCmd, regex: '' }]);
                       runExecution(hCmd);
                     }}
                     className="history-chip"

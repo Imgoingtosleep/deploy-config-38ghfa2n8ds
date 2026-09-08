@@ -237,6 +237,7 @@ def _execute_device_health_check(
     check_type: str = "standard",
     custom_commands: List[str] = None,
     vendor_commands: Dict[str, List[str]] = None,
+    command_regexes: Dict[str, str] = None,
 ) -> MultiCommandResponse:
     device_type = (device.device_type or "").lower()
     if not device_type or device_type in ["autodetect", "auto"]:
@@ -282,7 +283,7 @@ def _execute_device_health_check(
         presets_for_driver = HEALTH_CHECK_PRESETS.get(driver_group, HEALTH_CHECK_PRESETS["cisco_ios"])
         commands = presets_for_driver.get(check_type, presets_for_driver["standard"])
 
-    result = NetmikoService.send_multiple_commands(device, commands)
+    result = NetmikoService.send_multiple_commands(device, commands, command_regexes=command_regexes)
     command_results = result.get("results", [])
 
     # Use RegEx Parser to synthesize clean summary dashboard metrics

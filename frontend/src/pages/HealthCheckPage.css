@@ -1075,8 +1075,88 @@
 }
 
 /* =========================================
+   PER-COMMAND REGEX STYLING
+   ========================================= */
+.command-regex-row {
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px dashed rgba(99, 102, 241, 0.3);
+  border-radius: 0.375rem;
+}
+
+.command-regex-input {
+  width: 100%;
+  background: #020617;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.25rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: #a5b4fc;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.command-regex-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.25);
+}
+
+.command-regex-input::placeholder {
+  color: #64748b;
+  font-family: system-ui, sans-serif;
+  font-size: 0.7rem;
+}
+
+/* =========================================
    ADD CUSTOM COMMAND FORM
    ========================================= */
+.add-custom-command-box {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.custom-cmd-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.custom-regex-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.custom-regex-input {
+  flex: 1;
+  background: #020617;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 0.375rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #a5b4fc;
+  outline: none;
+}
+
+.custom-regex-input:focus {
+  border-color: #6366f1;
+}
+
+.custom-regex-input::placeholder {
+  color: #64748b;
+  font-family: system-ui, sans-serif;
+  font-size: 0.72rem;
+}
+
 .add-custom-command-bar {
   display: flex;
   align-items: center;
