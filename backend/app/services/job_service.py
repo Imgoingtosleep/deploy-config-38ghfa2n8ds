@@ -259,6 +259,11 @@ class JobService:
                             combined_regex = separator.join(regex_blocks) if regex_blocks else combined_raw
 
                             sysname = res.get("sysname_device") or NetmikoService.extract_device_sysname(combined_raw)
+                            is_succ = bool(res.get("success", False))
+                            err_val = res.get("error")
+                            if not is_succ:
+                                err_val = cls.format_failure_diagnostic(err_val or res, host_ip=dev.host or "")
+
                             chunk_results[idx] = CommandResponse(
                                 host=dev.host or "Unknown",
                                 hostname_import=getattr(dev, "name", None) or "",
@@ -266,8 +271,8 @@ class JobService:
                                 command=f"{len(cmds)} command(s)",
                                 output=combined_raw or "Completed",
                                 regex_output=combined_regex or combined_raw,
-                                success=res.get("success", False),
-                                error=res.get("error"),
+                                success=is_succ,
+                                error=err_val,
                                 execution_time_seconds=res.get("overall_time_seconds") or 0.0,
                                 authenticated_username=res.get("authenticated_username") or getattr(dev, "username", None),
                                 authenticated_credential=res.get("authenticated_credential"),
@@ -280,7 +285,7 @@ class JobService:
                                 command=f"{len(cmds)} command(s)",
                                 output="",
                                 success=False,
-                                error=str(dev_err),
+                                error=cls.format_failure_diagnostic(str(dev_err), host_ip=dev.host or ""),
                                 execution_time_seconds=0.0,
                             )
                 with cls._lock:
@@ -342,7 +347,7 @@ class JobService:
                                 command=job.payload.get("command", ""),
                                 output="",
                                 success=False,
-                                error=str(e),
+                                error=cls.format_failure_diagnostic(str(e), host_ip=dev.host or ""),
                                 execution_time_seconds=0.0,
                             ))
                         job.completed_devices += len(chunk)
@@ -396,7 +401,7 @@ class JobService:
                             command="Batch Deploy Error",
                             output="",
                             success=False,
-                            error=str(e),
+                            error=cls.format_failure_diagnostic(str(e), host_ip=dev.host or ""),
                             execution_time_seconds=0.0,
                             commands_deployed=job.payload.get("config_commands", []),
                             save_output=None,
@@ -449,7 +454,7 @@ class JobService:
                             command="Backup Running Config",
                             output="",
                             success=False,
-                            error=str(e),
+                            error=cls.format_failure_diagnostic(str(e), host_ip=dev.host or ""),
                             execution_time_seconds=0.0,
                         ))
                     job.completed_devices += len(chunk)
@@ -544,7 +549,7 @@ class JobService:
                             output=combined_output or "Health Check Completed",
                             regex_output=combined_regex_output or combined_output,
                             success=res.success,
-                            error=res.error,
+                            error=res.error if res.success else cls.format_failure_diagnostic(res.error or res, host_ip=dev.host or ""),
                             execution_time_seconds=res.overall_time_seconds or 0.0,
                             authenticated_username=getattr(res, "authenticated_username", None) or getattr(dev, "username", None),
                             authenticated_credential=getattr(res, "authenticated_credential", None),
@@ -557,7 +562,7 @@ class JobService:
                             command=f"[{suite_name}] Error",
                             output="",
                             success=False,
-                            error=str(e),
+                            error=cls.format_failure_diagnostic(str(e), host_ip=dev.host or ""),
                             execution_time_seconds=0.0,
                         )
 
@@ -672,6 +677,108 @@ class JobService:
         return True
 
     @classmethod
+    def format_failure_diagnostic(cls, res: Any, host_ip: str = "", dev: Optional[DeviceCredentials] = None) -> str:
+        """
+        Format a detailed, human-readable diagnostic explanation of why a device failed.
+        Provides root-cause analysis, actionable suggestions, and context.
+        """
+        raw_error = getattr(res, "error", None) or (res if isinstance(res, (str, Exception)) else "")
+        raw_output = getattr(res, "output", None) or ""
+        err_str = str(raw_error).strip()
+        out_str = str(raw_output).strip()
+        combined = f"{err_str} {out_str}".lower()
+
+        # 1. SSH Channel Error (Unable to open channel / VTY exhausted / Channel allocation failed)
+        if "unable to open channel" in combined or "channel closed" in combined or "channel request failed" in combined or "administratively prohibited" in combined:
+            return (
+                f"SSH Channel Error: Switch rejected SSH session channel (Unable to open channel). "
+                f"Common causes: 1) Switch VTY lines are exhausted or hung (check 'display users' / 'show users'), "
+                f"2) User account lacks shell/terminal authorization (check service-type ssh / user privilege), "
+                f"3) Switch reached max concurrent SSH sessions limit."
+            )
+
+        # 2. Authentication Failure
+        if "authentication failed" in combined or "auth fail" in combined or "bad authentication" in combined or "authentication to device failed" in combined or "permission denied" in combined:
+            sub = ""
+            if "priority" in err_str.lower() and "[" in err_str:
+                p_part = err_str[err_str.find("["):]
+                sub = f" Details: {p_part}."
+            return (
+                f"Authentication Failed: Username, password, or privilege secret was rejected by device.{sub} "
+                f"Please verify credentials, check account lockout status, or adjust fallback profile priority order."
+            )
+
+        # 3. Device Type Mismatch
+        if "terminal width 511" in combined or "pattern not detected: 'terminal width 511'" in combined:
+            return (
+                f"Device Type Mismatch: Netmiko sent Cisco IOS setup command ('terminal width 511') to a non-Cisco switch (e.g. Huawei VRP). "
+                f"Please change device_type to 'huawei' or use Auto Detect."
+            )
+
+        # 4. Connection Timeout
+        if "timed out" in combined or "timed-out" in combined or "timeout" in combined or "tcp connection to device failed" in combined or "did not respond" in combined:
+            return (
+                f"Connection Timeout: Device did not respond within timeout period on port 22/23. "
+                f"Common causes: Device is powered off, IP address is unreachable, or intermediate firewall/ACL is dropping packets."
+            )
+
+        # 5. Connection Refused
+        if "connection refused" in combined:
+            return (
+                f"Connection Refused: Port 22/23 is closed. "
+                f"SSH/Telnet service is disabled on the switch, or an access control list (ACL) is rejecting connection requests."
+            )
+
+        # 6. Network Unreachable
+        if "no route to host" in combined or "network is unreachable" in combined or "network unreachable" in combined or "host unreached" in combined:
+            return (
+                f"Network Unreachable: No IP route to host {host_ip or 'device'} from automation server, "
+                f"or default gateway dropped packets."
+            )
+
+        # 7. Prompt Detection Timeout
+        if "pattern not detected" in combined:
+            return (
+                f"Prompt Detection Timeout: Connected successfully but device CLI prompt was not recognized within timeout. "
+                f"Check device_type setting or inspect for unexpected interactive login banners."
+            )
+
+        # 8. SSH Cipher / Algorithm Mismatch
+        if "incompatible ssh peer" in combined or "cipher" in combined or "kex" in combined or "algorithm" in combined:
+            return (
+                f"SSH Cipher/Algorithm Mismatch: Switch rejected modern SSH key exchange algorithms or ciphers. "
+                f"Legacy switch firmware requires older SSH ciphers/KEX algorithms."
+            )
+
+        # 9. CLI Command Syntax Error
+        if "unrecognized command" in combined or "invalid input" in combined or "syntax error" in combined or "wrong parameter" in combined or "error: incomplete command" in combined:
+            for line in out_str.splitlines():
+                l_lower = line.lower()
+                if "error:" in l_lower or "unrecognized" in l_lower or "invalid input" in l_lower or "syntax" in l_lower:
+                    return f"CLI Syntax Error: Command rejected by switch CLI parser - {line.strip()}"
+            return f"CLI Syntax Error: Command was rejected by device parser ({err_str or 'Syntax error'})."
+
+        # 10. Multi-command failure detail
+        if "command failure:" in combined or "command #" in combined:
+            return f"Command Execution Failure: {err_str}"
+
+        # 11. Job Cancelled
+        if "cancelled" in combined or "canceled" in combined or "aborted" in combined:
+            return "Job Aborted: Execution was manually cancelled by user."
+
+        # 12. Non-empty error string
+        if err_str:
+            return f"Execution Error: {err_str}"
+
+        # 13. Empty error string but CLI output has error keywords
+        if out_str:
+            for line in out_str.splitlines():
+                if any(w in line.lower() for w in ["error", "fail", "denied", "abort", "reject"]):
+                    return f"Execution Error from CLI Output: {line.strip()}"
+
+        return "Execution Failed: Device connection disconnected or aborted without returning output."
+
+    @classmethod
     def generate_job_zip(cls, job_id: str) -> Optional[bytes]:
         """
         Generate a comprehensive in-memory ZIP package containing:
@@ -765,9 +872,8 @@ class JobService:
                 is_success = bool(getattr(res, "success", False))
                 result_str = "success" if is_success else "fail"
 
-                err_detail = getattr(res, "error", None) or ""
                 if not is_success:
-                    detail_str = str(err_detail).strip() or "Execution failed"
+                    detail_str = cls.format_failure_diagnostic(res, host_ip=host_ip, dev=linked_dev)
                 else:
                     t_exec = getattr(res, "execution_time_seconds", None)
                     t_str = f"{t_exec}s" if t_exec is not None else "0.0s"

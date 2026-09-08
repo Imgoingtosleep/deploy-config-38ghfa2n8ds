@@ -120,23 +120,58 @@ class NornirService:
     @staticmethod
     def _format_failure_reason(exc: Any, host_name: str = "") -> str:
         """Format detailed human-readable explanation of why a device failed"""
-        err_str = str(exc or "")
+        err_str = str(exc or "").strip()
         err_lower = err_str.lower()
-        if "authentication failed" in err_lower or "auth fail" in err_lower or "bad authentication" in err_lower or "authentication to device failed" in err_lower:
-            return f"Authentication Failed on {host_name}: Username, password, or enable secret is incorrect."
+        h_prefix = f"on {host_name}: " if host_name else ""
+
+        if "unable to open channel" in err_lower or "channel closed" in err_lower or "channel request failed" in err_lower or "administratively prohibited" in err_lower:
+            return (
+                f"SSH Channel Error {h_prefix}Switch rejected SSH session channel (Unable to open channel). "
+                f"Common causes: 1) Switch VTY terminal lines are full or hung (check 'display users' / 'show users'), "
+                f"2) User account lacks terminal/shell permissions, or 3) Concurrency limit exceeded."
+            )
+        elif "authentication failed" in err_lower or "auth fail" in err_lower or "bad authentication" in err_lower or "authentication to device failed" in err_lower:
+            return (
+                f"Authentication Failed {h_prefix}Username, password, or enable secret is incorrect. "
+                f"Please verify device credentials or adjust the fallback profile priority order."
+            )
         elif "terminal width 511" in err_lower or "pattern not detected: 'terminal width 511'" in err_lower:
-            return f"Device Type Mismatch on {host_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco switch (e.g. Huawei VRP, HP, Linux). Please select the correct Device Type (e.g. Huawei VRP) or run Auto Detect."
+            return (
+                f"Device Type Mismatch {h_prefix}Netmiko sent Cisco IOS setup command ('terminal width 511') to a non-Cisco switch (e.g. Huawei VRP, HP, Linux). "
+                f"Please select the correct Device Type (e.g. Huawei VRP) or run Auto Detect."
+            )
+        elif "pattern not detected" in err_lower:
+            return (
+                f"Prompt Detection Timeout {h_prefix}Connected but device CLI prompt was not recognized within timeout. "
+                f"Check device_type setting or inspect for unexpected interactive banners/prompts."
+            )
         elif "tcp connection to device failed" in err_lower or "timed-out" in err_lower or "timed out" in err_lower or "timeout" in err_lower:
-            return f"Connection Timeout on {host_name}: Device did not respond within timeout (Switch is down, IP unreachable, or firewall is dropping port 22/23)."
+            return (
+                f"Connection Timeout {h_prefix}Device did not respond within timeout on port 22/23. "
+                f"Common causes: Switch is powered off, IP address unreachable, or firewall/ACL is dropping TCP traffic."
+            )
         elif "connection refused" in err_lower:
-            return f"Connection Refused on {host_name}: Port 22/23 is closed. SSH/Telnet service might be disabled on the switch."
-        elif "no route to host" in err_lower or "unreachable" in err_lower:
-            return f"Network Unreachable on {host_name}: No IP route to host from automation server."
+            return (
+                f"Connection Refused {h_prefix}Port 22/23 is closed. "
+                f"SSH/Telnet service might be disabled on the switch or blocked by access-list."
+            )
+        elif "no route to host" in err_lower or "network is unreachable" in err_lower or "unreachable" in err_lower:
+            return (
+                f"Network Unreachable {h_prefix}No IP route to host from automation server, or gateway dropped packets."
+            )
+        elif "host unreached" in err_lower:
+            return (
+                f"Network Unreachable {h_prefix}Host was unreachable or aborted before connection could be established."
+            )
         elif "incompatible ssh peer" in err_lower or "kex" in err_lower or "cipher" in err_lower:
-            return f"SSH Algorithm/Cipher Mismatch on {host_name}: Switch rejected key exchange ciphers."
+            return (
+                f"SSH Cipher/Algorithm Mismatch {h_prefix}Switch rejected key exchange ciphers (Legacy switch firmware requires older cipher suite)."
+            )
         elif "invalid input" in err_lower or "unrecognized command" in err_lower or "syntax error" in err_lower or "error:" in err_lower:
-            return f"CLI Syntax Error on {host_name}: {err_str}"
-        return f"Execution Error on {host_name}: {err_str}"
+            return f"CLI Syntax Error {h_prefix}{err_str}"
+        elif err_str:
+            return f"Execution Error {h_prefix}{err_str}"
+        return f"Execution Failed {h_prefix}Connection aborted without returning error output."
 
     @classmethod
     def resolve_vendor_command(cls, command: str, device_type: str, source_vendor: str = "auto") -> str:

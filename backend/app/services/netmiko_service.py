@@ -582,11 +582,21 @@ class NetmikoService:
                         pass
 
                 elapsed = round(time.time() - start_time, 2)
+                is_all_success = all(r.get("success", False) for r in results)
+                error_msg = None
+                if not is_all_success:
+                    failed_items = [
+                        f"Command #{r.get('index', '?')} '{r.get('command', '')}' failed: {r.get('error') or 'Execution failed'}"
+                        for r in results if not r.get("success")
+                    ]
+                    error_msg = " | ".join(failed_items) if failed_items else "One or more commands failed"
+
                 return {
                     "host": target_name,
                     "results": results,
                     "sysname_device": detected_sysname,
-                    "success": all(r["success"] for r in results),
+                    "success": is_all_success,
+                    "error": error_msg,
                     "overall_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,
                     "authenticated_username": device.username,
