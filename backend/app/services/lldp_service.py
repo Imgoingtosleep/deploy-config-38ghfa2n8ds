@@ -1,4 +1,5 @@
 import io
+import ipaddress
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,7 @@ from app.services.netmiko_service import NetmikoService
 SYSNAME_CMD = "display current-configuration | include sysname"
 LLDP_BRIEF_CMD = "display lldp neighbor brief"
 LLDP_DETAIL_CMD = "display lldp neighbor interface {intf}"
+LLDP_FULL_CMD = "display lldp neighbor"
 
 # Excel cell hard limit is 32,767 chars
 EXCEL_CELL_LIMIT = 32000
@@ -85,30 +87,63 @@ class LldpService:
         return rows
 
     @staticmethod
-    def parse_lldp_detail(output: str) -> List[Dict[str, str]]:
+    def intf_key(name: str) -> str:
+        """Match short and long interface names: GE0/0/1 == GigabitEthernet0/0/1, XGE0/0/1 == XGigabitEthernet0/0/1"""
+        s = re.sub(r"\s+", "", name or "")
+        m = re.match(r"^(\d*[A-Za-z])[A-Za-z\-]*?(\d+(?:/\d+)*(?:[:.]\d+)?)$", s)
+        if not m:
+            return s.lower()
+        prefix = m.group(1).upper()
+        if "trunk" in s.lower():
+            prefix += "TRUNK"
+        return f"{prefix}{m.group(2)}"
+
+    @staticmethod
+    def extract_mgmt_ipv4(text: str) -> str:
+        """
+        First valid IPv4 from 'Management address[ value] : <value>' lines.
+        The value must be on the same line (an empty value must not pick up the
+        next line), and MAC / IPv6 management addresses are skipped.
+        """
+        for m in re.finditer(r"^[ \t]*Management address(?:[ \t]+value)?[ \t]*:[ \t]*(\S*)", text or "", re.MULTILINE | re.IGNORECASE):
+            candidate = re.match(r"\d{1,3}(?:\.\d{1,3}){3}(?![\d.])", m.group(1))
+            if not candidate:
+                continue
+            try:
+                return str(ipaddress.IPv4Address(candidate.group(0)))
+            except ValueError:
+                continue
+        return ""
+
+    @classmethod
+    def parse_lldp_detail(cls, output: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
         """
         Parse Huawei 'display lldp neighbor [interface X]' detail output.
         Same block split as the original script, plus support for several
-        neighbors per interface and the management address.
+        neighbors per interface and the management address. When the
+        '<port> has N neighbor(s):' header is missing (some VRP versions on
+        the per-interface command), the whole output is used for default_local_port.
         """
         results: List[Dict[str, str]] = []
-        blocks = re.split(r"(\S+) has \d+ neighbor\(s\):", output or "")
+        blocks = re.split(r"(\S+) has \d+ neighbors?(?:\(s\))?\s*:", output or "", flags=re.IGNORECASE)
+        if len(blocks) < 3 and default_local_port:
+            blocks = ["", default_local_port, output or ""]
         for i in range(1, len(blocks), 2):
             local_port = blocks[i]
             content = blocks[i + 1] if i + 1 < len(blocks) else ""
-            neighbors = re.split(r"Neighbor index\s*:\s*\d+", content)
+            neighbors = re.split(r"Neighbor index\s*:\s*\d+", content, flags=re.IGNORECASE)
             neighbors = [n for n in neighbors if n.strip()] or [content]
             for n in neighbors:
-                sysname = re.search(r"System name\s*:(.*)", n)
-                port_id = re.search(r"Port ID\s*:(.*)", n)
+                sysname = re.search(r"^\s*System\s*name\s*:(.*)$", n, re.MULTILINE | re.IGNORECASE)
+                port_id = re.search(r"^\s*Port\s*ID\s*:(.*)$", n, re.MULTILINE | re.IGNORECASE)
                 if not sysname and not port_id:
                     continue
-                mgmt = re.search(r"Management address(?: value)?\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})", n)
+                remote_ip = cls.extract_mgmt_ipv4(n)
                 results.append({
                     "local_port": local_port,
                     "remote_device": sysname.group(1).strip() if sysname else "N/A",
                     "remote_port": port_id.group(1).strip() if port_id else "N/A",
-                    "remote_ip": mgmt.group(1) if mgmt else "",
+                    "remote_ip": remote_ip,
                 })
         return results
 
@@ -160,12 +195,14 @@ class LldpService:
                 brief_rows = cls.parse_lldp_brief(brief_raw)
                 log_lines.append(f"Step 2: '{LLDP_BRIEF_CMD}' returned {len(brief_rows)} neighbor row(s)")
 
-                seen_intf: Set[str] = set()
+                # Step 3: loop 'display lldp neighbor interface <if>' for every brief port
+                intf_order: List[str] = []
+                details_by_intf: Dict[str, List[Dict[str, str]]] = {}
                 for row in brief_rows:
                     intf = row["local_port"]
-                    if intf in seen_intf:
+                    if intf in details_by_intf:
                         continue
-                    seen_intf.add(intf)
+                    intf_order.append(intf)
                     cmd = LLDP_DETAIL_CMD.format(intf=intf)
                     details: List[Dict[str, str]] = []
                     try:
@@ -173,14 +210,45 @@ class LldpService:
                             net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
                         )
                         raw_parts.append(f"<{sysname}> {cmd}\n{detail_raw}")
-                        details = cls.parse_lldp_detail(detail_raw)
+                        details = cls.parse_lldp_detail(detail_raw, default_local_port=intf)
                     except Exception as e:
                         log_lines.append(f"Step 3: '{cmd}' failed: {e}")
+                    details_by_intf[intf] = details
+                    log_lines.append(f"Step 3: '{cmd}' -> {len(details)} neighbor(s)")
 
-                    if details:
-                        log_lines.append(f"Step 3: '{cmd}' -> {len(details)} neighbor(s)")
-                    else:
-                        # Fall back to the brief row values for this interface
+                # Step 4: ports without detail -> run full 'display lldp neighbor' once
+                # and parse it exactly like the original script
+                missing = [i for i in intf_order if not details_by_intf[i]]
+                if missing or not brief_rows:
+                    try:
+                        full_raw = NetmikoService.clean_cli_output(
+                            net_connect.send_command(LLDP_FULL_CMD, read_timeout=settings.DEFAULT_TIMEOUT * 4)
+                        )
+                        raw_parts.append(f"<{sysname}> {LLDP_FULL_CMD}\n{full_raw}")
+                        full_rows = cls.parse_lldp_detail(full_raw)
+                        log_lines.append(
+                            f"Step 4: {len(missing)} port(s) without detail, '{LLDP_FULL_CMD}' returned {len(full_rows)} neighbor(s)"
+                        )
+                        by_key: Dict[str, List[Dict[str, str]]] = {}
+                        for r in full_rows:
+                            by_key.setdefault(cls.intf_key(r["local_port"]), []).append(r)
+                        if not brief_rows:
+                            # Brief could not be parsed at all: use the full output as-is
+                            for r in full_rows:
+                                if r["local_port"] not in details_by_intf:
+                                    intf_order.append(r["local_port"])
+                                    details_by_intf[r["local_port"]] = []
+                                details_by_intf[r["local_port"]].append(r)
+                        for intf in missing:
+                            details_by_intf[intf] = by_key.get(cls.intf_key(intf), [])
+                    except Exception as e:
+                        log_lines.append(f"Step 4: '{LLDP_FULL_CMD}' failed: {e}")
+
+                for intf in intf_order:
+                    details = details_by_intf[intf]
+                    if not details:
+                        # Last resort: brief values for this port
+                        log_lines.append(f"Step 4: {intf} has no detail anywhere, used brief values")
                         details = [
                             {
                                 "local_port": r["local_port"],
@@ -190,20 +258,17 @@ class LldpService:
                             }
                             for r in brief_rows if r["local_port"] == intf
                         ]
-                        log_lines.append(f"Step 3: '{cmd}' had no detail, used brief values")
-
                     for d in details:
                         neighbors.append({
                             "Local Device": sysname,
                             "Local IP": local_ip,
-                            # Full name from detail (GigabitEthernet0/0/1), same as the original script
                             "Local Port": d["local_port"],
                             "Remote Device": d["remote_device"],
                             "Remote Port": d["remote_port"],
                             "Remote IP": d.get("remote_ip", ""),
                         })
 
-                log_lines.append(f"Step 4: Parsed {len(neighbors)} neighbors.")
+                log_lines.append(f"Step 5: Parsed {len(neighbors)} neighbors.")
         except Exception as e:
             status = f"Failed: {e}"
             error = str(e)
