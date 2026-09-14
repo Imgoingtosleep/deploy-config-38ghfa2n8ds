@@ -408,6 +408,30 @@ export const setDefaultCredentialProfile = async (id) => {
   return response.data;
 };
 
+// --- LLDP Discovery APIs ---
+export const discoverLldp = async (devices, { recursive = false, maxDepth = 3, numWorkers = null } = {}) => {
+  const payload = { devices, recursive, max_depth: maxDepth };
+  if (numWorkers) payload.num_workers = numWorkers;
+  // SSH loop over every neighbor port can take much longer than the default 60s
+  const response = await apiClient.post('/lldp/discover', payload, { timeout: 0 });
+  return response.data;
+};
+
+export const exportLldpExcel = async (neighbors, hosts) => {
+  const response = await apiClient.post(
+    '/lldp/export-excel',
+    { neighbors, hosts },
+    { responseType: 'blob', timeout: 0 }
+  );
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lldp_detailed_report_${timestamp}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 export default apiClient;
 
 

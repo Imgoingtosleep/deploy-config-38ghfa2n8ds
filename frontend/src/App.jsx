@@ -4,6 +4,7 @@ import DeviceForm from './components/DeviceForm';
 import HealthCheckPage from './pages/HealthCheckPage';
 import TroubleshootPage from './pages/TroubleshootPage';
 import DeployConfigPage from './pages/DeployConfigPage';
+import LldpDiscoveryPage from './pages/LldpDiscoveryPage';
 import { getNornirWorkers, setNornirWorkers as saveNornirWorkersApi } from './services/api';
 import './App.css';
 
@@ -114,6 +115,9 @@ export default function App() {
               nornirWorkers={nornirWorkers}
               onUpdateWorkers={handleUpdateWorkers}
             />
+          )}
+          {activeTab === 'lldp' && (
+            <LldpDiscoveryPage fleet={fleet} nornirWorkers={nornirWorkers} />
           )}
         </section>
       </main>

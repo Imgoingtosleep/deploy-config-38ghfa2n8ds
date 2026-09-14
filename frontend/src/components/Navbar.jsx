@@ -1,5 +1,5 @@
 import React from 'react';
-import { Server, Activity, Terminal, Send } from 'lucide-react';
+import { Server, Activity, Terminal, Send, Share2 } from 'lucide-react';
 import './Navbar.css';
 
 export default function Navbar({ activeTab, setActiveTab, deviceConnected, deviceHost }) {
@@ -42,6 +42,14 @@ export default function Navbar({ activeTab, setActiveTab, deviceConnected, devic
             >
               <Send className="nav-icon" />
               <span>Deploy Config</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('lldp')}
+              className={`nav-btn ${activeTab === 'lldp' ? 'active' : ''}`}
+            >
+              <Share2 className="nav-icon" />
+              <span>LLDP Discovery</span>
             </button>
           </nav>
 
