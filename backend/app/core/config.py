@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     MAX_NUM_WORKERS: int = 100
     GLOBAL_DELAY_FACTOR: int = int(os.getenv("GLOBAL_DELAY_FACTOR", 1))
 
+    # LLDP subnet scan
+    LLDP_LOG_DIR: str = os.getenv("LLDP_LOG_DIR", "logs/lldp")
+    LLDP_SCAN_MAX_IPS: int = int(os.getenv("LLDP_SCAN_MAX_IPS", 16384))
+
     class Config:
         case_sensitive = True
         extra = "allow"

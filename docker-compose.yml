@@ -21,6 +21,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./backend/app:/app/app
+      # LLDP subnet scan logs (LLDP_LOG_DIR=logs/lldp) persist on the host
+      - ./backend/logs:/app/logs
     # privileged: true allows backend to directly access USB-to-Serial Console cables (/dev/ttyUSB0, /dev/ttyACM0)
     privileged: true
     networks:

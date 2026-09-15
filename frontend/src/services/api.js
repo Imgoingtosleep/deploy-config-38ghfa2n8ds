@@ -417,6 +417,42 @@ export const discoverLldp = async (devices, { recursive = false, maxDepth = 3, n
   return response.data;
 };
 
+export const previewScanTargets = async (targets, exclude = []) => {
+  const response = await apiClient.post('/lldp/scan-subnet/preview', { targets, exclude });
+  return response.data;
+};
+
+export const submitLldpSubnetScan = async (payload) => {
+  const response = await apiClient.post('/lldp/scan-subnet', payload);
+  return response.data;
+};
+
+export const getLldpSubnetScan = async (jobId, { includeReport = false, logLines = 100 } = {}) => {
+  const response = await apiClient.get(`/lldp/scan-subnet/${jobId}`, {
+    params: { include_report: includeReport, log_lines: logLines },
+    timeout: 0,
+  });
+  return response.data;
+};
+
+export const cancelLldpSubnetScan = async (jobId) => {
+  const response = await apiClient.post(`/lldp/scan-subnet/${jobId}/cancel`);
+  return response.data;
+};
+
+export const exportLldpScanZip = async (jobId) => {
+  const response = await apiClient.get(`/lldp/scan-subnet/${jobId}/export-zip`, {
+    responseType: 'blob',
+    timeout: 0,
+  });
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `lldp_scan_${jobId.slice(0, 8)}_logs.zip`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 export const exportLldpExcel = async (neighbors, hosts) => {
   const response = await apiClient.post(
     '/lldp/export-excel',

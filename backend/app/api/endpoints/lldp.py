@@ -1,12 +1,33 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from app.schemas.device import DeviceCredentials
+from app.services.job_service import JobService
 from app.services.lldp_service import LldpService
+from app.services.lldp_scan_service import LldpScanService, expand_targets
 
 router = APIRouter()
+
+
+class LldpTargetPreviewRequest(BaseModel):
+    targets: List[str] = Field(..., description="CIDR / range / IP e.g. 10.0.0.0/24, 10.0.1.10-50, 10.0.2.1")
+    exclude: List[str] = []
+
+
+class LldpSubnetScanRequest(LldpTargetPreviewRequest):
+    profile_id: Optional[str] = Field(None, description="Credential profile; empty + no username = default profile")
+    username: Optional[str] = ""
+    password: Optional[str] = ""
+    secret: Optional[str] = None
+    device_type: str = "huawei"
+    port: int = Field(22, ge=1, le=65535)
+    num_workers: Optional[int] = Field(None, ge=1, le=100, description="Concurrent SSH sessions")
+    scan_workers: int = Field(200, ge=1, le=1000, description="Concurrent TCP port checks")
+    tcp_timeout: float = Field(1.5, ge=0.2, le=10)
+    recursive: bool = Field(False, description="Also SSH to LLDP management IPs outside the targets")
+    max_depth: int = Field(3, ge=1, le=10)
 
 
 class LldpDiscoverRequest(BaseModel):
@@ -31,6 +52,76 @@ def discover_lldp(request: LldpDiscoverRequest):
         num_workers=request.num_workers,
         recursive=request.recursive,
         max_depth=request.max_depth,
+    )
+
+
+@router.post("/scan-subnet/preview")
+def preview_scan_targets(request: LldpTargetPreviewRequest):
+    """Expand targets without scanning: IP count and first / last address"""
+    try:
+        ips = expand_targets(request.targets, request.exclude)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"count": len(ips), "first": ips[0] if ips else None, "last": ips[-1] if ips else None}
+
+
+@router.post("/scan-subnet")
+def submit_subnet_scan(request: LldpSubnetScanRequest):
+    """Background job: expand subnet -> TCP port check -> LLDP collect on reachable hosts, logs written to disk"""
+    template = DeviceCredentials(
+        host=None,
+        profile_id=request.profile_id or None,
+        username=request.username or "",
+        password=request.password or "",
+        secret=request.secret,
+        device_type=request.device_type,
+        port=request.port,
+        connection_mode="network",
+    )
+    try:
+        return LldpScanService.create_job(
+            targets=request.targets,
+            exclude=request.exclude,
+            template=template,
+            num_workers=request.num_workers,
+            scan_workers=request.scan_workers,
+            tcp_timeout=request.tcp_timeout,
+            recursive=request.recursive,
+            max_depth=request.max_depth,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/scan-subnet/{job_id}")
+def get_subnet_scan(
+    job_id: str,
+    include_report: bool = Query(False, description="Include neighbors + hosts (same shape as /discover)"),
+    log_lines: int = Query(100, ge=0, le=1000),
+):
+    status = LldpScanService.get_status(job_id, include_report=include_report, log_lines=log_lines)
+    if status is None:
+        raise HTTPException(status_code=404, detail=f"LLDP scan job {job_id} not found")
+    return status
+
+
+@router.post("/scan-subnet/{job_id}/cancel")
+def cancel_subnet_scan(job_id: str):
+    if job_id not in LldpScanService._scans or not JobService.cancel_job(job_id):
+        raise HTTPException(status_code=404, detail=f"LLDP scan job {job_id} not found")
+    return {"job_id": job_id, "status": "cancelling"}
+
+
+@router.get("/scan-subnet/{job_id}/export-zip")
+def export_subnet_scan_zip(job_id: str):
+    """ZIP of the job log directory (job.log, scan_result.csv, lldp_inventory.csv, hosts/*.log, report)"""
+    content = LldpScanService.export_zip(job_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"LLDP scan job {job_id} not found")
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="lldp_scan_{job_id[:8]}_logs.zip"'},
     )
 
 
