@@ -25,9 +25,19 @@ import {
   cancelLldpSubnetScan,
   exportLldpScanZip,
 } from '../services/api';
+import LldpTopology from '../components/LldpTopology';
 import './LldpDiscoveryPage.css';
 
-const NEIGHBOR_COLUMNS = ['Local Device', 'Local IP', 'Local Port', 'Remote Device', 'Remote Port', 'Remote IP'];
+const NEIGHBOR_COLUMNS = [
+  'Local Device',
+  'Local Model',
+  'Local IP',
+  'Local Port',
+  'Remote Device',
+  'Remote Model',
+  'Remote Port',
+  'Remote IP',
+];
 const SCAN_STATUSES = [
   { key: 'SUCCESS', label: 'Success', tone: 'ok' },
   { key: 'NO_LLDP', label: 'No LLDP', tone: 'warn' },
@@ -529,6 +539,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
               <button className={view === 'summary' ? 'active' : ''} onClick={() => setView('summary')}>
                 Execution Summary ({filteredHosts.length})
               </button>
+              <button className={view === 'topology' ? 'active' : ''} onClick={() => setView('topology')}>
+                Topology ({report.topology?.nodes?.length || 0})
+              </button>
             </div>
             <div className="lldp-toolbar-right">
               {isScanReport && view === 'summary' && (
@@ -541,10 +554,12 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                   <span>Hide unreachable</span>
                 </label>
               )}
-              <div className="lldp-search">
-                <Search className="h-4 w-4" />
-                <input placeholder="Filter..." value={search} onChange={(e) => setSearch(e.target.value)} />
-              </div>
+              {view !== 'topology' && (
+                <div className="lldp-search">
+                  <Search className="h-4 w-4" />
+                  <input placeholder="Filter..." value={search} onChange={(e) => setSearch(e.target.value)} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -582,6 +597,8 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
             </div>
           )}
 
+          {view === 'topology' && <LldpTopology topology={report.topology} />}
+
           {view === 'summary' && (
             <div className="lldp-table-wrap">
               <table className="lldp-table">
@@ -590,6 +607,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                     <th></th>
                     <th>Hostname</th>
                     <th>IP Address</th>
+                    <th>Model</th>
                     <th>Depth</th>
                     <th>Status</th>
                     <th>Neighbors Found</th>
@@ -599,7 +617,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                 <tbody>
                   {filteredHosts.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="lldp-empty">
+                      <td colSpan={8} className="lldp-empty">
                         No hosts
                       </td>
                     </tr>
@@ -613,6 +631,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                           <td>{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
                           <td>{h.hostname}</td>
                           <td className="mono">{h.ip}</td>
+                          <td>{h.model || '-'}</td>
                           <td>{h.depth}</td>
                           <td>
                             <span className={`lldp-status ${h.success ? 'ok' : 'fail'}`}>
@@ -626,7 +645,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                         </tr>
                         {open && (
                           <tr>
-                            <td colSpan={7} className="lldp-raw-cell">
+                            <td colSpan={8} className="lldp-raw-cell">
                               <pre className="lldp-raw">
                                 {h.credential ? `Credential: ${h.credential}\n` : ''}
                                 {h.log || h.detail || ''}

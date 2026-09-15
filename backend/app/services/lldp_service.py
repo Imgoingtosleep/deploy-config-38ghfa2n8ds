@@ -13,6 +13,12 @@ SYSNAME_CMD = "display current-configuration | include sysname"
 LLDP_BRIEF_CMD = "display lldp neighbor brief"
 LLDP_DETAIL_CMD = "display lldp neighbor interface {intf}"
 LLDP_FULL_CMD = "display lldp neighbor"
+VERSION_CMD = "display version"
+
+# Huawei product models, e.g. S2750-28TP-EI-AC, CE6881-48S6CQ, AR6120-S, NE40E-X8A.
+# Longest match wins so "S5720-28X-SI-AC" beats the short "(S5720 V200R011...)".
+_MODEL_RE = re.compile(r"(?<![\w-])((?:AirEngine|ATN|USG|CE|CX|AR|NE|AC|S)\d{2,5}[A-Z]*(?:-[A-Z0-9]+)*)(?!\w)")
+ROUTER_MODEL_PREFIXES = ("AR", "NE")
 
 # Excel cell hard limit is 32,767 chars
 EXCEL_CELL_LIMIT = 32000
@@ -29,6 +35,19 @@ class LldpService:
     @staticmethod
     def get_sysname(prompt: str) -> str:
         return re.sub(r"[<>\[\]#]", "", prompt or "").strip()
+
+    @staticmethod
+    def extract_model(text: str) -> str:
+        """Model from 'System description' or 'display version' output, '' when none is found"""
+        candidates = _MODEL_RE.findall(text or "")
+        return max(candidates, key=len) if candidates else ""
+
+    @staticmethod
+    def device_role(model: str) -> str:
+        """AR / NE models are routers, any other recognized model is a switch"""
+        if not model:
+            return "unknown"
+        return "router" if model.upper().startswith(ROUTER_MODEL_PREFIXES) else "switch"
 
     @staticmethod
     def parse_lldp_brief(output: str) -> List[Dict[str, str]]:
@@ -139,11 +158,17 @@ class LldpService:
                 if not sysname and not port_id:
                     continue
                 remote_ip = cls.extract_mgmt_ipv4(n)
+                # System description spans several lines, up to the next 'Key :' line
+                desc = re.search(
+                    r"^\s*System\s*description\s*:(.*?)(?=^\s*[A-Za-z][A-Za-z /()\-]{2,40}:|\Z)",
+                    n, re.MULTILINE | re.IGNORECASE | re.DOTALL,
+                )
                 results.append({
                     "local_port": local_port,
                     "remote_device": sysname.group(1).strip() if sysname else "N/A",
                     "remote_port": port_id.group(1).strip() if port_id else "N/A",
                     "remote_ip": remote_ip,
+                    "remote_model": cls.extract_model(desc.group(1)) if desc else "",
                 })
         return results
 
@@ -159,6 +184,7 @@ class LldpService:
         raw_parts: List[str] = []
         neighbors: List[Dict[str, Any]] = []
         sysname = device.name or local_ip
+        model = ""
         status = "Success"
         error = None
 
@@ -187,6 +213,15 @@ class LldpService:
                     sysname_source = "prompt"
                     sysname = cls.get_sysname(net_connect.find_prompt()) or sysname
                 log_lines.append(f"Step 1: Identified real sysname as [{sysname}] (from {sysname_source})")
+                try:
+                    ver_raw = NetmikoService.clean_cli_output(
+                        net_connect.send_command(VERSION_CMD, read_timeout=settings.DEFAULT_TIMEOUT)
+                    )
+                    raw_parts.append(f"<{sysname}> {VERSION_CMD}\n{ver_raw}")
+                    model = cls.extract_model(ver_raw)
+                    log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from '{VERSION_CMD}'")
+                except Exception as e:
+                    log_lines.append(f"Step 1b: '{VERSION_CMD}' failed: {e}")
 
                 brief_raw = NetmikoService.clean_cli_output(
                     net_connect.send_command(LLDP_BRIEF_CMD, read_timeout=settings.DEFAULT_TIMEOUT)
@@ -255,15 +290,18 @@ class LldpService:
                                 "remote_device": r["remote_device"] or "N/A",
                                 "remote_port": r["remote_port"] or "N/A",
                                 "remote_ip": "",
+                                "remote_model": "",
                             }
                             for r in brief_rows if r["local_port"] == intf
                         ]
                     for d in details:
                         neighbors.append({
                             "Local Device": sysname,
+                            "Local Model": model,
                             "Local IP": local_ip,
                             "Local Port": d["local_port"],
                             "Remote Device": d["remote_device"],
+                            "Remote Model": d.get("remote_model", ""),
                             "Remote Port": d["remote_port"],
                             "Remote IP": d.get("remote_ip", ""),
                         })
@@ -277,6 +315,7 @@ class LldpService:
         return {
             "hostname": sysname,
             "ip": local_ip,
+            "model": model,
             "depth": depth,
             "status": status,
             "success": error is None,
@@ -355,6 +394,69 @@ class LldpService:
             "overall_time_seconds": round(time.time() - start, 2),
             "neighbors": all_neighbors,
             "hosts": hosts,
+            "topology": cls.build_topology(all_neighbors, hosts),
+        }
+
+    @classmethod
+    def build_topology(cls, neighbors: List[Dict[str, Any]], hosts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Nodes keyed by sysname (hostname, ip, model, role) and de-duplicated links:
+        A:GE0/0/1 <-> B:GE0/0/2 reported from both sides becomes one link with confirmed=True.
+        """
+        nodes: Dict[str, Dict[str, Any]] = {}
+
+        def ensure(name: str, ip: str = "", model: str = "") -> str:
+            node = nodes.setdefault(name, {"id": name, "hostname": name, "ip": "", "model": "", "discovered": False})
+            if ip and not node["ip"]:
+                node["ip"] = ip
+            if model and not node["model"]:
+                node["model"] = model
+            return name
+
+        # SSH'd hosts first so their login IP and 'display version' model take priority
+        for h in hosts:
+            if h.get("success") and h.get("status") != "DUPLICATE" and h.get("hostname"):
+                nodes[ensure(h["hostname"], h.get("ip", ""), h.get("model", ""))]["discovered"] = True
+
+        links: Dict[Any, Dict[str, Any]] = {}
+        for n in neighbors:
+            local = (n.get("Local Device") or "").strip()
+            if not local:
+                continue
+            ensure(local, n.get("Local IP", ""), n.get("Local Model", ""))
+            remote = (n.get("Remote Device") or "").strip()
+            if not remote or remote.upper() == "N/A":
+                remote = n.get("Remote IP") or f"Unknown ({local} {n.get('Local Port', '')})"
+            ensure(remote, n.get("Remote IP", ""), n.get("Remote Model", ""))
+            if remote == local:
+                continue
+            local_side = (local, cls.intf_key(n.get("Local Port", "")))
+            remote_side = (remote, cls.intf_key(n.get("Remote Port", "")))
+            key = tuple(sorted([local_side, remote_side]))
+            if key in links:
+                if links[key]["source"] != local:
+                    links[key]["confirmed"] = True
+                continue
+            links[key] = {
+                "source": local,
+                "target": remote,
+                "source_port": n.get("Local Port", ""),
+                "target_port": n.get("Remote Port", ""),
+                "confirmed": False,
+            }
+
+        degree: Dict[str, int] = {}
+        for link in links.values():
+            degree[link["source"]] = degree.get(link["source"], 0) + 1
+            degree[link["target"]] = degree.get(link["target"], 0) + 1
+        for node in nodes.values():
+            node["role"] = cls.device_role(node["model"])
+            node["degree"] = degree.get(node["id"], 0)
+
+        role_order = {"router": 0, "switch": 1, "unknown": 2}
+        return {
+            "nodes": sorted(nodes.values(), key=lambda x: (role_order[x["role"]], -x["degree"], x["hostname"])),
+            "links": list(links.values()),
         }
 
     @staticmethod
@@ -386,7 +488,7 @@ class LldpService:
         ws1.title = "LLDP_Inventory"
         write_sheet(
             ws1,
-            ["Local Device", "Local IP", "Local Port", "Remote Device", "Remote Port", "Remote IP"],
+            ["Local Device", "Local Model", "Local IP", "Local Port", "Remote Device", "Remote Model", "Remote Port", "Remote IP"],
             neighbors,
         )
 
@@ -394,11 +496,12 @@ class LldpService:
         ws2 = wb.create_sheet("Execution_Summary")
         write_sheet(
             ws2,
-            ["Hostname", "IP Address", "Depth", "Status", "Neighbors Found", "Time (s)"],
+            ["Hostname", "IP Address", "Model", "Depth", "Status", "Neighbors Found", "Time (s)"],
             [
                 {
                     "Hostname": h.get("hostname"),
                     "IP Address": h.get("ip"),
+                    "Model": h.get("model", ""),
                     "Depth": h.get("depth", 0),
                     "Status": h.get("status"),
                     "Neighbors Found": h.get("neighbors_found", 0),

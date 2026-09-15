@@ -506,6 +506,99 @@
   color: #cbd5e1;
 }
 
+/* Topology */
+.lldp-topo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.lldp-topo-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.lldp-topo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+.lldp-topo-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.lldp-topo-legend i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 3px;
+  border: 2px solid;
+}
+
+.lldp-topo-legend .muted,
+.lldp-topo-panel-head .muted {
+  color: #64748b;
+}
+
+.lldp-topo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.lldp-btn-sm {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.72rem;
+}
+
+.lldp-topo-canvas {
+  width: 100%;
+  min-height: 200px;
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #020617;
+  touch-action: none;
+}
+
+.lldp-topo-canvas svg {
+  display: block;
+  cursor: grab;
+  user-select: none;
+}
+
+.lldp-topo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.lldp-topo-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 1rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.lldp-topo-panel-head strong {
+  color: #e2e8f0;
+  font-size: 0.9rem;
+}
+
 .lldp-detail {
   font-size: 0.7rem;
   color: #64748b;

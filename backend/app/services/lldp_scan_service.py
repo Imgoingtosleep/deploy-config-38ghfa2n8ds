@@ -9,7 +9,7 @@ closed browser or a backend crash:
     scan_result.csv      one row per IP (status, sysname, credential, detail)
     lldp_inventory.csv   one row per LLDP neighbor
     hosts/<ip>_<sysname>.log   execution log + raw CLI output (reachable hosts only)
-    summary.json, lldp_report.xlsx   written when the job ends
+    summary.json, topology.json, lldp_report.xlsx   written when the job ends
 """
 import csv
 import io
@@ -33,8 +33,10 @@ from app.schemas.device import DeviceCredentials
 from app.services.job_service import JobRecord, JobService
 from app.services.lldp_service import LldpService
 
-INVENTORY_COLUMNS = ["Local Device", "Local IP", "Local Port", "Remote Device", "Remote Port", "Remote IP"]
-SCAN_COLUMNS = ["ip", "depth", "tcp_open", "status", "sysname", "credential", "neighbors", "time_s", "detail"]
+INVENTORY_COLUMNS = [
+    "Local Device", "Local Model", "Local IP", "Local Port", "Remote Device", "Remote Model", "Remote Port", "Remote IP",
+]
+SCAN_COLUMNS = ["ip", "depth", "tcp_open", "status", "sysname", "model", "credential", "neighbors", "time_s", "detail"]
 
 STATUS_SUCCESS = "SUCCESS"
 STATUS_NO_LLDP = "NO_LLDP"
@@ -151,7 +153,7 @@ class ScanLogWriter:
     def write_host(self, host: Dict[str, Any]):
         with self._lock:
             self._write_csv_row("scan_result.csv", [
-                host["ip"], host["depth"], host["tcp_open"], host["status"], host["hostname"],
+                host["ip"], host["depth"], host["tcp_open"], host["status"], host["hostname"], host.get("model", ""),
                 host.get("credential", ""), host["neighbors_found"], host["execution_time_seconds"], host.get("detail", ""),
             ])
             if host["neighbors"]:
@@ -173,9 +175,17 @@ class ScanLogWriter:
                         f"{host.get('raw_output') or 'No Data'}\n"
                     )
 
-    def write_final(self, summary: Dict[str, Any], neighbors: List[Dict[str, Any]], hosts: List[Dict[str, Any]]):
+    def write_final(
+        self,
+        summary: Dict[str, Any],
+        neighbors: List[Dict[str, Any]],
+        hosts: List[Dict[str, Any]],
+        topology: Dict[str, Any],
+    ):
         with open(os.path.join(self.dir, "summary.json"), "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2, ensure_ascii=False)
+        with open(os.path.join(self.dir, "topology.json"), "w", encoding="utf-8") as f:
+            json.dump(topology, f, indent=2, ensure_ascii=False)
         with open(os.path.join(self.dir, "lldp_report.xlsx"), "wb") as f:
             f.write(LldpService.build_excel(neighbors, hosts))
 
@@ -317,8 +327,8 @@ class LldpScanService:
             st["phase"] = job.status
             try:
                 report = cls.build_report(job, st)
-                summary = {k: v for k, v in report.items() if k not in ("neighbors", "hosts")}
-                writer.write_final(summary, report["neighbors"], report["hosts"])
+                summary = {k: v for k, v in report.items() if k not in ("neighbors", "hosts", "topology")}
+                writer.write_final(summary, report["neighbors"], report["hosts"], report["topology"])
             except Exception as e:
                 writer.log(f"Failed to write final report: {e}")
             s = st["stats"]
@@ -355,6 +365,7 @@ class LldpScanService:
                     "error": f"TCP/{port} no response within {timeout}s",
                     "detail": f"TCP/{port} closed or no response within {timeout}s (host down, ACL or firewall)",
                     "credential": "",
+                    "model": "",
                     "neighbors_found": 0,
                     "neighbors": [],
                     "log": "",
@@ -389,7 +400,7 @@ class LldpScanService:
                     res = fut.result()
                 except Exception as e:
                     res = {
-                        "hostname": dev.name or dev.host, "ip": dev.host, "depth": depth,
+                        "hostname": dev.name or dev.host, "ip": dev.host, "model": "", "depth": depth,
                         "status": f"Failed: {e}", "success": False, "error": str(e),
                         "neighbors_found": 0, "neighbors": [], "log": f"ERROR: {e}",
                         "raw_output": "", "execution_time_seconds": 0,
@@ -463,6 +474,7 @@ class LldpScanService:
             "log_dir": st["writer"].dir,
             "neighbors": neighbors,
             "hosts": hosts,
+            "topology": LldpService.build_topology(neighbors, hosts),
         }
 
     @classmethod
