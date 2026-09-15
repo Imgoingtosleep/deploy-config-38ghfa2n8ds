@@ -9,6 +9,9 @@ const PNG_TARGET_SCALE = 2;
 const PNG_TILE_PX = 8192;
 const OVERVIEW_MAX_PX = 4096;
 
+// Embedded in exported SVG / PNG / ZIP so the file can be imported back into LLDP rows
+export const PAYLOAD_FORMAT = 'lldp-topology';
+
 export function boundsOf(pos) {
   const pts = Object.values(pos);
   if (pts.length === 0) return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
@@ -56,6 +59,57 @@ export function prepareSvgClone(svgEl, positions) {
 
 export const serializeSvg = (clone) => new XMLSerializer().serializeToString(clone);
 
+/** Topology + LLDP rows + current positions, the data embedded in every export */
+export function buildPayload(nodes, links, neighbors, positions) {
+  const round = (v) => (Number.isFinite(v) ? Math.round(v * 10) / 10 : undefined);
+  return {
+    format: PAYLOAD_FORMAT,
+    version: 1,
+    exported_at: new Date().toISOString(),
+    topology: {
+      nodes: nodes.map((n) => ({ ...n, x: round(positions[n.id]?.x), y: round(positions[n.id]?.y) })),
+      links,
+    },
+    neighbors: neighbors || [],
+  };
+}
+
+export function addSvgMetadata(clone, payload) {
+  const meta = document.createElementNS('http://www.w3.org/2000/svg', 'metadata');
+  meta.setAttribute('id', PAYLOAD_FORMAT);
+  meta.textContent = JSON.stringify(payload);
+  clone.insertBefore(meta, clone.firstChild);
+}
+
+/** Insert an uncompressed UTF-8 iTXt chunk before IEND; the image itself is unchanged */
+async function addPngText(blob, keyword, text) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const iend = bytes.length - 12;
+  if (String.fromCharCode(...bytes.subarray(iend + 4, iend + 8)) !== 'IEND') return blob;
+  const enc = new TextEncoder();
+  const kw = enc.encode(keyword);
+  const body = enc.encode(text);
+  // keyword \0 compression-flag compression-method language \0 translated-keyword \0 text
+  const data = new Uint8Array(kw.length + 5 + body.length);
+  data.set(kw, 0);
+  data.set(body, kw.length + 5);
+  const type = enc.encode('iTXt');
+  const crcInput = new Uint8Array(4 + data.length);
+  crcInput.set(type, 0);
+  crcInput.set(data, 4);
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(type, 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, crc32(crcInput));
+  const out = new Uint8Array(bytes.length + chunk.length);
+  out.set(bytes.subarray(0, iend), 0);
+  out.set(chunk, iend);
+  out.set(bytes.subarray(iend), iend + chunk.length);
+  return new Blob([out], { type: 'image/png' });
+}
+
 function loadSvgImage(markup) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(new Blob([markup], { type: 'image/svg+xml' }));
@@ -100,7 +154,8 @@ async function renderRegion(clone, vx, vy, vw, vh, scale) {
  * Otherwise a ZIP with 2x tiles + overview.png, so nothing is ever downscaled into blur.
  * Returns a status message.
  */
-export async function exportPng(svgEl, positions, baseName, onProgress = () => {}) {
+export async function exportPng(svgEl, positions, baseName, payload, onProgress = () => {}) {
+  const payloadText = JSON.stringify(payload);
   const { clone, minX, minY, w, h } = prepareSvgClone(svgEl, positions);
   const fits = (s) => w * s <= PNG_MAX_SIDE && h * s <= PNG_MAX_SIDE && w * h * s * s <= PNG_MAX_AREA;
 
@@ -108,7 +163,7 @@ export async function exportPng(svgEl, positions, baseName, onProgress = () => {
   while (scale > 1 && !fits(scale)) scale = Math.max(1, scale - 0.25);
   if (fits(scale)) {
     const blob = await renderRegion(clone, minX, minY, w, h, scale);
-    downloadBlob(blob, `${baseName}.png`);
+    downloadBlob(await addPngText(blob, PAYLOAD_FORMAT, payloadText), `${baseName}.png`);
     return `PNG ${Math.ceil(w * scale)} x ${Math.ceil(h * scale)} px (${scale}x)`;
   }
 
@@ -136,7 +191,9 @@ export async function exportPng(svgEl, positions, baseName, onProgress = () => {
   onProgress('Rendering overview...');
   const overviewScale = Math.min(1, OVERVIEW_MAX_PX / Math.max(w, h));
   const overview = await renderRegion(clone, minX, minY, w, h, overviewScale);
-  files.unshift({ name: 'overview.png', data: new Uint8Array(await overview.arrayBuffer()) });
+  const overviewWithData = await addPngText(overview, PAYLOAD_FORMAT, payloadText);
+  files.unshift({ name: 'overview.png', data: new Uint8Array(await overviewWithData.arrayBuffer()) });
+  files.push({ name: 'topology.json', data: JSON.stringify(payload, null, 2) });
   files.push({
     name: 'README.txt',
     data:
@@ -144,6 +201,7 @@ export async function exportPng(svgEl, positions, baseName, onProgress = () => {
       `Full size: ${Math.ceil(w * PNG_TARGET_SCALE)} x ${Math.ceil(h * PNG_TARGET_SCALE)} px at ${PNG_TARGET_SCALE}x, too large for one browser canvas.\n` +
       `tiles/rowRR_colCC.png: ${rows} row(s) x ${cols} column(s), ${PNG_TILE_PX} px each, place left-to-right, top-to-bottom.\n` +
       `overview.png: whole diagram scaled to ${Math.round(overviewScale * 100)}%.\n` +
+      `topology.json: devices, links and LLDP rows; import this ZIP back into LLDP Discovery to get the table again.\n` +
       `For one sharp file use the SVG or draw.io export.\n`,
   });
   onProgress('Building ZIP...');
@@ -157,6 +215,11 @@ const xmlEscape = (s) =>
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+
+const attrString = (attrs) =>
+  Object.entries(attrs)
+    .map(([k, v]) => ` ${k}="${xmlEscape(v)}"`)
+    .join('');
 
 const DRAWIO_NODE = {
   router: {
@@ -198,16 +261,20 @@ export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } 
     const s = DRAWIO_NODE[node.role] || DRAWIO_NODE.unknown;
     const id = `n${i}`;
     cellId[node.id] = id;
-    const label = [
-      `<b>${xmlEscape(node.hostname)}</b>`,
-      node.ip ? xmlEscape(node.ip) : '',
-      node.model ? `<font color="${s.modelColor}">${xmlEscape(node.model)}</font>` : '',
-    ]
-      .filter(Boolean)
-      .join('<br>');
+    // Label renders from the data attributes (placeholders), so Edit Data (Ctrl+M) updates both
+    const label = `<b>%hostname%</b><br>%ip%<br><font color="${s.modelColor}">%model%</font>`;
+    const data = attrString({
+      lldp_type: 'device',
+      hostname: node.hostname,
+      ip: node.ip || '',
+      model: node.model || '',
+      role: node.role,
+      discovered: node.discovered ? 'yes' : 'no',
+    });
     cells.push(
-      `<mxCell id="${id}" value="${xmlEscape(label)}" style="${s.style}" vertex="1" parent="1">` +
-        `<mxGeometry x="${Math.round(p.x + offX - s.w / 2)}" y="${Math.round(p.y + offY - s.h / 2)}" width="${s.w}" height="${s.h}" as="geometry"/></mxCell>`
+      `<object id="${id}" label="${xmlEscape(label)}" placeholders="1"${data}>` +
+        `<mxCell style="${s.style}" vertex="1" parent="1">` +
+        `<mxGeometry x="${Math.round(p.x + offX - s.w / 2)}" y="${Math.round(p.y + offY - s.h / 2)}" width="${s.w}" height="${s.h}" as="geometry"/></mxCell></object>`
     );
   });
 
@@ -218,9 +285,17 @@ export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } 
     const count = pair.ports.length;
     const dashed = pair.ports.some((p) => p.confirmed) ? '' : 'dashed=1;';
     const id = `e${i}`;
+    // Ports are always kept as data (';' separated, same order on both sides) even when labels are off
+    const data = attrString({
+      lldp_type: 'link',
+      source_ports: pair.ports.map((p) => p.sp).join(';'),
+      target_ports: pair.ports.map((p) => p.tp).join(';'),
+      confirmed: pair.ports.map((p) => (p.confirmed ? 'yes' : 'no')).join(';'),
+    });
     cells.push(
-      `<mxCell id="${id}" value="${count > 1 ? `x${count}` : ''}" style="endArrow=none;html=1;rounded=0;strokeColor=#64748b;strokeWidth=${1 + Math.min(count - 1, 4)};${dashed}fontColor=#b45309;fontStyle=1;" edge="1" parent="1" source="${source}" target="${target}">` +
-        `<mxGeometry relative="1" as="geometry"/></mxCell>`
+      `<object id="${id}" label="${count > 1 ? `x${count}` : ''}"${data}>` +
+        `<mxCell style="endArrow=none;html=1;rounded=0;strokeColor=#64748b;strokeWidth=${1 + Math.min(count - 1, 4)};${dashed}fontColor=#b45309;fontStyle=1;" edge="1" parent="1" source="${source}" target="${target}">` +
+        `<mxGeometry relative="1" as="geometry"/></mxCell></object>`
     );
     if (!includePorts) return;
     [

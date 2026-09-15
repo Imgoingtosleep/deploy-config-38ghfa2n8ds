@@ -1,12 +1,13 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from app.schemas.device import DeviceCredentials
 from app.services.job_service import JobService
 from app.services.lldp_service import LldpService
 from app.services.lldp_scan_service import LldpScanService, expand_targets
+from app.services.topology_import_service import MAX_IMPORT_BYTES, TopologyImportError, import_topology_file
 
 router = APIRouter()
 
@@ -123,6 +124,16 @@ def export_subnet_scan_zip(job_id: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="lldp_scan_{job_id[:8]}_logs.zip"'},
     )
+
+
+@router.post("/import-topology")
+async def import_topology(file: UploadFile = File(...)):
+    """Exported topology (.drawio / .svg / .png / .zip / .json) -> same report shape as /discover"""
+    content = await file.read(MAX_IMPORT_BYTES + 1)
+    try:
+        return import_topology_file(file.filename or "", content)
+    except TopologyImportError as e:
+        raise HTTPException(status_code=400, detail=f"Cannot import {file.filename}: {e}")
 
 
 @router.post("/export-excel")

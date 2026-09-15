@@ -510,6 +510,25 @@
   color: #cbd5e1;
 }
 
+.lldp-import-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.5rem;
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+  font-size: 0.8rem;
+}
+
+.lldp-import-banner code {
+  font-family: ui-monospace, monospace;
+  color: #e0e7ff;
+  word-break: break-all;
+}
+
 /* Topology */
 .lldp-topo {
   display: flex;

@@ -1,7 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, RefreshCw, Download, Image as ImageIcon, FileCode, Loader2 } from 'lucide-react';
 import { groupLinks, computeForceLayout, computeHierarchicalLayout, FORCE_MAX_NODES } from './topologyLayout';
-import { boundsOf, EXPORT_PAD, downloadBlob, prepareSvgClone, serializeSvg, exportPng, buildDrawioXml } from './topologyExport';
+import {
+  boundsOf,
+  EXPORT_PAD,
+  downloadBlob,
+  prepareSvgClone,
+  serializeSvg,
+  exportPng,
+  buildDrawioXml,
+  buildPayload,
+  addSvgMetadata,
+} from './topologyExport';
 
 const HEIGHT = 640;
 
@@ -62,7 +72,7 @@ function NodeIcon({ role, selected }) {
   );
 }
 
-export default function LldpTopology({ topology }) {
+export default function LldpTopology({ topology, neighbors = [] }) {
   const nodes = useMemo(() => topology?.nodes || [], [topology]);
   const pairs = useMemo(() => groupLinks(topology?.links || []), [topology]);
   const nodeById = useMemo(() => Object.fromEntries(nodes.map((d) => [d.id, d])), [nodes]);
@@ -90,9 +100,21 @@ export default function LldpTopology({ topology }) {
   const hasNodes = nodes.length > 0;
   const forceAllowed = nodes.length <= FORCE_MAX_NODES;
 
+  // Imported files carry the positions they were exported / edited with
+  const hasFileLayout = useMemo(
+    () => nodes.length > 0 && nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y)),
+    [nodes]
+  );
+
+  useEffect(() => {
+    setLayoutMode(hasFileLayout ? 'file' : 'hierarchical');
+  }, [topology, hasFileLayout]);
+
   const resetLayout = () => {
-    const pos =
-      layoutMode === 'force' && forceAllowed ? computeForceLayout(nodes, pairs) : computeHierarchicalLayout(nodes, pairs);
+    let pos;
+    if (layoutMode === 'file' && hasFileLayout) pos = Object.fromEntries(nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
+    else if (layoutMode === 'force' && forceAllowed) pos = computeForceLayout(nodes, pairs);
+    else pos = computeHierarchicalLayout(nodes, pairs);
     setPositions(pos);
     setView(fitView(pos, wrapRef.current?.clientWidth || width));
     setSelected(null);
@@ -169,8 +191,12 @@ export default function LldpTopology({ topology }) {
 
   const downloadSvg = () => {
     const { clone, w, h } = prepareSvgClone(svgRef.current, positions);
+    addSvgMetadata(clone, buildPayload(nodes, topology?.links || [], neighbors, positions));
     downloadBlob(new Blob([serializeSvg(clone)], { type: 'image/svg+xml' }), `lldp_topology_${stamp()}.svg`);
-    setExportMsg({ type: 'ok', text: `SVG ${Math.round(w)} x ${Math.round(h)} (vector, stays sharp at any zoom)` });
+    setExportMsg({
+      type: 'ok',
+      text: `SVG ${Math.round(w)} x ${Math.round(h)} (vector, stays sharp at any zoom, can be imported back)`,
+    });
   };
 
   const downloadDrawio = () => {
@@ -186,7 +212,8 @@ export default function LldpTopology({ topology }) {
     setExporting(true);
     setExportMsg({ type: 'info', text: 'Rendering PNG...' });
     try {
-      const text = await exportPng(svgRef.current, positions, `lldp_topology_${stamp()}`, (t) =>
+      const payload = buildPayload(nodes, topology?.links || [], neighbors, positions);
+      const text = await exportPng(svgRef.current, positions, `lldp_topology_${stamp()}`, payload, (t) =>
         setExportMsg({ type: 'info', text: t })
       );
       setExportMsg({ type: 'ok', text });
@@ -235,6 +262,7 @@ export default function LldpTopology({ topology }) {
           <label className="lldp-field inline">
             <span>Layout</span>
             <select value={layoutMode} onChange={(e) => setLayoutMode(e.target.value)}>
+              {hasFileLayout && <option value="file">From imported file</option>}
               <option value="hierarchical">Hierarchical</option>
               <option value="force" disabled={!forceAllowed}>
                 Force{forceAllowed ? '' : ` (max ${FORCE_MAX_NODES} nodes)`}

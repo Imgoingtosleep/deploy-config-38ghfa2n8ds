@@ -453,6 +453,16 @@ export const exportLldpScanZip = async (jobId) => {
   URL.revokeObjectURL(url);
 };
 
+export const importLldpTopology = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient.post('/lldp/import-topology', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 0,
+  });
+  return response.data;
+};
+
 export const exportLldpExcel = async (neighbors, hosts) => {
   const response = await apiClient.post(
     '/lldp/export-excel',

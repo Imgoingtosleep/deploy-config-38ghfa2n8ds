@@ -14,6 +14,7 @@ import {
   Network,
   Square,
   Archive,
+  Upload,
 } from 'lucide-react';
 import {
   discoverLldp,
@@ -24,6 +25,7 @@ import {
   getLldpSubnetScan,
   cancelLldpSubnetScan,
   exportLldpScanZip,
+  importLldpTopology,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
 import './LldpDiscoveryPage.css';
@@ -82,7 +84,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
   const [scanStatus, setScanStatus] = useState(null);
   const [hideUnreachable, setHideUnreachable] = useState(true);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [importing, setImporting] = useState(false);
   const pollRef = useRef(null);
+  const importInputRef = useRef(null);
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
 
@@ -222,6 +226,25 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
       setErrorMessage(errMsg(err, 'Log download failed'));
     } finally {
       setDownloadingZip(false);
+    }
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setImporting(true);
+    setErrorMessage('');
+    try {
+      const data = await importLldpTopology(file);
+      setReport(data);
+      setExpandedHost(null);
+      setSearch('');
+      setView('topology');
+    } catch (err) {
+      setErrorMessage(errMsg(err, 'Topology import failed'));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -460,6 +483,22 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Export Excel
           </button>
+          <button
+            className="lldp-btn-secondary"
+            onClick={() => importInputRef.current?.click()}
+            disabled={running || importing}
+            title="Load a topology exported from here (.drawio, .svg, .png, .zip) back into the LLDP table"
+          >
+            {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            Import Topology
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".drawio,.xml,.svg,.png,.zip,.json"
+            hidden
+            onChange={handleImportFile}
+          />
         </div>
 
         {errorMessage && (
@@ -502,6 +541,16 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
       {/* Report */}
       {report && (
         <div className="lldp-card">
+          {report.imported && (
+            <div className="lldp-import-banner">
+              <Upload className="h-4 w-4" />
+              <span>
+                Imported from <code>{report.file_name}</code> ({report.format}) · {report.topology?.nodes?.length || 0}{' '}
+                devices · {report.topology?.links?.length || 0} links · {report.total_lldp_rows} LLDP rows
+              </span>
+            </div>
+          )}
+          {!report.imported && (
           <div className="lldp-stats">
             <div className="lldp-stat">
               <span className="lldp-stat-label">{isScanReport ? 'Scanned IPs' : 'Total Hosts'}</span>
@@ -530,6 +579,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
               <span className="lldp-stat-value">{report.overall_time_seconds}s</span>
             </div>
           </div>
+          )}
 
           <div className="lldp-toolbar">
             <div className="lldp-tabs">
@@ -597,7 +647,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
             </div>
           )}
 
-          {view === 'topology' && <LldpTopology topology={report.topology} />}
+          {view === 'topology' && <LldpTopology topology={report.topology} neighbors={report.neighbors} />}
 
           {view === 'summary' && (
             <div className="lldp-table-wrap">
