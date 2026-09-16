@@ -71,11 +71,14 @@ export function splitTopology(topology, neighbors = [], targets = []) {
   // Same subnet -> same picture
   const subnetByNode = new Map();
   const firstInSubnet = new Map();
+  const linked = new Set(links.flatMap((l) => [l.source, l.target]));
   nodes.forEach((n) => {
     const s = subnetOf(n.ip, cidrs);
-    // Devices without an IP share one "No IP" picture instead of one picture each
-    const key = s ? s.label : '\u0000no-ip';
     if (s) subnetByNode.set(n.id, s);
+    // No IP is not a subnet: a device without an IP only follows its links. The unlinked ones
+    // share one "No IP" picture instead of one picture each.
+    if (!s && linked.has(n.id)) return;
+    const key = s ? s.label : 'no-ip';
     if (firstInSubnet.has(key)) union(n.id, firstInSubnet.get(key));
     else firstInSubnet.set(key, n.id);
   });
