@@ -44,8 +44,18 @@ _CLI_REJECT_RE = re.compile(
     re.I,
 )
 
-# Cisco / Aruba style model codes, e.g. WS-C2960X-48TS-L, C9200-48P, ISR4331, N9K-C93180YC
-_MODEL_RE_CISCO = re.compile(r"(?<![\w-])((?:WS-C|N\dK-|ISR|ASR|CBS|C)\d{3,5}[A-Z0-9]*(?:-[A-Z0-9]+)*)(?!\w)")
+# Cisco model codes, e.g. WS-C2960X-48TS-L, C9200-48P, ISR4331, N9K-C93180YC-EX, IE-3300-8T2S
+_MODEL_RE_CISCO = re.compile(
+    r"(?<![\w-])((?:WS-C|N\dK-C|IE-|ISR|ASR|CSR|CISCO|CBS|SG|C)\d{3,5}[A-Z0-9]*(?:-[A-Z0-9]+)*)(?![\w(])"
+)
+# 'Model number : WS-C2960X-48TS-L' (show version) / 'cisco C9300-48P (X86) processor'
+_MODEL_LINE_CISCO = re.compile(r"^\s*Model\s*number\s*:\s*(\S+)", re.MULTILINE | re.IGNORECASE)
+_MODEL_HW_CISCO = re.compile(r"^\s*cisco\s+(?:Nexus\S*\s+)?(\S+)\s.*?(?:processor|chassis)", re.MULTILINE | re.IGNORECASE)
+# IOS image names look like models but are not: C2960X-UNIVERSALK9-M, C3750E-IPBASEK9-M
+_IMAGE_TOKEN_RE = re.compile(r"K9|UNIVERSAL|IPBASE|LANBASE|IPSERVICES|ENTSERVICES|ADVIP|^M$|^MZ$", re.I)
+# 'Catalyst L3 Switch Software (CAT9K_IOSXE)' carries only the family
+_FAMILY_RE_CISCO = re.compile(r"\bCAT(\d{1,2})K(?![A-Za-z0-9])", re.I)
+_CISCO_ROUTER_RE = re.compile(r"^(?:ISR|ASR|CSR|CISCO\d{4}|C8\d{3}|C11\d{2}|C[1-3]900$)", re.I)
 
 
 def cli_rejected(text: str) -> bool:
@@ -55,22 +65,97 @@ def cli_rejected(text: str) -> bool:
 
 class LldpService:
     @staticmethod
-    def get_sysname(prompt: str) -> str:
-        return re.sub(r"[<>\[\]#]", "", prompt or "").strip()
+    def short_hostname(name: str) -> str:
+        """
+        Cisco with 'ip domain-name lab.local' advertises the LLDP System Name /
+        Device ID as 'router_cisco.lab.local' (the brief table even cuts it to
+        'router_cisco.lab.loc'). Drop the domain so it matches the SSH'd hostname.
+        IP addresses and names like 'SW-1.2F' are left alone.
+        """
+        # rstrip: the brief table can cut the name right after the dot ('router_cisco.')
+        name = (name or "").strip().rstrip(".")
+        if not name or re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", name):
+            return name
+        host, dot, domain = name.partition(".")
+        # Any 'ip domain-name' value (lab.local, corp.example.com, lab1, net-2, or a
+        # truncated '.c'): DNS labels whose first label starts with a letter.
+        # 'SW-1.2F' / 'R1.1' (digit right after the dot) are kept as real names.
+        if dot and host and re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]*)*", domain):
+            return host
+        return name
+
+    @classmethod
+    def get_sysname(cls, prompt: str) -> str:
+        return cls.short_hostname(re.sub(r"[<>\[\]#]", "", prompt or "").strip())
 
     @staticmethod
-    def extract_model(text: str, parser: str = "huawei") -> str:
-        """Model from 'System description' or version output, '' when none is found"""
-        regex = _MODEL_RE_CISCO if parser == "cisco" else _MODEL_RE
-        candidates = regex.findall(text or "")
+    def detect_vendor(text: str, parser: str = "") -> str:
+        """Vendor of the device the text describes; falls back to the command profile's parser"""
+        t = (text or "").lower()
+        if "huawei" in t or "vrp" in t:
+            return "huawei"
+        if "cisco" in t or "nx-os" in t or "ios-xe" in t:
+            return "cisco"
+        return parser or "huawei"
+
+    @staticmethod
+    def _extract_cisco_model(text: str) -> str:
+        for rx in (_MODEL_LINE_CISCO, _MODEL_HW_CISCO):
+            m = rx.search(text)
+            if m and _MODEL_RE_CISCO.fullmatch(m.group(1)):
+                return m.group(1)
+        full, image = [], []
+        for cand in _MODEL_RE_CISCO.findall(text):
+            parts = cand.split("-")
+            keep = []
+            for part in parts:
+                if _IMAGE_TOKEN_RE.search(part):
+                    break
+                keep.append(part)
+            if len(keep) == len(parts):
+                full.append(cand)
+            elif keep:
+                # C2960X-UNIVERSALK9-M -> C2960X (the platform family)
+                image.append("-".join(keep))
+        if full:
+            return max(full, key=len)
+        if image:
+            return max(image, key=len)
+        fam = _FAMILY_RE_CISCO.search(text)
+        return f"C{fam.group(1)}K" if fam else ""
+
+    @classmethod
+    def extract_model(cls, text: str, parser: str = "") -> str:
+        """
+        Model from 'System description' or version output, '' when none is found.
+        The vendor is taken from the text itself, so a Huawei switch still reads a
+        Cisco neighbor's model (and vice versa); the parser is only a fallback.
+        """
+        text = text or ""
+        vendor = cls.detect_vendor(text, parser)
+        if vendor == "cisco":
+            return cls._extract_cisco_model(text)
+        candidates = _MODEL_RE.findall(text)
         return max(candidates, key=len) if candidates else ""
 
     @staticmethod
     def device_role(model: str) -> str:
-        """AR / NE models are routers, any other recognized model is a switch"""
+        """Huawei AR / NE and Cisco ISR / ASR / C8000 / C1100 are routers, any other recognized model is a switch"""
         if not model:
             return "unknown"
-        return "router" if model.upper().startswith(ROUTER_MODEL_PREFIXES) else "switch"
+        m = model.upper()
+        if m.startswith(ROUTER_MODEL_PREFIXES) or _CISCO_ROUTER_RE.match(m):
+            return "router"
+        return "switch"
+
+    @staticmethod
+    def fill_remote_models(neighbors: List[Dict[str, Any]], hosts: List[Dict[str, Any]]) -> None:
+        """Blank 'Remote Model' cells get the model the neighbor reported about itself when it was SSH'd"""
+        by_name = {h["hostname"]: h["model"] for h in hosts if h.get("model")}
+        by_ip = {h["ip"]: h["model"] for h in hosts if h.get("model") and h.get("ip")}
+        for n in neighbors:
+            if not n.get("Remote Model"):
+                n["Remote Model"] = by_name.get(n.get("Remote Device"), "") or by_ip.get(n.get("Remote IP"), "")
 
     @staticmethod
     def parse_lldp_brief(output: str, parser: str = "huawei") -> List[Dict[str, str]]:
@@ -125,7 +210,7 @@ class LldpService:
                 continue
             rows.append({
                 "local_port": local,
-                "remote_device": values.get("remote_dev", ""),
+                "remote_device": LldpService.short_hostname(values.get("remote_dev", "")),
                 "remote_port": values.get("remote_intf", ""),
             })
         return rows
@@ -190,10 +275,10 @@ class LldpService:
                 )
                 results.append({
                     "local_port": local_port,
-                    "remote_device": sysname.group(1).strip() if sysname else "N/A",
+                    "remote_device": cls.short_hostname(sysname.group(1)) if sysname else "N/A",
                     "remote_port": port_id.group(1).strip() if port_id else "N/A",
                     "remote_ip": remote_ip,
-                    "remote_model": cls.extract_model(desc.group(1)) if desc else "",
+                    "remote_model": cls.extract_model(desc.group(1), "huawei") if desc else "",
                 })
         return results
 
@@ -228,7 +313,7 @@ class LldpService:
             )
             results.append({
                 "local_port": local_port,
-                "remote_device": sysname.group(1).strip() if sysname else "N/A",
+                "remote_device": cls.short_hostname(sysname.group(1)) if sysname else "N/A",
                 "remote_port": port_id.group(1).strip() if port_id else "N/A",
                 "remote_ip": remote_ip,
                 "remote_model": cls.extract_model(desc.group(1), "cisco") if desc else "",
@@ -296,8 +381,10 @@ class LldpService:
                             net_connect.send_command(cmds["sysname"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
                         raw_parts.append(f"<{sysname}> {cmds['sysname']}\n{sys_raw}")
-                        m = re.search(r"^\s*(?:sysname|hostname)\s+(.+?)\s*$", sys_raw, re.MULTILINE | re.IGNORECASE)
-                        cfg_sysname = m.group(1).strip() if m else ""
+                        # [ \t] instead of \s: a bare 'hostname' line must not swallow the next line
+                        # of config (e.g. 'ip domain-name lab.local') as the device name
+                        m = re.search(r"^[ \t]*(?:sysname|hostname)[ \t]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
+                        cfg_sysname = cls.short_hostname(m.group(1).strip().strip('"')) if m else ""
                     except Exception as e:
                         log_lines.append(f"Step 1: '{cmds.get('sysname')}' failed: {e}")
                     if cfg_sysname:
@@ -536,6 +623,7 @@ class LldpService:
             depth += 1
 
         all_neighbors = [n for h in hosts for n in h["neighbors"]]
+        cls.fill_remote_models(all_neighbors, hosts)
         success = sum(1 for h in hosts if h["success"])
         return {
             "total_hosts": len(hosts),
@@ -569,15 +657,25 @@ class LldpService:
             if h.get("success") and h.get("status") != "DUPLICATE" and h.get("hostname"):
                 nodes[ensure(h["hostname"], h.get("ip", ""), h.get("model", ""))]["discovered"] = True
 
+        # Backup for FQDN names the rule above keeps: 'X.<domain>' is the same box as a known 'X'
+        def canonical(name: str) -> str:
+            if name in nodes or "." not in name:
+                return name
+            host = name.split(".", 1)[0]
+            return host if host in nodes else name
+
         links: Dict[Any, Dict[str, Any]] = {}
         for n in neighbors:
             local = (n.get("Local Device") or "").strip()
             if not local:
                 continue
+            local = canonical(local)
             ensure(local, n.get("Local IP", ""), n.get("Local Model", ""))
             remote = (n.get("Remote Device") or "").strip()
             if not remote or remote.upper() == "N/A":
                 remote = n.get("Remote IP") or f"Unknown ({local} {n.get('Local Port', '')})"
+            else:
+                remote = canonical(remote)
             ensure(remote, n.get("Remote IP", ""), n.get("Remote Model", ""))
             if remote == local:
                 continue

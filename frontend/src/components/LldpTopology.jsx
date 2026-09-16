@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, RefreshCw, Download, Image as ImageIcon, FileCode, Loader2 } from 'lucide-react';
+import { splitTopology } from './topologyGroups';
 import { groupLinks, computeForceLayout, computeHierarchicalLayout, FORCE_MAX_NODES } from './topologyLayout';
 import {
   boundsOf,
@@ -14,6 +15,7 @@ import {
 } from './topologyExport';
 
 const HEIGHT = 640;
+const NONE = [];
 
 // Inline SVG attributes (not CSS classes) so exported SVG / PNG keep their colors
 const ROLE_STYLE = {
@@ -72,7 +74,16 @@ function NodeIcon({ role, selected }) {
   );
 }
 
-export default function LldpTopology({ topology, neighbors = [] }) {
+export default function LldpTopology({ topology: fullTopology, neighbors: allNeighbors = NONE, targets = NONE }) {
+  // One picture per subnet; subnets joined by LLDP links share a picture
+  const groups = useMemo(() => splitTopology(fullTopology, allNeighbors, targets), [fullTopology, allNeighbors, targets]);
+  const [groupIdx, setGroupIdx] = useState(0);
+  useEffect(() => setGroupIdx(0), [fullTopology]);
+  const group = groups[Math.min(groupIdx, Math.max(groups.length - 1, 0))];
+  const topology = group?.topology || fullTopology;
+  const neighbors = group?.neighbors || allNeighbors;
+  const fileTag = groups.length > 1 && group ? `_${(group.subnets[0] || 'no-ip').replace(/[./]/g, '-')}` : '';
+
   const nodes = useMemo(() => topology?.nodes || [], [topology]);
   const pairs = useMemo(() => groupLinks(topology?.links || []), [topology]);
   const nodeById = useMemo(() => Object.fromEntries(nodes.map((d) => [d.id, d])), [nodes]);
@@ -192,7 +203,7 @@ export default function LldpTopology({ topology, neighbors = [] }) {
   const downloadSvg = () => {
     const { clone, w, h } = prepareSvgClone(svgRef.current, positions);
     addSvgMetadata(clone, buildPayload(nodes, topology?.links || [], neighbors, positions));
-    downloadBlob(new Blob([serializeSvg(clone)], { type: 'image/svg+xml' }), `lldp_topology_${stamp()}.svg`);
+    downloadBlob(new Blob([serializeSvg(clone)], { type: 'image/svg+xml' }), `lldp_topology${fileTag}_${stamp()}.svg`);
     setExportMsg({
       type: 'ok',
       text: `SVG ${Math.round(w)} x ${Math.round(h)} (vector, stays sharp at any zoom, can be imported back)`,
@@ -201,7 +212,7 @@ export default function LldpTopology({ topology, neighbors = [] }) {
 
   const downloadDrawio = () => {
     const xml = buildDrawioXml(nodes, pairs, positions, { includePorts: drawioPorts });
-    downloadBlob(new Blob([xml], { type: 'application/xml' }), `lldp_topology_${stamp()}.drawio`);
+    downloadBlob(new Blob([xml], { type: 'application/xml' }), `lldp_topology${fileTag}_${stamp()}.drawio`);
     setExportMsg({
       type: 'ok',
       text: `draw.io file saved (${drawioPorts ? 'with' : 'without'} interfaces): open with app.diagrams.net, draw.io desktop or the VS Code draw.io extension`,
@@ -213,7 +224,7 @@ export default function LldpTopology({ topology, neighbors = [] }) {
     setExportMsg({ type: 'info', text: 'Rendering PNG...' });
     try {
       const payload = buildPayload(nodes, topology?.links || [], neighbors, positions);
-      const text = await exportPng(svgRef.current, positions, `lldp_topology_${stamp()}`, payload, (t) =>
+      const text = await exportPng(svgRef.current, positions, `lldp_topology${fileTag}_${stamp()}`, payload, (t) =>
         setExportMsg({ type: 'info', text: t })
       );
       setExportMsg({ type: 'ok', text });
@@ -247,6 +258,23 @@ export default function LldpTopology({ topology, neighbors = [] }) {
 
   return (
     <div className="lldp-topo">
+      {groups.length > 1 && (
+        <div className="lldp-topo-groups">
+          <span className="lldp-topo-groups-label">Pictures ({groups.length})</span>
+          <div className="lldp-tabs lldp-topo-group-tabs">
+            {groups.map((g, i) => (
+              <button
+                key={g.id}
+                className={g === group ? 'active' : ''}
+                onClick={() => setGroupIdx(i)}
+                title={g.subnets.join('\n') || 'Devices without an IP address'}
+              >
+                {g.label} · {g.topology.nodes.length}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="lldp-topo-toolbar">
         <div className="lldp-topo-legend">
           {Object.entries(ROLE_STYLE).map(([role, s]) => (

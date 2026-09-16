@@ -848,7 +848,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             </div>
           )}
 
-          {view === 'topology' && <LldpTopology topology={report.topology} neighbors={report.neighbors} />}
+          {view === 'topology' && <LldpTopology topology={report.topology} neighbors={report.neighbors} targets={report.targets} />}
 
           {view === 'summary' && (
             <div className="lldp-table-wrap">

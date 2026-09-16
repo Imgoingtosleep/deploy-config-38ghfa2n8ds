@@ -554,6 +554,7 @@ class LldpScanService:
             )
             stats = dict(st["stats"])
         neighbors = [n for h in hosts for n in h["neighbors"]]
+        LldpService.fill_remote_models(neighbors, hosts)
         return {
             "job_id": job.job_id,
             "status": job.status,
