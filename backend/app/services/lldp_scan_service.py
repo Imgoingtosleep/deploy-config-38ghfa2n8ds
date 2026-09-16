@@ -36,7 +36,10 @@ from app.services.lldp_service import LldpService
 INVENTORY_COLUMNS = [
     "Local Device", "Local Model", "Local IP", "Local Port", "Remote Device", "Remote Model", "Remote Port", "Remote IP",
 ]
-SCAN_COLUMNS = ["ip", "depth", "tcp_open", "status", "sysname", "model", "credential", "neighbors", "time_s", "detail"]
+SCAN_COLUMNS = [
+    "ip", "depth", "tcp_open", "status", "sysname", "model", "credential", "command_profile",
+    "neighbors", "time_s", "detail",
+]
 
 STATUS_SUCCESS = "SUCCESS"
 STATUS_NO_LLDP = "NO_LLDP"
@@ -46,6 +49,9 @@ STATUS_FAILED = "FAILED"
 STATUS_UNREACHABLE = "UNREACHABLE"
 ALL_STATUSES = [STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_DUPLICATE, STATUS_AUTH_FAILED, STATUS_FAILED, STATUS_UNREACHABLE]
 LOGGED_IN_STATUSES = {STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_DUPLICATE}
+# Could not get in with this profile: worth one more sweep with the next priority profile.
+# UNREACHABLE is not here - another credential cannot fix a closed port.
+RETRYABLE_STATUSES = {STATUS_AUTH_FAILED, STATUS_FAILED}
 
 
 def split_targets(items: Iterable[str]) -> List[str]:
@@ -154,7 +160,8 @@ class ScanLogWriter:
         with self._lock:
             self._write_csv_row("scan_result.csv", [
                 host["ip"], host["depth"], host["tcp_open"], host["status"], host["hostname"], host.get("model", ""),
-                host.get("credential", ""), host["neighbors_found"], host["execution_time_seconds"], host.get("detail", ""),
+                host.get("credential", ""), host.get("command_profile", ""),
+                host["neighbors_found"], host["execution_time_seconds"], host.get("detail", ""),
             ])
             if host["neighbors"]:
                 with open(os.path.join(self.dir, "lldp_inventory.csv"), "a", newline="", encoding="utf-8") as f:
@@ -209,14 +216,22 @@ class LldpScanService:
         exclude: List[str],
         template: DeviceCredentials,
         num_workers: Optional[int] = None,
+        enable_tcp_scan: bool = True,
         scan_workers: int = 200,
         tcp_timeout: float = 1.5,
         recursive: bool = False,
         max_depth: int = 3,
+        command_profile_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         ips = expand_targets(targets, exclude)
         if not ips:
             raise ValueError("No IP addresses left to scan after applying the exclude list")
+
+        # Ordered profile sweep: Priority 1 over every IP, then the leftovers with Priority 2, ...
+        profile_pool: List[str] = []
+        for pid in ([template.profile_id] if template.profile_id else []) + list(template.fallback_profile_ids or []):
+            if pid and pid not in profile_pool:
+                profile_pool.append(pid)
 
         job_id = str(uuid.uuid4())
         job = JobRecord(
@@ -229,8 +244,11 @@ class LldpScanService:
                 "exclude_ranges": [parse_range(t) for t in split_targets(exclude)],
                 "ips": ips,
                 "template": template.model_dump(),
+                "profile_pool": profile_pool,
+                "command_profile_ids": list(command_profile_ids or []),
                 "port": template.port or settings.DEFAULT_SSH_PORT,
                 "num_workers": max(1, min(int(num_workers or settings.DEFAULT_NUM_WORKERS), settings.MAX_NUM_WORKERS)),
+                "enable_tcp_scan": bool(enable_tcp_scan),
                 "scan_workers": max(1, min(int(scan_workers), 1000)),
                 "tcp_timeout": tcp_timeout,
                 "recursive": recursive,
@@ -276,10 +294,18 @@ class LldpScanService:
                 else f"manual user '{tmpl['username']}'" if tmpl.get("username")
                 else "default credential profile"
             )
+            if len(p.get("profile_pool") or []) > 1:
+                cred_desc = f"profile sweep {' -> '.join(p['profile_pool'])} (each profile over every IP in turn)"
+            enable_tcp = p.get("enable_tcp_scan", True)
+            tcp_desc = (
+                f"TCP/{p['port']} timeout={p['tcp_timeout']}s, tcp_workers={p['scan_workers']}"
+                if enable_tcp
+                else "TCP scan disabled (direct SSH)"
+            )
             writer.log(f"Job {job_id} started")
             writer.log(f"Targets: {', '.join(p['targets'])} | Exclude: {', '.join(p['exclude']) or '-'} -> {len(p['ips'])} IP(s)")
             writer.log(
-                f"Options: TCP/{p['port']} timeout={p['tcp_timeout']}s, tcp_workers={p['scan_workers']}, "
+                f"Options: {tcp_desc}, "
                 f"ssh_workers={p['num_workers']}, recursive={p['recursive']} (max_depth={p['max_depth']}), credentials={cred_desc}"
             )
 
@@ -287,13 +313,17 @@ class LldpScanService:
             wave: List[Tuple[str, str]] = [(ip, "") for ip in p["ips"]]
             depth = 0
             while wave and not job.cancel_requested:
-                st["phase"] = f"TCP scan (depth {depth})"
-                alive = cls._tcp_scan(job, st, wave, depth)
+                if enable_tcp:
+                    st["phase"] = f"TCP scan (depth {depth})"
+                    alive = cls._tcp_scan(job, st, wave, depth)
+                else:
+                    st["writer"].log(f"Depth {depth}: TCP scan disabled -> directly attempting LLDP collect on {len(wave)} IP(s)")
+                    alive = wave
+
                 if job.cancel_requested:
                     break
 
-                st["phase"] = f"LLDP collect (depth {depth})"
-                results = cls._collect_wave(job, st, alive, depth)
+                results = cls._run_profile_passes(job, st, alive, depth)
                 if job.cancel_requested:
                     break
 
@@ -380,7 +410,56 @@ class LldpScanService:
         return alive
 
     @classmethod
-    def _collect_wave(cls, job: JobRecord, st: Dict[str, Any], alive: List[Tuple[str, str]], depth: int) -> List[Dict[str, Any]]:
+    def _run_profile_passes(
+        cls, job: JobRecord, st: Dict[str, Any], alive: List[Tuple[str, str]], depth: int
+    ) -> List[Dict[str, Any]]:
+        """
+        One full sweep per credential profile: SSH every IP with the Priority 1
+        profile, then re-run only the IPs that could not be logged into with
+        Priority 2, and so on. A host is recorded once - when it logs in, or when
+        the last profile has also failed on it.
+        """
+        p = job.payload
+        passes: List[Optional[str]] = list(p.get("profile_pool") or []) or [None]
+        writer: ScanLogWriter = st["writer"]
+        collected: List[Dict[str, Any]] = []
+        remaining = alive
+
+        for pass_no, profile_id in enumerate(passes, 1):
+            if not remaining or job.cancel_requested:
+                break
+            is_last = pass_no == len(passes)
+            label = f"profile {profile_id}" if profile_id else "the job credentials"
+            st["phase"] = f"LLDP collect (depth {depth}, priority {pass_no}/{len(passes)})"
+            if len(passes) > 1:
+                writer.log(f"Depth {depth}: priority {pass_no}/{len(passes)} - {label} on {len(remaining)} IP(s)")
+
+            results = cls._collect_wave(job, st, remaining, depth, profile_id=profile_id, defer_failures=not is_last)
+
+            retry: List[Tuple[str, str]] = []
+            for res in results:
+                if not is_last and res["status"] in RETRYABLE_STATUSES:
+                    retry.append((res["ip"], "" if res["hostname"] == res["ip"] else res["hostname"]))
+                else:
+                    collected.append(res)
+            if retry:
+                writer.log(
+                    f"Depth {depth}: {len(retry)} IP(s) not logged in with {label} -> retrying with priority {pass_no + 1}"
+                )
+            remaining = retry
+
+        return collected
+
+    @classmethod
+    def _collect_wave(
+        cls,
+        job: JobRecord,
+        st: Dict[str, Any],
+        alive: List[Tuple[str, str]],
+        depth: int,
+        profile_id: Optional[str] = None,
+        defer_failures: bool = False,
+    ) -> List[Dict[str, Any]]:
         if not alive:
             return []
         p = job.payload
@@ -388,8 +467,15 @@ class LldpScanService:
         with ThreadPoolExecutor(max_workers=min(p["num_workers"], len(alive))) as executor:
             futures = {}
             for ip, name in alive:
-                dev = DeviceCredentials(**{**p["template"], "host": ip, "name": name})
-                futures[executor.submit(LldpService.collect_device, dev, depth)] = dev
+                overrides: Dict[str, Any] = {"host": ip, "name": name}
+                if profile_id:
+                    # Exactly one profile per pass, so the sweep order is the profile order
+                    overrides["profile_id"] = profile_id
+                    overrides["fallback_profile_ids"] = None
+                dev = DeviceCredentials(**{**p["template"], **overrides})
+                futures[
+                    executor.submit(LldpService.collect_device, dev, depth, p.get("command_profile_ids"))
+                ] = dev
             for fut in as_completed(futures):
                 if job.cancel_requested:
                     for f in futures:
@@ -406,7 +492,11 @@ class LldpScanService:
                         "raw_output": "", "execution_time_seconds": 0,
                     }
                 cls._classify(st, res, dev)
-                cls._record(job, st, res)
+                if defer_failures and res["status"] in RETRYABLE_STATUSES:
+                    # Recorded by a later pass instead, so stats count each IP once
+                    st["writer"].log(f"[RETRY] {res['ip']} - {' '.join(str(res.get('detail', '')).split())}")
+                else:
+                    cls._record(job, st, res)
                 results.append(res)
         return results
 
@@ -431,7 +521,12 @@ class LldpScanService:
                 res["detail"] = "Logged in but no LLDP neighbor (LLDP disabled or nothing connected)"
         else:
             diag = JobService.format_failure_diagnostic(res.get("error") or "", host_ip=res["ip"])
-            res["status"] = STATUS_AUTH_FAILED if diag.startswith("Authentication Failed") else STATUS_FAILED
+            if diag.startswith("Authentication Failed"):
+                res["status"] = STATUS_AUTH_FAILED
+            elif any(diag.startswith(pfx) for pfx in ("Connection Timeout", "Network Unreachable", "Connection Refused")):
+                res["status"] = STATUS_UNREACHABLE
+            else:
+                res["status"] = STATUS_FAILED
             res["detail"] = diag
 
     @classmethod

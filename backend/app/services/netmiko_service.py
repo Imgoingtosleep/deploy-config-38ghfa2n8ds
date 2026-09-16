@@ -1,19 +1,11 @@
 import time
 import threading
-import paramiko
 from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple, Optional, Union
 
-# --- SSH Algorithm Compatibility & Global Lock ---
-paramiko.Transport._preferred_kex = (
-    "diffie-hellman-group14-sha1",
-    "diffie-hellman-group1-sha1",
-    "diffie-hellman-group-exchange-sha256",
-)
-paramiko.common.pref_public_keys = ["rsa-sha2-512", "rsa-sha2-256", "rsa"]
-
-file_lock = threading.Lock()
-device_name_map = {}
+# Apply global SSH algorithm compatibility (KEX + public key preferences)
+from app.services.ssh_compat import file_lock, device_name_map  # noqa: F401
+import paramiko
 
 from netmiko import ConnectHandler
 from netmiko.ssh_dispatcher import platforms as NETMIKO_PLATFORMS
@@ -188,7 +180,9 @@ class NetmikoService:
             for c in sorted_creds:
                 u = (c.get("username") or "").strip()
                 p = c.get("password") or ""
-                key = (u, p)
+                # Driver is part of the key: the same user/password on a Huawei profile and a
+                # Cisco profile are two distinct attempts, not a duplicate
+                key = (u, p, prof.get("device_type") or device.device_type)
                 if key not in seen and (u or p):
                     lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
                     candidates.append({
@@ -207,7 +201,7 @@ class NetmikoService:
             for idx, c in enumerate(sorted_pool, start=len(candidates) + 1):
                 u = (c.get("username") or "").strip()
                 p = c.get("password") or ""
-                key = (u, p)
+                key = (u, p, c.get("device_type") or device.device_type)
                 if key not in seen and (u or p):
                     lbl = c.get("label") or c.get("name") or f"Priority {c.get('priority', idx)}"
                     candidates.append({
@@ -222,7 +216,7 @@ class NetmikoService:
 
         # 3. Direct device fields (if not already captured from profile or pool)
         if device.username or device.password:
-            key = (device.username or "", device.password or "")
+            key = (device.username or "", device.password or "", device.device_type or "autodetect")
             if key not in seen:
                 label = device.active_credential_name or f"Direct Device Credentials"
                 # If candidates already had items from profile, this serves as extra candidate, or insert at front if no profile
@@ -261,7 +255,7 @@ class NetmikoService:
                             for c in sorted_creds:
                                 u = (c.get("username") or "").strip()
                                 p = c.get("password") or ""
-                                key = (u, p)
+                                key = (u, p, prof.get("device_type") or device.device_type)
                                 if key not in seen and (u or p):
                                     lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
                                     candidates.append({
@@ -276,7 +270,7 @@ class NetmikoService:
                         else:
                             u = prof.get("username") or ""
                             p = prof.get("password") or ""
-                            key = (u, p)
+                            key = (u, p, prof.get("device_type") or device.device_type)
                             if key not in seen:
                                 candidates.append({
                                     "name": prof.get("name") or f"Profile ({u})",
@@ -397,6 +391,13 @@ class NetmikoService:
                         raise NetmikoAuthenticationException(
                             f"Authentication or channel allocation failed across all {len(candidates)} credential sets on {target_name}. [{summary}]"
                         )
+                # Wrong driver (e.g. Cisco setup commands sent to a Huawei VRP) fails on the
+                # prompt / setup stage, not on auth. Retry when a later priority uses a
+                # different driver, so a Huawei-first / Cisco-second pool still connects.
+                next_drivers = {c.get("device_type") for c in candidates[idx:]}
+                if next_drivers - {cred.get("device_type")}:
+                    attempt_logs.append(f"Priority {idx} [{cred_label}]: Failed on driver '{cred.get('device_type')}' ({str(e)})")
+                    continue
                 raise e
 
     @classmethod

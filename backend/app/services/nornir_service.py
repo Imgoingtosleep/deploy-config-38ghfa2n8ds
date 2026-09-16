@@ -6,19 +6,11 @@ powered by Nornir 3.x and nornir-netmiko.
 import time
 import re
 import threading
-import paramiko
 from typing import List, Dict, Any, Optional
 
-# --- 1. SSH Algorithm Compatibility & Global Lock ---
-paramiko.Transport._preferred_kex = (
-    "diffie-hellman-group14-sha1",
-    "diffie-hellman-group1-sha1",
-    "diffie-hellman-group-exchange-sha256",
-)
-paramiko.common.pref_public_keys = ["rsa-sha2-512", "rsa-sha2-256", "rsa"]
-
-file_lock = threading.Lock()
-device_name_map = {}
+# Apply global SSH algorithm compatibility (KEX + public key preferences)
+from app.services.ssh_compat import file_lock, device_name_map  # noqa: F401
+import paramiko
 
 from nornir import InitNornir
 from nornir.core.inventory import Host, Hosts, Inventory, Defaults, ConnectionOptions

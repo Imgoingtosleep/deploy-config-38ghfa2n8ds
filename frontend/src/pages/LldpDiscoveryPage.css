@@ -638,3 +638,197 @@
   max-width: 420px;
   margin-top: 0.15rem;
 }
+
+/* Credential profile priority pool (P1 -> P2 -> P3) */
+.lldp-prio-pool {
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  background: rgba(2, 6, 23, 0.6);
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.lldp-prio-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  margin-bottom: 0.6rem;
+}
+
+.lldp-prio-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.lldp-prio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.lldp-prio-row select {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.lldp-prio-badge {
+  flex: 0 0 auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  background: #0f172a;
+}
+
+.lldp-prio-badge.p1 {
+  color: #a5b4fc;
+  border-color: #4338ca;
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.lldp-prio-badge.p2 {
+  color: #7dd3fc;
+  border-color: #0369a1;
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.lldp-prio-driver {
+  flex: 0 0 auto;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.lldp-prio-manual {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* Command profile manager */
+.lldp-btn-mini {
+  padding: 0.25rem 0.6rem !important;
+  font-size: 0.72rem !important;
+  gap: 0.35rem !important;
+}
+
+.lldp-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.lldp-modal {
+  width: min(680px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 0.6rem;
+  overflow: hidden;
+}
+
+.lldp-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.lldp-modal-head h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.9rem;
+  color: #e2e8f0;
+}
+
+.lldp-modal-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0.2rem;
+}
+
+.lldp-modal-close:hover {
+  color: #e2e8f0;
+}
+
+.lldp-modal-body {
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.lldp-cmd-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.45rem;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.lldp-cmd-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.lldp-cmd-name {
+  font-size: 0.82rem;
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.lldp-cmd-preview {
+  font-family: ui-monospace, monospace;
+  font-size: 0.7rem;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.12);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.lldp-cmd-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.lldp-cmd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.lldp-cmd-input {
+  font-family: ui-monospace, monospace;
+}

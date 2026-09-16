@@ -408,9 +408,54 @@ export const setDefaultCredentialProfile = async (id) => {
   return response.data;
 };
 
+// --- LLDP Command Profiles (which CLI commands to run, not how to log in) ---
+export const getCommandProfiles = async () => {
+  const response = await apiClient.get('/command-profiles');
+  return response.data;
+};
+
+export const createCommandProfile = async (profileData) => {
+  const response = await apiClient.post('/command-profiles', profileData);
+  return response.data;
+};
+
+export const updateCommandProfile = async (id, profileData) => {
+  const response = await apiClient.put(`/command-profiles/${id}`, profileData);
+  return response.data;
+};
+
+export const deleteCommandProfile = async (id) => {
+  const response = await apiClient.delete(`/command-profiles/${id}`);
+  return response.data;
+};
+
+export const reorderCommandProfiles = async (orderedIds) => {
+  const response = await apiClient.post('/command-profiles/reorder', { ordered_ids: orderedIds });
+  return response.data;
+};
+
 // --- LLDP Discovery APIs ---
-export const discoverLldp = async (devices, { recursive = false, maxDepth = 3, numWorkers = null } = {}) => {
-  const payload = { devices, recursive, max_depth: maxDepth };
+export const discoverLldp = async (
+  devices,
+  {
+    recursive = false,
+    maxDepth = 3,
+    numWorkers = null,
+    enableTcpScan = false,
+    scanWorkers = 50,
+    tcpTimeout = 1.5,
+    commandProfileIds = null,
+  } = {}
+) => {
+  const payload = {
+    devices,
+    recursive,
+    max_depth: maxDepth,
+    enable_tcp_scan: enableTcpScan,
+    scan_workers: scanWorkers,
+    tcp_timeout: tcpTimeout,
+  };
+  if (commandProfileIds?.length) payload.command_profile_ids = commandProfileIds;
   if (numWorkers) payload.num_workers = numWorkers;
   // SSH loop over every neighbor port can take much longer than the default 60s
   const response = await apiClient.post('/lldp/discover', payload, { timeout: 0 });

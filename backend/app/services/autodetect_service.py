@@ -3,6 +3,7 @@ import time
 import socket
 import http.client
 import ssl
+import app.services.ssh_compat  # noqa: F401  — apply global SSH algorithm compatibility
 import paramiko
 from typing import Dict, Any, Optional, Tuple, List
 from app.schemas.device import DeviceCredentials

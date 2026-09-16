@@ -1,7 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
-from app.api.endpoints import devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp
+from app.api.endpoints import (
+    devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp,
+    command_profiles,
+)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -29,6 +32,11 @@ app.include_router(jobs.router, prefix=f"{settings.API_V1_STR}/jobs", tags=["Job
 app.include_router(playbooks.router, prefix=f"{settings.API_V1_STR}/playbooks", tags=["Playbooks & Test Profiles"])
 app.include_router(system.router, prefix=f"{settings.API_V1_STR}/system", tags=["System Settings"])
 app.include_router(lldp.router, prefix=f"{settings.API_V1_STR}/lldp", tags=["LLDP Discovery"])
+app.include_router(
+    command_profiles.router,
+    prefix=f"{settings.API_V1_STR}/command-profiles",
+    tags=["LLDP Command Profiles"],
+)
 
 
 @app.get("/")

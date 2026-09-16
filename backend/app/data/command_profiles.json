@@ -1,0 +1,38 @@
+[
+  {
+    "id": "cmdprof-huawei",
+    "name": "Huawei VRP",
+    "description": "display-style commands for Huawei VRP (S / CE / AR / NE series)",
+    "parser": "huawei",
+    "priority": 1,
+    "enabled": true,
+    "commands": {
+      "pager_disable": "screen-length 0 temporary",
+      "sysname": "display current-configuration | include sysname",
+      "version": "display version",
+      "lldp_brief": "display lldp neighbor brief",
+      "lldp_detail": "display lldp neighbor interface {intf}",
+      "lldp_full": "display lldp neighbor"
+    },
+    "created_at": "2026-09-16T00:00:00Z",
+    "updated_at": "2026-09-16T00:00:00Z"
+  },
+  {
+    "id": "cmdprof-cisco",
+    "name": "Cisco IOS / IOS-XE",
+    "description": "show-style commands for Cisco IOS, IOS-XE and NX-OS",
+    "parser": "cisco",
+    "priority": 2,
+    "enabled": true,
+    "commands": {
+      "pager_disable": "terminal length 0",
+      "sysname": "show running-config | include hostname",
+      "version": "show version",
+      "lldp_brief": "show lldp neighbors",
+      "lldp_detail": "show lldp neighbors {intf} detail",
+      "lldp_full": "show lldp neighbors detail"
+    },
+    "created_at": "2026-09-16T00:00:00Z",
+    "updated_at": "2026-09-16T00:00:00Z"
+  }
+]

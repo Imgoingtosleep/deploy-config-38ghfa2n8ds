@@ -19,23 +19,39 @@ class LldpTargetPreviewRequest(BaseModel):
 
 class LldpSubnetScanRequest(LldpTargetPreviewRequest):
     profile_id: Optional[str] = Field(None, description="Credential profile; empty + no username = default profile")
+    fallback_profile_ids: Optional[List[str]] = Field(
+        None,
+        description="Ordered profile priority pool, e.g. ['prof-huawei', 'prof-cisco'] tried in that order",
+    )
     username: Optional[str] = ""
     password: Optional[str] = ""
     secret: Optional[str] = None
     device_type: str = "huawei"
     port: int = Field(22, ge=1, le=65535)
     num_workers: Optional[int] = Field(None, ge=1, le=100, description="Concurrent SSH sessions")
+    enable_tcp_scan: bool = Field(True, description="Enable TCP port 22 pre-scan before LLDP collection")
     scan_workers: int = Field(200, ge=1, le=1000, description="Concurrent TCP port checks")
     tcp_timeout: float = Field(1.5, ge=0.2, le=10)
     recursive: bool = Field(False, description="Also SSH to LLDP management IPs outside the targets")
     max_depth: int = Field(3, ge=1, le=10)
+    command_profile_ids: Optional[List[str]] = Field(
+        None,
+        description="Ordered LLDP command profiles, e.g. ['cmdprof-huawei', 'cmdprof-cisco']; empty = all enabled by priority",
+    )
 
 
 class LldpDiscoverRequest(BaseModel):
     devices: List[DeviceCredentials]
     num_workers: Optional[int] = Field(None, ge=1, le=100)
+    enable_tcp_scan: bool = Field(False, description="Fast TCP port check before SSH")
+    scan_workers: int = Field(50, ge=1, le=1000, description="Concurrent TCP port checks")
+    tcp_timeout: float = Field(1.5, ge=0.2, le=10)
     recursive: bool = Field(False, description="SSH into discovered neighbors via LLDP management address")
     max_depth: int = Field(3, ge=1, le=10)
+    command_profile_ids: Optional[List[str]] = Field(
+        None,
+        description="Ordered LLDP command profiles, e.g. ['cmdprof-huawei', 'cmdprof-cisco']; empty = all enabled by priority",
+    )
 
 
 class LldpExportRequest(BaseModel):
@@ -51,8 +67,12 @@ def discover_lldp(request: LldpDiscoverRequest):
     return LldpService.discover(
         devices=request.devices,
         num_workers=request.num_workers,
+        enable_tcp_scan=request.enable_tcp_scan,
+        scan_workers=request.scan_workers,
+        tcp_timeout=request.tcp_timeout,
         recursive=request.recursive,
         max_depth=request.max_depth,
+        command_profile_ids=request.command_profile_ids,
     )
 
 
@@ -72,6 +92,7 @@ def submit_subnet_scan(request: LldpSubnetScanRequest):
     template = DeviceCredentials(
         host=None,
         profile_id=request.profile_id or None,
+        fallback_profile_ids=request.fallback_profile_ids or None,
         username=request.username or "",
         password=request.password or "",
         secret=request.secret,
@@ -85,10 +106,12 @@ def submit_subnet_scan(request: LldpSubnetScanRequest):
             exclude=request.exclude,
             template=template,
             num_workers=request.num_workers,
+            enable_tcp_scan=request.enable_tcp_scan,
             scan_workers=request.scan_workers,
             tcp_timeout=request.tcp_timeout,
             recursive=request.recursive,
             max_depth=request.max_depth,
+            command_profile_ids=request.command_profile_ids,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

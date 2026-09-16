@@ -15,11 +15,22 @@ import {
   Square,
   Archive,
   Upload,
+  Terminal,
+  Settings,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
+  Check,
 } from 'lucide-react';
 import {
   discoverLldp,
   exportLldpExcel,
   getCredentialProfiles,
+  getCommandProfiles,
+  createCommandProfile,
+  updateCommandProfile,
+  deleteCommandProfile,
   previewScanTargets,
   submitLldpSubnetScan,
   getLldpSubnetScan,
@@ -28,6 +39,7 @@ import {
   importLldpTopology,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import TcpWorkersControl from '../components/TcpWorkersControl';
 import './LldpDiscoveryPage.css';
 
 const NEIGHBOR_COLUMNS = [
@@ -49,6 +61,23 @@ const SCAN_STATUSES = [
   { key: 'UNREACHABLE', label: 'Unreachable', tone: 'muted' },
 ];
 const POLL_MS = 1500;
+// Editable command set of a command profile: [field, label, placeholder]
+const COMMAND_FIELDS = [
+  ['pager_disable', 'Disable paging', 'screen-length 0 temporary'],
+  ['sysname', 'Sysname / hostname', 'display current-configuration | include sysname'],
+  ['version', 'Version (used for the model)', 'display version'],
+  ['lldp_brief', 'LLDP neighbor list', 'display lldp neighbor brief'],
+  ['lldp_detail', 'LLDP detail per port — {intf} = local port', 'display lldp neighbor interface {intf}'],
+  ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor'],
+];
+const blankCommandProfile = () => ({
+  id: null,
+  name: '',
+  description: '',
+  parser: 'huawei',
+  enabled: true,
+  commands: Object.fromEntries(COMMAND_FIELDS.map(([f]) => [f, ''])),
+});
 
 const splitList = (text) => text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
 
@@ -58,7 +87,7 @@ const errMsg = (err, fallback) => {
   return err.message || fallback;
 };
 
-export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
+export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUpdateWorkers }) {
   const [mode, setMode] = useState('seed'); // 'seed' | 'subnet'
   const [recursive, setRecursive] = useState(false);
   const [maxDepth, setMaxDepth] = useState(3);
@@ -70,16 +99,60 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
   const [view, setView] = useState('neighbors'); // 'neighbors' | 'summary'
   const [expandedHost, setExpandedHost] = useState(null);
 
-  // Subnet scan
+  // Subnet scan & TCP pre-scan controls
   const [targetsText, setTargetsText] = useState('');
   const [excludeText, setExcludeText] = useState('');
   const [preview, setPreview] = useState(null);
+  // SSH credentials come from the Credential Profile selected above the fleet list
   const [profiles, setProfiles] = useState(null);
-  const [credChoice, setCredChoice] = useState('default'); // 'default' | 'manual' | <profile id>
-  const [manualUser, setManualUser] = useState('');
-  const [manualPass, setManualPass] = useState('');
-  const [scanWorkers, setScanWorkers] = useState(200);
-  const [tcpTimeout, setTcpTimeout] = useState(1.5);
+
+  // Command profiles: which CLI commands to run (independent of the SSH login)
+  const [cmdProfiles, setCmdProfiles] = useState(null);
+  const [cmdPool, setCmdPool] = useState(['', '']);
+  const [showCmdModal, setShowCmdModal] = useState(false);
+  const [editingCmd, setEditingCmd] = useState(null);
+  const [cmdError, setCmdError] = useState('');
+  const [cmdSaving, setCmdSaving] = useState(false);
+
+  // TCP workers & timeout state (persisted)
+  const [enableTcpScan, setEnableTcpScan] = useState(() => {
+    const saved = localStorage.getItem('netauto_lldp_tcp_enabled');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [enableTcpScanSeed, setEnableTcpScanSeed] = useState(() => {
+    const saved = localStorage.getItem('netauto_lldp_tcp_seed_enabled');
+    return saved === 'true';
+  });
+  const [scanWorkers, setScanWorkers] = useState(() => {
+    const saved = localStorage.getItem('netauto_lldp_tcp_workers');
+    return saved ? Math.max(1, Math.min(1000, parseInt(saved, 10))) : 200;
+  });
+  const [tcpTimeout, setTcpTimeout] = useState(() => {
+    const saved = localStorage.getItem('netauto_lldp_tcp_timeout');
+    return saved ? Math.max(0.2, Math.min(10, parseFloat(saved))) : 1.5;
+  });
+
+  const handleToggleTcp = (val) => {
+    setEnableTcpScan(val);
+    localStorage.setItem('netauto_lldp_tcp_enabled', String(val));
+  };
+
+  const handleToggleTcpSeed = (val) => {
+    setEnableTcpScanSeed(val);
+    localStorage.setItem('netauto_lldp_tcp_seed_enabled', String(val));
+  };
+
+  const handleUpdateScanWorkers = (val) => {
+    const clamped = Math.max(1, Math.min(1000, parseInt(val, 10) || 200));
+    setScanWorkers(clamped);
+    localStorage.setItem('netauto_lldp_tcp_workers', String(clamped));
+  };
+
+  const handleUpdateTcpTimeout = (val) => {
+    const clamped = Math.round(Math.max(0.2, Math.min(10, parseFloat(val) || 1.5)) * 10) / 10;
+    setTcpTimeout(clamped);
+    localStorage.setItem('netauto_lldp_tcp_timeout', String(clamped));
+  };
   const [scanJobId, setScanJobId] = useState(null);
   const [scanStatus, setScanStatus] = useState(null);
   const [hideUnreachable, setHideUnreachable] = useState(true);
@@ -93,11 +166,26 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
   useEffect(() => () => clearTimeout(pollRef.current), []);
 
   useEffect(() => {
-    if (mode !== 'subnet' || profiles !== null) return;
     getCredentialProfiles()
       .then((data) => setProfiles(Array.isArray(data) ? data : []))
       .catch(() => setProfiles([]));
-  }, [mode, profiles]);
+  }, []);
+
+  useEffect(() => {
+    getCommandProfiles()
+      .then((data) => setCmdProfiles(Array.isArray(data) ? data : []))
+      .catch(() => setCmdProfiles([]));
+  }, []);
+
+  // Seed the command order once from the saved priorities (Huawei, then Cisco)
+  useEffect(() => {
+    if (!cmdProfiles || cmdProfiles.length === 0) return;
+    setCmdPool((prev) => {
+      if (prev.some(Boolean)) return prev;
+      const enabled = cmdProfiles.filter((p) => p.enabled !== false);
+      return [enabled[0]?.id || '', enabled[1]?.id || ''];
+    });
+  }, [cmdProfiles]);
 
   useEffect(() => {
     if (mode !== 'subnet') return undefined;
@@ -115,6 +203,66 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
     }, 400);
     return () => clearTimeout(timer);
   }, [mode, targetsText, excludeText]);
+
+  // Credentials for the subnet scan follow the fleet, which the SSH Credential
+  // Profile selector above applies to every row
+  const credentialSource = validFleet.find((d) => d.profile_id) || fleet.find((d) => d.profile_id) || null;
+  const credentialProfile = (profiles || []).find((p) => p.id === credentialSource?.profile_id) || null;
+
+  const cmdProfileById = (id) => (cmdProfiles || []).find((p) => p.id === id);
+  const cmdPoolIds = [...new Set(cmdPool.filter(Boolean))];
+  const cmdPoolProfiles = cmdPoolIds.map(cmdProfileById).filter(Boolean);
+  const setCmdPrio = (index, value) =>
+    setCmdPool((prev) => prev.map((id, i) => (i === index ? value : id)));
+
+  const loadCmdProfiles = async () => {
+    const data = await getCommandProfiles();
+    const list = Array.isArray(data) ? data : [];
+    setCmdProfiles(list);
+    return list;
+  };
+
+  const handleSaveCmdProfile = async (e) => {
+    e.preventDefault();
+    if (!editingCmd?.name?.trim()) {
+      setCmdError('Profile name is required.');
+      return;
+    }
+    setCmdSaving(true);
+    setCmdError('');
+    try {
+      const payload = {
+        name: editingCmd.name.trim(),
+        description: editingCmd.description || '',
+        parser: editingCmd.parser || 'huawei',
+        enabled: editingCmd.enabled !== false,
+        commands: editingCmd.commands,
+      };
+      const saved = editingCmd.id
+        ? await updateCommandProfile(editingCmd.id, payload)
+        : await createCommandProfile(payload);
+      await loadCmdProfiles();
+      // A brand new profile is not in the order yet: put it in the first free slot
+      setCmdPool((prev) => (prev.includes(saved.id) ? prev : prev.map((id, i) => (!id && !prev.slice(0, i).some((x) => !x) ? saved.id : id))));
+      setEditingCmd(null);
+    } catch (err) {
+      setCmdError(errMsg(err, 'Failed to save command profile'));
+    } finally {
+      setCmdSaving(false);
+    }
+  };
+
+  const handleDeleteCmdProfile = async (prof) => {
+    if (!window.confirm(`Delete command profile "${prof.name}"?`)) return;
+    setCmdError('');
+    try {
+      await deleteCommandProfile(prof.id);
+      await loadCmdProfiles();
+      setCmdPool((prev) => prev.map((id) => (id === prof.id ? '' : id)));
+    } catch (err) {
+      setCmdError(errMsg(err, 'Failed to delete command profile'));
+    }
+  };
 
   const resetRun = () => {
     setRunning(true);
@@ -143,7 +291,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
         credential_pool: d.credential_pool || null,
         fallback_profile_ids: d.fallback_profile_ids || null,
       }));
-      const data = await discoverLldp(devices, { recursive, maxDepth, numWorkers: nornirWorkers });
+      const data = await discoverLldp(devices, {
+        recursive,
+        maxDepth,
+        numWorkers: nornirWorkers,
+        enableTcpScan: enableTcpScanSeed,
+        scanWorkers,
+        tcpTimeout,
+        commandProfileIds: cmdPoolIds,
+      });
       setReport(data);
     } catch (err) {
       setErrorMessage(errMsg(err, 'LLDP discovery failed'));
@@ -190,14 +346,20 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
         recursive,
         max_depth: maxDepth,
         num_workers: nornirWorkers,
+        enable_tcp_scan: enableTcpScan,
         scan_workers: scanWorkers,
         tcp_timeout: tcpTimeout,
       };
-      if (credChoice === 'manual') {
-        payload.username = manualUser;
-        payload.password = manualPass;
-      } else if (credChoice !== 'default') {
-        payload.profile_id = credChoice;
+      if (cmdPoolIds.length) payload.command_profile_ids = cmdPoolIds;
+      if (credentialSource) {
+        // Same SSH credentials as the fleet: whatever the Credential Profile
+        // selector above applied. Without one the backend uses its default profile.
+        payload.profile_id = credentialSource.profile_id;
+        if (credentialSource.fallback_profile_ids?.length) {
+          payload.fallback_profile_ids = credentialSource.fallback_profile_ids;
+        }
+        payload.device_type = credentialProfile?.device_type || credentialSource.device_type || 'autodetect';
+        payload.port = parseInt(credentialSource.port, 10) || credentialProfile?.port || 22;
       }
       const job = await submitLldpSubnetScan(payload);
       setScanJobId(job.job_id);
@@ -315,12 +477,40 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
         </div>
 
         {mode === 'seed' ? (
-          <p className="lldp-desc">
-            SSH to each device, read Local Device from <code>display current-configuration | include sysname</code>,
-            run <code>display lldp neighbor brief</code>, then loop{' '}
-            <code>display lldp neighbor interface &lt;port&gt;</code> for every port with a neighbor to collect
-            Local Device / Local Port / Remote Device / Remote Port.
-          </p>
+          <>
+            <p className="lldp-desc">
+              SSH to each device, read Local Device from <code>display current-configuration | include sysname</code>,
+              run <code>display lldp neighbor brief</code>, then loop{' '}
+              <code>display lldp neighbor interface &lt;port&gt;</code> for every port with a neighbor to collect
+              Local Device / Local Port / Remote Device / Remote Port.
+            </p>
+
+            <div className="lldp-options" style={{ marginTop: '0.5rem', marginBottom: '0.75rem' }}>
+              <label className="lldp-toggle" title="Perform fast TCP port 22 check before SSH connection to skip unreachable devices rapidly">
+                <input
+                  type="checkbox"
+                  checked={enableTcpScanSeed}
+                  onChange={(e) => handleToggleTcpSeed(e.target.checked)}
+                  disabled={running}
+                />
+                <span>Fast TCP Pre-Check (probe port 22 before SSH to skip dead devices in ~{tcpTimeout}s)</span>
+              </label>
+            </div>
+
+            {enableTcpScanSeed && (
+              <TcpWorkersControl
+                enabled={enableTcpScanSeed}
+                onToggle={handleToggleTcpSeed}
+                workers={scanWorkers}
+                onWorkersChange={handleUpdateScanWorkers}
+                timeout={tcpTimeout}
+                onTimeoutChange={handleUpdateTcpTimeout}
+                disabled={running}
+                title="Seed Devices TCP Pre-Check & Concurrency"
+                compact={true}
+              />
+            )}
+          </>
         ) : (
           <>
             <p className="lldp-desc">
@@ -359,67 +549,78 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
               </label>
             </div>
 
-            <div className="lldp-options">
-              <label className="lldp-field inline">
-                <span>Credentials</span>
-                <select value={credChoice} onChange={(e) => setCredChoice(e.target.value)} disabled={running}>
-                  <option value="default">Default profile</option>
-                  {(profiles || []).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                      {p.is_default ? ' (default)' : ''}
-                    </option>
-                  ))}
-                  <option value="manual">Manual username / password</option>
-                </select>
-              </label>
-              {credChoice === 'manual' && (
-                <>
-                  <label className="lldp-field inline">
-                    <span>Username</span>
-                    <input value={manualUser} onChange={(e) => setManualUser(e.target.value)} disabled={running} />
-                  </label>
-                  <label className="lldp-field inline">
-                    <span>Password</span>
-                    <input
-                      type="password"
-                      value={manualPass}
-                      onChange={(e) => setManualPass(e.target.value)}
-                      disabled={running}
-                    />
-                  </label>
-                </>
-              )}
-              <label className="lldp-depth">
-                <span>TCP workers</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={scanWorkers}
-                  onChange={(e) => setScanWorkers(Math.max(1, Math.min(1000, parseInt(e.target.value, 10) || 1)))}
-                  disabled={running}
-                />
-              </label>
-              <label className="lldp-depth">
-                <span>TCP timeout (s)</span>
-                <input
-                  type="number"
-                  min={0.2}
-                  max={10}
-                  step={0.1}
-                  value={tcpTimeout}
-                  onChange={(e) => setTcpTimeout(Math.max(0.2, Math.min(10, parseFloat(e.target.value) || 1)))}
-                  disabled={running}
-                />
-              </label>
-            </div>
+            {/* Dedicated TCP Workers & Pre-Scan Controller */}
+            <TcpWorkersControl
+              enabled={enableTcpScan}
+              onToggle={handleToggleTcp}
+              workers={scanWorkers}
+              onWorkersChange={handleUpdateScanWorkers}
+              timeout={tcpTimeout}
+              onTimeoutChange={handleUpdateTcpTimeout}
+              disabled={running}
+              title="TCP Port Pre-Scan & Workers Concurrency"
+            />
+
+            <p className="lldp-hint">
+              SSH login uses the <strong>{credentialProfile?.name || 'default'}</strong> credential profile — the one
+              picked in the SSH Credential Profile selector above the fleet list.
+            </p>
             <p className="lldp-hint warn">
-              Every reachable IP tries each credential in the chosen profile. Many failed logins on a TACACS/RADIUS
-              account can trigger a lockout, so put the correct credential first.
+              Every reachable IP tries each credential in that profile. Many failed logins on a TACACS/RADIUS account
+              can trigger a lockout, so put the correct credential first in the profile.
             </p>
           </>
         )}
+
+        {/* Which CLI commands to run: P1 first, next profile when the device rejects them */}
+        <div className="lldp-prio-pool">
+          <div className="lldp-prio-head">
+            <span>
+              <Terminal className="h-3.5 w-3.5" style={{ display: 'inline', marginRight: '0.35rem' }} />
+              Command Profile Priority
+              {cmdPoolProfiles.length ? ` (${cmdPoolProfiles.map((p) => p.name).join(' → ')})` : ''}
+            </span>
+            <button
+              className="lldp-btn-secondary lldp-btn-mini"
+              onClick={() => {
+                setCmdError('');
+                setEditingCmd(null);
+                setShowCmdModal(true);
+              }}
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Manage ({(cmdProfiles || []).length})
+            </button>
+          </div>
+
+          <div className="lldp-prio-rows">
+            {cmdPool.map((id, i) => {
+              const prof = cmdProfileById(id);
+              return (
+                <label className="lldp-prio-row" key={i}>
+                  <span className={`lldp-prio-badge p${i + 1}`}>C{i + 1}</span>
+                  <select value={id} onChange={(e) => setCmdPrio(i, e.target.value)} disabled={running}>
+                    <option value="">{i === 0 ? '— All enabled profiles —' : '— None —'}</option>
+                    {(cmdProfiles || []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                        {p.enabled === false ? ' (disabled)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="lldp-prio-driver">
+                    {prof ? `${prof.parser} · ${prof.commands?.lldp_brief || '-'}` : '-'}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <span className="lldp-hint">
+            Commands only — the SSH login comes from the credential profile above. C1's commands run first on the open
+            session; if the device rejects them (Huawei <code>display</code> on a Cisco), C2's commands are run on the
+            same session instead, with no second login.
+          </span>
+        </div>
 
         <div className="lldp-options">
           <label className="lldp-toggle">
@@ -658,6 +859,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                     <th>Hostname</th>
                     <th>IP Address</th>
                     <th>Model</th>
+                    <th>Commands</th>
                     <th>Depth</th>
                     <th>Status</th>
                     <th>Neighbors Found</th>
@@ -667,7 +869,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                 <tbody>
                   {filteredHosts.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="lldp-empty">
+                      <td colSpan={9} className="lldp-empty">
                         No hosts
                       </td>
                     </tr>
@@ -682,6 +884,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                           <td>{h.hostname}</td>
                           <td className="mono">{h.ip}</td>
                           <td>{h.model || '-'}</td>
+                          <td>{h.command_profile || '-'}</td>
                           <td>{h.depth}</td>
                           <td>
                             <span className={`lldp-status ${h.success ? 'ok' : 'fail'}`}>
@@ -695,7 +898,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
                         </tr>
                         {open && (
                           <tr>
-                            <td colSpan={8} className="lldp-raw-cell">
+                            <td colSpan={9} className="lldp-raw-cell">
                               <pre className="lldp-raw">
                                 {h.credential ? `Credential: ${h.credential}\n` : ''}
                                 {h.log || h.detail || ''}
@@ -712,6 +915,140 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10 }) {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Manage command profiles: the CLI commands used to collect LLDP */}
+      {showCmdModal && (
+        <div className="lldp-modal-backdrop" onClick={() => setShowCmdModal(false)}>
+          <div className="lldp-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="lldp-modal-head">
+              <h3>
+                <Terminal className="h-4 w-4" />
+                {editingCmd ? (editingCmd.id ? 'Edit Command Profile' : 'New Command Profile') : 'LLDP Command Profiles'}
+              </h3>
+              <button className="lldp-modal-close" onClick={() => setShowCmdModal(false)}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="lldp-modal-body">
+              {cmdError && (
+                <div className="lldp-error">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{cmdError}</span>
+                </div>
+              )}
+
+              {!editingCmd ? (
+                <>
+                  {(cmdProfiles || []).map((p) => (
+                    <div className="lldp-cmd-item" key={p.id}>
+                      <div className="lldp-cmd-item-main">
+                        <span className="lldp-cmd-name">{p.name}</span>
+                        <span className="lldp-prio-badge">{p.parser}</span>
+                        {p.enabled === false && <span className="lldp-prio-badge">disabled</span>}
+                        <code className="lldp-cmd-preview">{p.commands?.lldp_brief || '-'}</code>
+                      </div>
+                      <div className="lldp-cmd-actions">
+                        <button
+                          className="lldp-btn-secondary lldp-btn-mini"
+                          onClick={() => {
+                            setCmdError('');
+                            setEditingCmd({ ...p, commands: { ...p.commands } });
+                          }}
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          Edit
+                        </button>
+                        <button className="lldp-btn-danger lldp-btn-mini" onClick={() => handleDeleteCmdProfile(p)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    className="lldp-btn-primary lldp-btn-mini"
+                    onClick={() => {
+                      setCmdError('');
+                      setEditingCmd(blankCommandProfile());
+                    }}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    New Command Profile
+                  </button>
+                </>
+              ) : (
+                <form className="lldp-cmd-form" onSubmit={handleSaveCmdProfile}>
+                  <label className="lldp-field">
+                    <span>Profile name</span>
+                    <input
+                      value={editingCmd.name}
+                      onChange={(e) => setEditingCmd((prev) => ({ ...prev, name: e.target.value }))}
+                      placeholder="e.g. Aruba OS-CX"
+                    />
+                  </label>
+                  <label className="lldp-field">
+                    <span>Description</span>
+                    <input
+                      value={editingCmd.description || ''}
+                      onChange={(e) => setEditingCmd((prev) => ({ ...prev, description: e.target.value }))}
+                      placeholder="Optional remarks"
+                    />
+                  </label>
+                  <label className="lldp-field">
+                    <span>Output parser (how the LLDP output is read)</span>
+                    <select
+                      value={editingCmd.parser}
+                      onChange={(e) => setEditingCmd((prev) => ({ ...prev, parser: e.target.value }))}
+                    >
+                      <option value="huawei">huawei — display lldp neighbor style</option>
+                      <option value="cisco">cisco — show lldp neighbors style</option>
+                    </select>
+                  </label>
+                  <label className="lldp-toggle">
+                    <input
+                      type="checkbox"
+                      checked={editingCmd.enabled !== false}
+                      onChange={(e) => setEditingCmd((prev) => ({ ...prev, enabled: e.target.checked }))}
+                    />
+                    <span>Enabled</span>
+                  </label>
+
+                  {COMMAND_FIELDS.map(([field, label, placeholder]) => (
+                    <label className="lldp-field" key={field}>
+                      <span>{label}</span>
+                      <input
+                        className="lldp-cmd-input"
+                        value={editingCmd.commands?.[field] || ''}
+                        onChange={(e) =>
+                          setEditingCmd((prev) => ({
+                            ...prev,
+                            commands: { ...prev.commands, [field]: e.target.value },
+                          }))
+                        }
+                        placeholder={placeholder}
+                      />
+                    </label>
+                  ))}
+                  <span className="lldp-hint">
+                    Leave a command empty to use the built-in default for the selected parser.
+                  </span>
+
+                  <div className="lldp-actions">
+                    <button type="submit" className="lldp-btn-primary" disabled={cmdSaving}>
+                      {cmdSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      {editingCmd.id ? 'Update' : 'Create'}
+                    </button>
+                    <button type="button" className="lldp-btn-secondary" onClick={() => setEditingCmd(null)}>
+                      <X className="h-4 w-4" />
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

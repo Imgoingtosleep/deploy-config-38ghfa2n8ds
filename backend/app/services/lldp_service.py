@@ -30,6 +30,28 @@ _BRIEF_HEADER_ALIASES = {
     "exptime": ["Exptime(s)", "Exptime", "Expire"],
 }
 
+# Cisco 'show lldp neighbors' puts Device ID first, then Local Intf ... Port ID
+_BRIEF_HEADER_ALIASES_CISCO = {
+    "remote_dev": ["Device ID"],
+    "local": ["Local Intf", "Local Interface"],
+    "remote_intf": ["Port ID"],
+    "exptime": ["Hold-time"],
+}
+
+# The device parser rejected the command, so this command profile is the wrong vendor
+_CLI_REJECT_RE = re.compile(
+    r"unrecognized command|invalid input|% invalid|syntax error|wrong parameter|incomplete command",
+    re.I,
+)
+
+# Cisco / Aruba style model codes, e.g. WS-C2960X-48TS-L, C9200-48P, ISR4331, N9K-C93180YC
+_MODEL_RE_CISCO = re.compile(r"(?<![\w-])((?:WS-C|N\dK-|ISR|ASR|CBS|C)\d{3,5}[A-Z0-9]*(?:-[A-Z0-9]+)*)(?!\w)")
+
+
+def cli_rejected(text: str) -> bool:
+    """True when the CLI answered with a syntax error instead of running the command"""
+    return bool(text) and bool(_CLI_REJECT_RE.search(text))
+
 
 class LldpService:
     @staticmethod
@@ -37,9 +59,10 @@ class LldpService:
         return re.sub(r"[<>\[\]#]", "", prompt or "").strip()
 
     @staticmethod
-    def extract_model(text: str) -> str:
-        """Model from 'System description' or 'display version' output, '' when none is found"""
-        candidates = _MODEL_RE.findall(text or "")
+    def extract_model(text: str, parser: str = "huawei") -> str:
+        """Model from 'System description' or version output, '' when none is found"""
+        regex = _MODEL_RE_CISCO if parser == "cisco" else _MODEL_RE
+        candidates = regex.findall(text or "")
         return max(candidates, key=len) if candidates else ""
 
     @staticmethod
@@ -50,20 +73,22 @@ class LldpService:
         return "router" if model.upper().startswith(ROUTER_MODEL_PREFIXES) else "switch"
 
     @staticmethod
-    def parse_lldp_brief(output: str) -> List[Dict[str, str]]:
+    def parse_lldp_brief(output: str, parser: str = "huawei") -> List[Dict[str, str]]:
         """
-        Parse Huawei 'display lldp neighbor brief' into rows of
-        {local_port, remote_device, remote_port}. Column boundaries are taken
-        from the header line, so column order differences between VRP versions work.
+        Parse an LLDP neighbor table into rows of {local_port, remote_device,
+        remote_port}. Column boundaries are taken from the header line, so both
+        Huawei 'display lldp neighbor brief' and Cisco 'show lldp neighbors'
+        work, as do column order differences between firmware versions.
         """
         rows: List[Dict[str, str]] = []
         lines = (output or "").splitlines()
+        aliases_map = _BRIEF_HEADER_ALIASES_CISCO if parser == "cisco" else _BRIEF_HEADER_ALIASES
 
         header_idx = None
         columns = []
         for idx, line in enumerate(lines):
             found = []
-            for key, aliases in _BRIEF_HEADER_ALIASES.items():
+            for key, aliases in aliases_map.items():
                 for alias in aliases:
                     pos = line.find(alias)
                     if pos >= 0:
@@ -173,7 +198,56 @@ class LldpService:
         return results
 
     @classmethod
-    def collect_device(cls, device: DeviceCredentials, depth: int = 0) -> Dict[str, Any]:
+    def parse_lldp_detail_cisco(cls, output: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Parse Cisco 'show lldp neighbors [<intf>] detail'. Entries are separated
+        by dashed rules; each block carries Local Intf / Port id / System Name /
+        System Description and an indented 'IP:' under Management Addresses.
+        """
+        results: List[Dict[str, str]] = []
+        blocks = [b for b in re.split(r"^-{4,}\s*$", output or "", flags=re.MULTILINE) if b.strip()]
+        for block in blocks:
+            sysname = re.search(r"^\s*System Name\s*:(.*)$", block, re.MULTILINE | re.IGNORECASE)
+            port_id = re.search(r"^\s*Port id\s*:(.*)$", block, re.MULTILINE | re.IGNORECASE)
+            if not sysname and not port_id:
+                continue
+            local = re.search(r"^\s*Local Intf\s*:(.*)$", block, re.MULTILINE | re.IGNORECASE)
+            local_port = local.group(1).strip() if local else (default_local_port or "")
+            if not local_port:
+                continue
+            ip_match = re.search(r"^\s*IP\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})\s*$", block, re.MULTILINE | re.IGNORECASE)
+            remote_ip = ""
+            if ip_match:
+                try:
+                    remote_ip = str(ipaddress.IPv4Address(ip_match.group(1)))
+                except ValueError:
+                    remote_ip = ""
+            desc = re.search(
+                r"^\s*System Description\s*:(.*?)(?=^\s*(?:Time remaining|System Capabilities|Enabled Capabilities|Management Addresses|Auto Negotiation)\s*:|\Z)",
+                block, re.MULTILINE | re.IGNORECASE | re.DOTALL,
+            )
+            results.append({
+                "local_port": local_port,
+                "remote_device": sysname.group(1).strip() if sysname else "N/A",
+                "remote_port": port_id.group(1).strip() if port_id else "N/A",
+                "remote_ip": remote_ip,
+                "remote_model": cls.extract_model(desc.group(1), "cisco") if desc else "",
+            })
+        return results
+
+    @classmethod
+    def parse_detail(cls, output: str, parser: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
+        if parser == "cisco":
+            return cls.parse_lldp_detail_cisco(output, default_local_port=default_local_port)
+        return cls.parse_lldp_detail(output, default_local_port=default_local_port)
+
+    @classmethod
+    def collect_device(
+        cls,
+        device: DeviceCredentials,
+        depth: int = 0,
+        command_profile_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         """
         SSH to one device -> 'display lldp neighbor brief' -> loop every local
         interface that has a neighbor with 'display lldp neighbor interface <if>'.
@@ -187,126 +261,159 @@ class LldpService:
         model = ""
         status = "Success"
         error = None
+        used_profile = ""
+
+        from app.services.command_profile_service import CommandProfileService
+        cmd_profiles = CommandProfileService.resolve_ordered(command_profile_ids)
 
         try:
             with NetmikoService.connect_with_fallback(device) as (net_connect, winning_cred, attempt_logs):
                 log_lines.append(f"Step 0: Connected via {winning_cred}")
-                try:
-                    net_connect.send_command("screen-length 0 temporary", read_timeout=settings.DEFAULT_TIMEOUT)
-                except Exception:
-                    pass
-                sysname_source = SYSNAME_CMD
-                cfg_sysname = ""
-                try:
-                    sys_raw = NetmikoService.clean_cli_output(
-                        net_connect.send_command(SYSNAME_CMD, read_timeout=settings.DEFAULT_TIMEOUT)
-                    )
-                    raw_parts.append(f"<{sysname}> {SYSNAME_CMD}\n{sys_raw}")
-                    m = re.search(r"^\s*sysname\s+(.+?)\s*$", sys_raw, re.MULTILINE | re.IGNORECASE)
-                    cfg_sysname = m.group(1).strip() if m else ""
-                except Exception as e:
-                    log_lines.append(f"Step 1: '{SYSNAME_CMD}' failed: {e}")
-                if cfg_sysname:
-                    sysname = cfg_sysname
-                else:
-                    # Fall back to the CLI prompt when sysname is not in the config output
-                    sysname_source = "prompt"
-                    sysname = cls.get_sysname(net_connect.find_prompt()) or sysname
-                log_lines.append(f"Step 1: Identified real sysname as [{sysname}] (from {sysname_source})")
-                try:
-                    ver_raw = NetmikoService.clean_cli_output(
-                        net_connect.send_command(VERSION_CMD, read_timeout=settings.DEFAULT_TIMEOUT)
-                    )
-                    raw_parts.append(f"<{sysname}> {VERSION_CMD}\n{ver_raw}")
-                    model = cls.extract_model(ver_raw)
-                    log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from '{VERSION_CMD}'")
-                except Exception as e:
-                    log_lines.append(f"Step 1b: '{VERSION_CMD}' failed: {e}")
 
-                brief_raw = NetmikoService.clean_cli_output(
-                    net_connect.send_command(LLDP_BRIEF_CMD, read_timeout=settings.DEFAULT_TIMEOUT)
-                )
-                raw_parts.append(f"<{sysname}> {LLDP_BRIEF_CMD}\n{brief_raw}")
-                brief_rows = cls.parse_lldp_brief(brief_raw)
-                log_lines.append(f"Step 2: '{LLDP_BRIEF_CMD}' returned {len(brief_rows)} neighbor row(s)")
+                # Walk the command profiles on this one session: Huawei commands
+                # first, and when the CLI rejects them retry with the next profile
+                # (Cisco) instead of logging in again.
+                for prof_no, cprof in enumerate(cmd_profiles, 1):
+                    is_last_profile = prof_no == len(cmd_profiles)
+                    cmds = cprof["commands"]
+                    parser = cprof["parser"]
+                    used_profile = cprof["name"]
+                    log_lines.append(
+                        f"Step 0b: Command profile {prof_no}/{len(cmd_profiles)} [{cprof['name']}] (parser: {parser})"
+                    )
+                    neighbors = []
+                    raw_parts.append(f"===== Command profile: {cprof['name']} =====")
 
-                # Step 3: loop 'display lldp neighbor interface <if>' for every brief port
-                intf_order: List[str] = []
-                details_by_intf: Dict[str, List[Dict[str, str]]] = {}
-                for row in brief_rows:
-                    intf = row["local_port"]
-                    if intf in details_by_intf:
-                        continue
-                    intf_order.append(intf)
-                    cmd = LLDP_DETAIL_CMD.format(intf=intf)
-                    details: List[Dict[str, str]] = []
+                    if cmds.get("pager_disable"):
+                        try:
+                            net_connect.send_command(cmds["pager_disable"], read_timeout=settings.DEFAULT_TIMEOUT)
+                        except Exception:
+                            pass
+                    sysname_source = cmds.get("sysname") or "prompt"
+                    cfg_sysname = ""
                     try:
-                        detail_raw = NetmikoService.clean_cli_output(
-                            net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                        sys_raw = NetmikoService.clean_cli_output(
+                            net_connect.send_command(cmds["sysname"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
-                        raw_parts.append(f"<{sysname}> {cmd}\n{detail_raw}")
-                        details = cls.parse_lldp_detail(detail_raw, default_local_port=intf)
+                        raw_parts.append(f"<{sysname}> {cmds['sysname']}\n{sys_raw}")
+                        m = re.search(r"^\s*(?:sysname|hostname)\s+(.+?)\s*$", sys_raw, re.MULTILINE | re.IGNORECASE)
+                        cfg_sysname = m.group(1).strip() if m else ""
                     except Exception as e:
-                        log_lines.append(f"Step 3: '{cmd}' failed: {e}")
-                    details_by_intf[intf] = details
-                    log_lines.append(f"Step 3: '{cmd}' -> {len(details)} neighbor(s)")
+                        log_lines.append(f"Step 1: '{cmds.get('sysname')}' failed: {e}")
+                    if cfg_sysname:
+                        sysname = cfg_sysname
+                    else:
+                        # Fall back to the CLI prompt when sysname is not in the config output
+                        sysname_source = "prompt"
+                        sysname = cls.get_sysname(net_connect.find_prompt()) or sysname
+                    log_lines.append(f"Step 1: Identified real sysname as [{sysname}] (from {sysname_source})")
 
-                # Step 4: ports without detail -> run full 'display lldp neighbor' once
-                # and parse it exactly like the original script
-                missing = [i for i in intf_order if not details_by_intf[i]]
-                if missing or not brief_rows:
+                    ver_raw = ""
                     try:
-                        full_raw = NetmikoService.clean_cli_output(
-                            net_connect.send_command(LLDP_FULL_CMD, read_timeout=settings.DEFAULT_TIMEOUT * 4)
+                        ver_raw = NetmikoService.clean_cli_output(
+                            net_connect.send_command(cmds["version"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
-                        raw_parts.append(f"<{sysname}> {LLDP_FULL_CMD}\n{full_raw}")
-                        full_rows = cls.parse_lldp_detail(full_raw)
+                        raw_parts.append(f"<{sysname}> {cmds['version']}\n{ver_raw}")
+                        model = cls.extract_model(ver_raw, parser)
+                        log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from '{cmds['version']}'")
+                    except Exception as e:
+                        log_lines.append(f"Step 1b: '{cmds.get('version')}' failed: {e}")
+
+                    brief_raw = NetmikoService.clean_cli_output(
+                        net_connect.send_command(cmds["lldp_brief"], read_timeout=settings.DEFAULT_TIMEOUT)
+                    )
+                    raw_parts.append(f"<{sysname}> {cmds['lldp_brief']}\n{brief_raw}")
+                    brief_rows = cls.parse_lldp_brief(brief_raw, parser)
+                    log_lines.append(f"Step 2: '{cmds['lldp_brief']}' returned {len(brief_rows)} neighbor row(s)")
+
+                    # Wrong vendor for this profile: the CLI rejected the LLDP command,
+                    # or it returned nothing and the version command was rejected too
+                    if not is_last_profile and (cli_rejected(brief_raw) or (not brief_rows and cli_rejected(ver_raw))):
                         log_lines.append(
-                            f"Step 4: {len(missing)} port(s) without detail, '{LLDP_FULL_CMD}' returned {len(full_rows)} neighbor(s)"
+                            f"Step 2b: [{cprof['name']}] commands rejected by this device, trying the next command profile"
                         )
-                        by_key: Dict[str, List[Dict[str, str]]] = {}
-                        for r in full_rows:
-                            by_key.setdefault(cls.intf_key(r["local_port"]), []).append(r)
-                        if not brief_rows:
-                            # Brief could not be parsed at all: use the full output as-is
+                        continue
+
+                    # Step 3: per-interface detail for every port that has a neighbor
+                    intf_order: List[str] = []
+                    details_by_intf: Dict[str, List[Dict[str, str]]] = {}
+                    for row in brief_rows:
+                        intf = row["local_port"]
+                        if intf in details_by_intf:
+                            continue
+                        intf_order.append(intf)
+                        cmd = cmds["lldp_detail"].format(intf=intf) if "{intf}" in cmds["lldp_detail"] else cmds["lldp_detail"]
+                        details: List[Dict[str, str]] = []
+                        try:
+                            detail_raw = NetmikoService.clean_cli_output(
+                                net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                            )
+                            raw_parts.append(f"<{sysname}> {cmd}\n{detail_raw}")
+                            details = cls.parse_detail(detail_raw, parser, default_local_port=intf)
+                        except Exception as e:
+                            log_lines.append(f"Step 3: '{cmd}' failed: {e}")
+                        details_by_intf[intf] = details
+                        log_lines.append(f"Step 3: '{cmd}' -> {len(details)} neighbor(s)")
+
+                    # Step 4: ports without detail -> run the full LLDP detail command once
+                    missing = [i for i in intf_order if not details_by_intf[i]]
+                    if missing or not brief_rows:
+                        try:
+                            full_raw = NetmikoService.clean_cli_output(
+                                net_connect.send_command(cmds["lldp_full"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
+                            )
+                            raw_parts.append(f"<{sysname}> {cmds['lldp_full']}\n{full_raw}")
+                            full_rows = cls.parse_detail(full_raw, parser)
+                            log_lines.append(
+                                f"Step 4: {len(missing)} port(s) without detail, '{cmds['lldp_full']}' returned {len(full_rows)} neighbor(s)"
+                            )
+                            by_key: Dict[str, List[Dict[str, str]]] = {}
                             for r in full_rows:
-                                if r["local_port"] not in details_by_intf:
-                                    intf_order.append(r["local_port"])
-                                    details_by_intf[r["local_port"]] = []
-                                details_by_intf[r["local_port"]].append(r)
-                        for intf in missing:
-                            details_by_intf[intf] = by_key.get(cls.intf_key(intf), [])
-                    except Exception as e:
-                        log_lines.append(f"Step 4: '{LLDP_FULL_CMD}' failed: {e}")
+                                by_key.setdefault(cls.intf_key(r["local_port"]), []).append(r)
+                            if not brief_rows:
+                                # Brief could not be parsed at all: use the full output as-is
+                                for r in full_rows:
+                                    if r["local_port"] not in details_by_intf:
+                                        intf_order.append(r["local_port"])
+                                        details_by_intf[r["local_port"]] = []
+                                    details_by_intf[r["local_port"]].append(r)
+                            for intf in missing:
+                                details_by_intf[intf] = by_key.get(cls.intf_key(intf), [])
+                        except Exception as e:
+                            log_lines.append(f"Step 4: '{cmds['lldp_full']}' failed: {e}")
 
-                for intf in intf_order:
-                    details = details_by_intf[intf]
-                    if not details:
-                        # Last resort: brief values for this port
-                        log_lines.append(f"Step 4: {intf} has no detail anywhere, used brief values")
-                        details = [
-                            {
-                                "local_port": r["local_port"],
-                                "remote_device": r["remote_device"] or "N/A",
-                                "remote_port": r["remote_port"] or "N/A",
-                                "remote_ip": "",
-                                "remote_model": "",
-                            }
-                            for r in brief_rows if r["local_port"] == intf
-                        ]
-                    for d in details:
-                        neighbors.append({
-                            "Local Device": sysname,
-                            "Local Model": model,
-                            "Local IP": local_ip,
-                            "Local Port": d["local_port"],
-                            "Remote Device": d["remote_device"],
-                            "Remote Model": d.get("remote_model", ""),
-                            "Remote Port": d["remote_port"],
-                            "Remote IP": d.get("remote_ip", ""),
-                        })
+                    for intf in intf_order:
+                        details = details_by_intf[intf]
+                        if not details:
+                            # Last resort: brief values for this port
+                            log_lines.append(f"Step 4: {intf} has no detail anywhere, used brief values")
+                            details = [
+                                {
+                                    "local_port": r["local_port"],
+                                    "remote_device": r["remote_device"] or "N/A",
+                                    "remote_port": r["remote_port"] or "N/A",
+                                    "remote_ip": "",
+                                    "remote_model": "",
+                                }
+                                for r in brief_rows if r["local_port"] == intf
+                            ]
+                        for d in details:
+                            neighbors.append({
+                                "Local Device": sysname,
+                                "Local Model": model,
+                                "Local IP": local_ip,
+                                "Local Port": d["local_port"],
+                                "Remote Device": d["remote_device"],
+                                "Remote Model": d.get("remote_model", ""),
+                                "Remote Port": d["remote_port"],
+                                "Remote IP": d.get("remote_ip", ""),
+                            })
 
-                log_lines.append(f"Step 5: Parsed {len(neighbors)} neighbors.")
+                    # Reaching here means the device accepted this profile's commands
+                    # (a rejection already moved on above), so an empty neighbor list
+                    # is a real answer - do not sweep the next vendor's commands.
+                    log_lines.append(f"Step 5: Parsed {len(neighbors)} neighbors with [{cprof['name']}].")
+                    break
         except Exception as e:
             status = f"Failed: {e}"
             error = str(e)
@@ -316,6 +423,7 @@ class LldpService:
             "hostname": sysname,
             "ip": local_ip,
             "model": model,
+            "command_profile": used_profile,
             "depth": depth,
             "status": status,
             "success": error is None,
@@ -332,8 +440,12 @@ class LldpService:
         cls,
         devices: List[DeviceCredentials],
         num_workers: Optional[int] = None,
+        enable_tcp_scan: bool = False,
+        scan_workers: int = 50,
+        tcp_timeout: float = 1.5,
         recursive: bool = False,
         max_depth: int = 3,
+        command_profile_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Run collect_device over the seed devices. When recursive is on, the
@@ -355,10 +467,49 @@ class LldpService:
         depth = 0
         while wave:
             results = [None] * len(wave)
-            with ThreadPoolExecutor(max_workers=min(workers, len(wave))) as executor:
-                futures = {executor.submit(cls.collect_device, dev, depth): i for i, dev in enumerate(wave)}
-                for fut in as_completed(futures):
-                    results[futures[fut]] = fut.result()
+            alive_indices = []
+
+            if enable_tcp_scan:
+                from app.services.lldp_scan_service import tcp_alive
+                tcp_results = {}
+                with ThreadPoolExecutor(max_workers=min(scan_workers, len(wave))) as tcp_exec:
+                    tcp_futs = {
+                        tcp_exec.submit(tcp_alive, dev.host, dev.port or settings.DEFAULT_SSH_PORT, tcp_timeout): i
+                        for i, dev in enumerate(wave)
+                    }
+                    for fut in as_completed(tcp_futs):
+                        tcp_results[tcp_futs[fut]] = fut.result()
+
+                for i, dev in enumerate(wave):
+                    if tcp_results.get(i):
+                        alive_indices.append(i)
+                    else:
+                        port = dev.port or settings.DEFAULT_SSH_PORT
+                        results[i] = {
+                            "hostname": dev.name or dev.host,
+                            "ip": dev.host,
+                            "model": "",
+                            "depth": depth,
+                            "status": "UNREACHABLE",
+                            "success": False,
+                            "error": f"TCP/{port} port closed or no response within {tcp_timeout}s",
+                            "neighbors_found": 0,
+                            "neighbors": [],
+                            "log": f"TCP/{port} closed or no response within {tcp_timeout}s (host down, ACL or firewall)",
+                            "raw_output": "",
+                            "execution_time_seconds": round(tcp_timeout, 2),
+                        }
+            else:
+                alive_indices = list(range(len(wave)))
+
+            if alive_indices:
+                with ThreadPoolExecutor(max_workers=min(workers, len(alive_indices))) as executor:
+                    futures = {
+                        executor.submit(cls.collect_device, wave[i], depth, command_profile_ids): i
+                        for i in alive_indices
+                    }
+                    for fut in as_completed(futures):
+                        results[futures[fut]] = fut.result()
 
             next_wave = []
             for dev, res in zip(wave, results):

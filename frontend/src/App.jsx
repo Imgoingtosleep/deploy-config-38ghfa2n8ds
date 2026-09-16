@@ -117,7 +117,11 @@ export default function App() {
             />
           )}
           {activeTab === 'lldp' && (
-            <LldpDiscoveryPage fleet={fleet} nornirWorkers={nornirWorkers} />
+            <LldpDiscoveryPage
+              fleet={fleet}
+              nornirWorkers={nornirWorkers}
+              onUpdateWorkers={handleUpdateWorkers}
+            />
           )}
         </section>
       </main>
