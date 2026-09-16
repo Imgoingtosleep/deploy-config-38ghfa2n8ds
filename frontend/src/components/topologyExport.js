@@ -54,13 +54,15 @@ export function prepareSvgClone(svgEl, positions) {
   bg.setAttribute('width', w);
   bg.setAttribute('height', h);
   clone.querySelectorAll('[opacity]').forEach((el) => el.setAttribute('opacity', '1'));
+  // Hit areas, selection handles and in-progress drawing from the editor
+  clone.querySelectorAll('[data-export-hide]').forEach((el) => el.remove());
   return { clone, minX, minY, w, h };
 }
 
 export const serializeSvg = (clone) => new XMLSerializer().serializeToString(clone);
 
-/** Topology + LLDP rows + current positions, the data embedded in every export */
-export function buildPayload(nodes, links, neighbors, positions) {
+/** Topology + LLDP rows + current positions + editor annotations, the data embedded in every export */
+export function buildPayload(nodes, links, neighbors, positions, annotations = {}) {
   const round = (v) => (Number.isFinite(v) ? Math.round(v * 10) / 10 : undefined);
   return {
     format: PAYLOAD_FORMAT,
@@ -71,6 +73,11 @@ export function buildPayload(nodes, links, neighbors, positions) {
       links,
     },
     neighbors: neighbors || [],
+    annotations: {
+      flows: annotations.flows || [],
+      zones: annotations.zones || [],
+      notes: annotations.notes || [],
+    },
   };
 }
 
@@ -221,6 +228,15 @@ const attrString = (attrs) =>
     .map(([k, v]) => ` ${k}="${xmlEscape(v)}"`)
     .join('');
 
+// draw.io pages are white: very light note colors from the dark canvas would be unreadable there
+const readableOnWhite = (hex) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return '#1e293b';
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.8 ? '#1e293b' : hex;
+};
+
 const DRAWIO_NODE = {
   router: {
     w: 50,
@@ -236,6 +252,40 @@ const DRAWIO_NODE = {
       'shape=mxgraph.cisco.switches.workgroup_switch;html=1;pointerEvents=1;dashed=0;fillColor=#4338ca;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fontSize=11;',
     modelColor: '#4338ca',
   },
+  firewall: {
+    w: 50,
+    h: 50,
+    style:
+      'shape=mxgraph.cisco.security.firewall;html=1;pointerEvents=1;dashed=0;fillColor=#9a3412;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fontSize=11;',
+    modelColor: '#9a3412',
+  },
+  server: {
+    w: 36,
+    h: 50,
+    style:
+      'shape=mxgraph.cisco.servers.fileserver;html=1;pointerEvents=1;dashed=0;fillColor=#166534;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fontSize=11;',
+    modelColor: '#166534',
+  },
+  cloud: {
+    w: 80,
+    h: 50,
+    style: 'ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#1e3a5f;verticalLabelPosition=bottom;verticalAlign=top;align=center;fontSize=11;',
+    modelColor: '#1e3a5f',
+  },
+  pc: {
+    w: 50,
+    h: 44,
+    style:
+      'shape=mxgraph.cisco.computers_and_peripherals.pc;html=1;pointerEvents=1;dashed=0;fillColor=#3f3f46;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fontSize=11;',
+    modelColor: '#3f3f46',
+  },
+  wireless: {
+    w: 44,
+    h: 30,
+    style:
+      'shape=mxgraph.cisco.wireless.access_point;html=1;pointerEvents=1;dashed=0;fillColor=#6b21a8;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fontSize=11;',
+    modelColor: '#6b21a8',
+  },
   unknown: {
     w: 36,
     h: 36,
@@ -245,15 +295,27 @@ const DRAWIO_NODE = {
 };
 
 /**
- * draw.io / diagrams.net file using the current on-screen positions (Cisco router / switch shapes).
+ * draw.io / diagrams.net file using the current on-screen positions (Cisco shapes).
  * includePorts: add the connected interface names as labels at both ends of every link.
+ * zones / notes / flows from the editor are written as cells with lldp_type data attributes,
+ * so the file stays editable in draw.io and imports back with everything that was added.
  */
-export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } = {}) {
+export function buildDrawioXml(nodes, pairs, positions, { includePorts = true, flows = [], zones = [], notes = [] } = {}) {
   const b = boundsOf(positions);
   const offX = -b.minX + EXPORT_PAD.x;
   const offY = -b.minY + EXPORT_PAD.top;
   const cells = [];
   const cellId = {};
+
+  // Zones first so they sit behind devices and links
+  zones.forEach((z, i) => {
+    const data = attrString({ lldp_type: 'zone', zone_id: z.id, color: z.color, anchor: z.anchor || '' });
+    cells.push(
+      `<object id="z${i}" label="${xmlEscape(z.text)}"${data}>` +
+        `<mxCell style="rounded=1;arcSize=4;whiteSpace=wrap;html=1;fillColor=${z.color};fillOpacity=10;strokeColor=${z.color};dashed=1;dashPattern=8 5;verticalAlign=top;align=left;spacingLeft=10;spacingTop=4;fontStyle=1;fontSize=13;fontColor=${z.color};container=0;" vertex="1" parent="1">` +
+        `<mxGeometry x="${Math.round(z.x + offX)}" y="${Math.round(z.y + offY)}" width="${Math.round(z.w)}" height="${Math.round(z.h)}" as="geometry"/></mxCell></object>`
+    );
+  });
 
   nodes.forEach((node, i) => {
     const p = positions[node.id];
@@ -270,6 +332,7 @@ export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } 
       model: node.model || '',
       role: node.role,
       discovered: node.discovered ? 'yes' : 'no',
+      manual: node.manual ? 'yes' : 'no',
     });
     cells.push(
       `<object id="${id}" label="${xmlEscape(label)}" placeholders="1"${data}>` +
@@ -291,6 +354,7 @@ export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } 
       source_ports: pair.ports.map((p) => p.sp).join(';'),
       target_ports: pair.ports.map((p) => p.tp).join(';'),
       confirmed: pair.ports.map((p) => (p.confirmed ? 'yes' : 'no')).join(';'),
+      manual: pair.ports.map((p) => (p.manual ? 'yes' : 'no')).join(';'),
     });
     cells.push(
       `<object id="${id}" label="${count > 1 ? `x${count}` : ''}"${data}>` +
@@ -308,6 +372,43 @@ export function buildDrawioXml(nodes, pairs, positions, { includePorts = true } 
           `<mxGeometry x="${pos}" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry></mxCell>`
       );
     });
+  });
+
+  // Traffic flows: one arrow per hop, grouped by flow_id / hop so the path is rebuilt on import
+  flows.forEach((f, fi) => {
+    const both = f.direction === 'both';
+    f.hops.slice(1).forEach((h, hi) => {
+      const source = cellId[f.hops[hi]];
+      const target = cellId[h];
+      if (!source || !target) return;
+      const data = attrString({
+        lldp_type: 'flow',
+        flow_id: f.id,
+        flow_name: f.name,
+        flow_label: f.label || '',
+        color: f.color,
+        direction: both ? 'both' : 'forward',
+        animated: f.animated === false ? 'no' : 'yes',
+        hop: hi,
+        hops: f.hops.join(';'),
+      });
+      const label = hi === 0 ? (f.label ? `${f.name} · ${f.label}` : f.name) : '';
+      cells.push(
+        `<object id="f${fi}_${hi}" label="${xmlEscape(label)}"${data}>` +
+          `<mxCell style="html=1;rounded=0;strokeColor=${f.color};strokeWidth=3;dashed=1;dashPattern=10 6;endArrow=block;endFill=1;startArrow=${both ? 'block' : 'none'};startFill=1;${f.animated === false ? '' : 'flowAnimation=1;'}fontColor=${f.color};fontStyle=1;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="${source}" target="${target}">` +
+          `<mxGeometry relative="1" as="geometry"/></mxCell></object>`
+      );
+    });
+  });
+
+  notes.forEach((t, i) => {
+    const data = attrString({ lldp_type: 'note', note_id: t.id, color: t.color, size: t.size || 13, anchor: t.anchor || '' });
+    const box = { w: Math.max(40, ...String(t.text).split('\n').map((l) => l.length * (t.size || 13) * 0.6)), h: String(t.text).split('\n').length * (t.size || 13) * 1.4 };
+    cells.push(
+      `<object id="t${i}" label="${xmlEscape(String(t.text).split('\n').map(xmlEscape).join('<br>'))}"${data}>` +
+        `<mxCell style="text;html=1;align=left;verticalAlign=top;whiteSpace=nowrap;fontStyle=1;fontSize=${t.size || 13};fontColor=${readableOnWhite(t.color)};" vertex="1" parent="1">` +
+        `<mxGeometry x="${Math.round(t.x + offX)}" y="${Math.round(t.y + offY)}" width="${Math.ceil(box.w + 10)}" height="${Math.ceil(box.h + 6)}" as="geometry"/></mxCell></object>`
+    );
   });
 
   const pageW = Math.ceil(b.maxX - b.minX + EXPORT_PAD.x * 2);

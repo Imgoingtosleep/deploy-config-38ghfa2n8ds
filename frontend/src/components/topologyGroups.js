@@ -73,10 +73,11 @@ export function splitTopology(topology, neighbors = [], targets = []) {
   const firstInSubnet = new Map();
   nodes.forEach((n) => {
     const s = subnetOf(n.ip, cidrs);
-    if (!s) return;
-    subnetByNode.set(n.id, s);
-    if (firstInSubnet.has(s.label)) union(n.id, firstInSubnet.get(s.label));
-    else firstInSubnet.set(s.label, n.id);
+    // Devices without an IP share one "No IP" picture instead of one picture each
+    const key = s ? s.label : '\u0000no-ip';
+    if (s) subnetByNode.set(n.id, s);
+    if (firstInSubnet.has(key)) union(n.id, firstInSubnet.get(key));
+    else firstInSubnet.set(key, n.id);
   });
 
   // Connected by LLDP -> same picture, even across subnets

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Share2,
   Play,
@@ -22,6 +22,7 @@ import {
   Edit2,
   X,
   Check,
+  FilePlus2,
 } from 'lucide-react';
 import {
   discoverLldp,
@@ -39,6 +40,7 @@ import {
   importLldpTopology,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import { neighborsFromDoc, hostsFromDoc } from '../components/topologyModel';
 import TcpWorkersControl from '../components/TcpWorkersControl';
 import './LldpDiscoveryPage.css';
 
@@ -410,6 +412,47 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     }
   };
 
+  // Start an empty diagram in the topology editor
+  const handleNewDiagram = () => {
+    if (report && !window.confirm('Replace the current result with a new empty diagram? Export it first if you need it.')) return;
+    setReport({
+      imported: true,
+      file_name: 'New diagram',
+      format: 'editor',
+      total_hosts: 0,
+      success_hosts: 0,
+      failed_hosts: 0,
+      total_lldp_rows: 0,
+      overall_time_seconds: 0,
+      neighbors: [],
+      hosts: [],
+      topology: { nodes: [], links: [] },
+      annotations: { flows: [], zones: [], notes: [] },
+    });
+    setExpandedHost(null);
+    setSearch('');
+    setView('topology');
+    setErrorMessage('');
+  };
+
+  // Edits from the topology editor: devices / links rebuild the LLDP rows so the table and Excel follow
+  const handleTopologyChange = useCallback(({ topology, annotations, structural }) => {
+    setReport((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, topology, annotations };
+      if (!structural) return next;
+      const neighbors = neighborsFromDoc(topology);
+      next.edited = true;
+      next.neighbors = neighbors;
+      next.total_lldp_rows = neighbors.length;
+      if (prev.imported) {
+        next.hosts = hostsFromDoc(topology, neighbors);
+        next.total_hosts = next.hosts.length;
+      }
+      return next;
+    });
+  }, []);
+
   const handleExport = async () => {
     if (!report) return;
     setExporting(true);
@@ -693,6 +736,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             Import Topology
           </button>
+          <button
+            className="lldp-btn-secondary"
+            onClick={handleNewDiagram}
+            disabled={running || importing}
+            title="Draw a topology from scratch: add devices, interface links, traffic flows, zones and notes"
+          >
+            <FilePlus2 className="h-4 w-4" />
+            New Diagram
+          </button>
           <input
             ref={importInputRef}
             type="file"
@@ -746,8 +798,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             <div className="lldp-import-banner">
               <Upload className="h-4 w-4" />
               <span>
-                Imported from <code>{report.file_name}</code> ({report.format}) · {report.topology?.nodes?.length || 0}{' '}
-                devices · {report.topology?.links?.length || 0} links · {report.total_lldp_rows} LLDP rows
+                {report.format === 'editor' ? 'Drawn in the editor' : <>Imported from <code>{report.file_name}</code> ({report.format})</>} ·{' '}
+                {report.topology?.nodes?.length || 0} devices · {report.topology?.links?.length || 0} links · {report.total_lldp_rows} LLDP rows
+                {report.edited ? ' · edited' : ''}
               </span>
             </div>
           )}
@@ -848,7 +901,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             </div>
           )}
 
-          {view === 'topology' && <LldpTopology topology={report.topology} neighbors={report.neighbors} targets={report.targets} />}
+          {view === 'topology' && <LldpTopology
+              topology={report.topology}
+              annotations={report.annotations}
+              neighbors={report.neighbors}
+              targets={report.targets}
+              onChange={handleTopologyChange}
+              onImportFile={importLldpTopology}
+              startEditing={report.format === 'editor'}
+            />}
 
           {view === 'summary' && (
             <div className="lldp-table-wrap">

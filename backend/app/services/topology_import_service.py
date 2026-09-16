@@ -28,7 +28,8 @@ from app.services.lldp_service import LldpService
 PAYLOAD_FORMAT = "lldp-topology"
 MAX_IMPORT_BYTES = 50 * 1024 * 1024
 _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-_ROLES = ("router", "switch", "unknown")
+_ROLES = ("router", "switch", "firewall", "server", "cloud", "pc", "wireless", "unknown")
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class TopologyImportError(ValueError):
@@ -85,6 +86,7 @@ def normalize_topology(nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, A
             existing = merged[key]
             if link.get("confirmed") or existing["source"] != link["source"]:
                 existing["confirmed"] = True
+            existing["manual"] = existing["manual"] and bool(link.get("manual"))
             continue
         merged[key] = {
             "source": link["source"],
@@ -92,6 +94,7 @@ def normalize_topology(nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, A
             "source_port": link.get("source_port", ""),
             "target_port": link.get("target_port", ""),
             "confirmed": bool(link.get("confirmed")),
+            "manual": bool(link.get("manual")),
         }
 
     degree: Dict[str, int] = {}
@@ -100,12 +103,13 @@ def normalize_topology(nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, A
         degree[link["target"]] = degree.get(link["target"], 0) + 1
     for node in nodes.values():
         hint = node.get("role") if node.get("role") in _ROLES else "unknown"
-        node["role"] = LldpService.device_role(node.get("model", "")) if node.get("model") else hint
+        # A device type chosen in the editor / draw.io shape wins; otherwise guess it from the model
+        node["role"] = hint if hint != "unknown" else LldpService.device_role(node.get("model", ""))
         node["degree"] = degree.get(node["id"], 0)
 
-    order = {"router": 0, "switch": 1, "unknown": 2}
+    order = {role: i for i, role in enumerate(_ROLES)}
     return {
-        "nodes": sorted(nodes.values(), key=lambda n: (order[n["role"]], -n["degree"], n["hostname"])),
+        "nodes": sorted(nodes.values(), key=lambda n: (order.get(n["role"], len(order)), -n["degree"], n["hostname"])),
         "links": list(merged.values()),
     }
 
@@ -148,7 +152,8 @@ def _hosts_from_topology(topology: Dict[str, Any], neighbors: List[Dict[str, Any
             "status": "IMPORTED",
             "success": True,
             "error": None,
-            "detail": "SSH collected when exported" if node.get("discovered") else "Seen via LLDP only when exported",
+            "detail": "Added in the topology editor" if node.get("manual")
+            else "SSH collected when exported" if node.get("discovered") else "Seen via LLDP only when exported",
             "neighbors_found": counts.get(node["hostname"], 0),
             "neighbors": [],
             "log": "",
@@ -157,6 +162,75 @@ def _hosts_from_topology(topology: Dict[str, Any], neighbors: List[Dict[str, Any
         }
         for node in topology["nodes"]
     ]
+
+
+# ---------------------------------------------------------------- editor annotations (traffic flows, zones, notes)
+
+
+def _color(value: Any, default: str) -> str:
+    return value if isinstance(value, str) and _HEX_COLOR_RE.match(value) else default
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    return f if f == f and abs(f) < 1e9 else default
+
+
+def clean_annotations(data: Any, node_ids: set) -> Dict[str, List[Dict[str, Any]]]:
+    """Validate flows / zones / notes; flow hops must be devices that exist in the topology"""
+    data = data if isinstance(data, dict) else {}
+    flows = []
+    for i, f in enumerate(data.get("flows") or []):
+        if not isinstance(f, dict):
+            continue
+        hops = [str(h) for h in (f.get("hops") or []) if str(h) in node_ids]
+        hops = [h for j, h in enumerate(hops) if j == 0 or hops[j - 1] != h]
+        if len(hops) < 2:
+            continue
+        flows.append({
+            "id": str(f.get("id") or f"f{i}")[:64],
+            "name": str(f.get("name") or f"Flow {i + 1}")[:120],
+            "label": str(f.get("label") or "")[:200],
+            "color": _color(f.get("color"), "#f59e0b"),
+            "direction": "both" if f.get("direction") == "both" else "forward",
+            "animated": f.get("animated") is not False,
+            "hops": hops,
+        })
+    zones = []
+    for i, z in enumerate(data.get("zones") or []):
+        if not isinstance(z, dict):
+            continue
+        zones.append({
+            "id": str(z.get("id") or f"z{i}")[:64],
+            "text": str(z.get("text") or "Zone")[:200],
+            "color": _color(z.get("color"), "#6366f1"),
+            "x": _num(z.get("x")),
+            "y": _num(z.get("y")),
+            "w": max(40.0, _num(z.get("w"), 200)),
+            "h": max(30.0, _num(z.get("h"), 120)),
+            "anchor": str(z.get("anchor") or ""),
+        })
+    notes = []
+    for i, t in enumerate(data.get("notes") or []):
+        if not isinstance(t, dict) or not str(t.get("text") or "").strip():
+            continue
+        notes.append({
+            "id": str(t.get("id") or f"t{i}")[:64],
+            "text": str(t.get("text"))[:2000],
+            "color": _color(t.get("color"), "#e2e8f0"),
+            "size": min(72.0, max(8.0, _num(t.get("size"), 13))),
+            "x": _num(t.get("x")),
+            "y": _num(t.get("y")),
+            "anchor": str(t.get("anchor") or ""),
+        })
+    return {"flows": flows, "zones": zones, "notes": notes}
+
+
+def _no_annotations() -> Dict[str, List[Dict[str, Any]]]:
+    return {"flows": [], "zones": [], "notes": []}
 
 
 # ---------------------------------------------------------------- draw.io
@@ -187,9 +261,28 @@ def _float(value: Optional[str], default: float = 0.0) -> float:
         return default
 
 
-def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:
+_STYLE_ROLES = (
+    ("firewall", "firewall"),
+    ("access_point", "wireless"),
+    ("wireless", "wireless"),
+    ("server", "server"),
+    ("shape=cloud", "cloud"),
+    ("peripherals.pc", "pc"),
+    ("router", "router"),
+    ("switch", "switch"),
+)
+
+
+def _role_from_style(style: str) -> str:
+    return next((role for key, role in _STYLE_ROLES if key in style), "unknown")
+
+
+def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     nodes: Dict[str, Dict[str, Any]] = {}
     links: List[Dict[str, Any]] = []
+    raw_flows: Dict[str, Dict[str, Any]] = {}
+    zones: List[Dict[str, Any]] = []
+    notes: List[Dict[str, Any]] = []
 
     for page, model in enumerate(_graph_models(text)):
         root = model.find("root")
@@ -207,6 +300,8 @@ def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, A
                     cells[el.get("id")] = (dict(el.attrib), cell)
 
         edge_ids = {cid for cid, (_, cell) in cells.items() if cell.get("edge") == "1"}
+        # Traffic flow arrows written by our export are not cabling: keep them out of the links
+        flow_ids = {cid for cid in edge_ids if cells[cid][0].get("lldp_type") == "flow"}
         endpoints = {cells[cid][1].get(end) for cid in edge_ids for end in ("source", "target")}
 
         name_of: Dict[str, str] = {}
@@ -220,29 +315,66 @@ def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, A
                 side = "source" if _float(geo.get("x") if geo is not None else None) < 0 else "target"
                 port_labels.setdefault(parent, {})[side] = _label_lines(attrs.get("label", ""))
                 continue
-            # Plain text boxes / containers are ignored unless they are devices or something links to them
-            if attrs.get("lldp_type") != "device" and "hostname" not in attrs and cid not in endpoints:
+            geo = cell.find("mxGeometry")
+            gx, gy = _float(geo.get("x") if geo is not None else None), _float(geo.get("y") if geo is not None else None)
+            gw, gh = _float(geo.get("width") if geo is not None else None), _float(geo.get("height") if geo is not None else None)
+            lldp_type = attrs.get("lldp_type")
+            if lldp_type == "zone":
+                zones.append({
+                    "id": attrs.get("zone_id") or f"z{page}_{cid}", "text": "\n".join(_label_lines(attrs.get("label", ""))) or "Zone",
+                    "color": attrs.get("color"), "x": gx, "y": gy, "w": gw, "h": gh, "anchor": attrs.get("anchor", ""),
+                })
+                continue
+            style = (cell.get("style") or "").lower()
+            if lldp_type == "note" or (style.startswith("text;") and cid not in endpoints and lldp_type != "device"):
+                # Our notes, and plain text boxes typed in draw.io
+                body = "\n".join(_label_lines(attrs.get("label", "")))
+                if body:
+                    font = re.search(r"fontsize=(\d+(?:\.\d+)?)", style)
+                    color = re.search(r"fontcolor=(#[0-9a-f]{6})", style)
+                    notes.append({
+                        "id": attrs.get("note_id") or f"t{page}_{cid}", "text": body,
+                        "color": attrs.get("color") or (color.group(1) if color else None),
+                        "size": attrs.get("size") or (font.group(1) if font else 13),
+                        "x": gx, "y": gy, "anchor": attrs.get("anchor", ""),
+                    })
+                continue
+            # Other shapes / containers are ignored unless they are devices or something links to them
+            if lldp_type != "device" and "hostname" not in attrs and cid not in endpoints:
                 continue
 
             lines = _label_lines(attrs.get("label", ""))
             hostname = (attrs.get("hostname") or (lines[0] if lines else "")).strip() or f"Device-{page + 1}-{cid}"
             ip = (attrs.get("ip") or next((l for l in lines[1:] if _IPV4_RE.match(l)), "")).strip()
             model_name = (attrs.get("model") or LldpService.extract_model("\n".join(lines[1:]))).strip()
-            style = (cell.get("style") or "").lower()
-            role_hint = attrs.get("role") or ("router" if "router" in style else "switch" if "switch" in style else "unknown")
+            role_hint = attrs.get("role") or _role_from_style(style)
 
-            geo = cell.find("mxGeometry")
             node = nodes.setdefault(hostname, {"id": hostname, "hostname": hostname, "ip": "", "model": "", "discovered": False})
             node["ip"] = node["ip"] or ip
             node["model"] = node["model"] or model_name
             node["role"] = role_hint
             node["discovered"] = node["discovered"] or attrs.get("discovered") == "yes"
+            if attrs.get("manual") == "yes":
+                node["manual"] = True
             if geo is not None and "x" not in node:
                 node["x"] = _float(geo.get("x")) + _float(geo.get("width")) / 2
                 node["y"] = _float(geo.get("y")) + _float(geo.get("height")) / 2
             name_of[cid] = hostname
 
-        for cid in edge_ids:
+        for cid in flow_ids:
+            attrs, cell = cells[cid]
+            source, target = name_of.get(cell.get("source")), name_of.get(cell.get("target"))
+            if not source or not target:
+                continue
+            fid = attrs.get("flow_id") or f"flow{page}_{cid}"
+            flow = raw_flows.setdefault(fid, {
+                "id": fid, "name": attrs.get("flow_name") or fid, "label": attrs.get("flow_label", ""),
+                "color": attrs.get("color"), "direction": attrs.get("direction"),
+                "animated": attrs.get("animated") != "no", "segments": [],
+            })
+            flow["segments"].append((int(_float(attrs.get("hop"), 0)), source, target))
+
+        for cid in edge_ids - flow_ids:
             attrs, cell = cells[cid]
             source, target = name_of.get(cell.get("source")), name_of.get(cell.get("target"))
             if not source or not target or source == target:
@@ -251,6 +383,7 @@ def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, A
             source_ports = _split(attrs["source_ports"]) if "source_ports" in attrs else labels.get("source", [])
             target_ports = _split(attrs["target_ports"]) if "target_ports" in attrs else labels.get("target", [])
             confirmed = _split(attrs.get("confirmed"))
+            manual = _split(attrs.get("manual"))
             count_label = re.fullmatch(r"\s*x(\d+)\s*", _label_lines(attrs.get("label", ""))[0] if _label_lines(attrs.get("label", "")) else "")
             count = max(len(source_ports), len(target_ports), int(count_label.group(1)) if count_label else 1)
             for i in range(count):
@@ -260,17 +393,31 @@ def parse_drawio(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[Dict[str, A
                     "source_port": source_ports[i] if i < len(source_ports) else "",
                     "target_port": target_ports[i] if i < len(target_ports) else "",
                     "confirmed": i < len(confirmed) and confirmed[i] == "yes",
+                    "manual": i < len(manual) and manual[i] == "yes",
                 })
 
-    if not nodes:
+    if not nodes and not zones and not notes:
         raise TopologyImportError("No devices found in the draw.io diagram")
-    return nodes, links
+
+    flows = []
+    for flow in raw_flows.values():
+        # Hops in export order; arrows moved or re-attached in draw.io still follow their cells
+        segments = sorted(flow.pop("segments"))
+        hops: List[str] = []
+        for _, source, target in segments:
+            if not hops or hops[-1] != source:
+                hops.append(source)
+            hops.append(target)
+        flow["hops"] = hops
+        flows.append(flow)
+    # Draw.io coordinates are top-left of the box; device positions are centers in the same space
+    return nodes, links, {"flows": flows, "zones": zones, "notes": notes}
 
 
 # ---------------------------------------------------------------- embedded payload (SVG / PNG / JSON)
 
 
-def parse_payload(data: Any) -> Tuple[Dict[str, Any], Optional[List[Dict[str, Any]]]]:
+def parse_payload(data: Any) -> Tuple[Dict[str, Any], Optional[List[Dict[str, Any]]], Dict[str, Any]]:
     if not isinstance(data, dict) or data.get("format") != PAYLOAD_FORMAT:
         raise TopologyImportError("JSON is not an LLDP topology export")
     topo = data.get("topology") or {}
@@ -288,6 +435,7 @@ def parse_payload(data: Any) -> Tuple[Dict[str, Any], Optional[List[Dict[str, An
             "model": str(n.get("model") or ""),
             "role": n.get("role"),
             "discovered": bool(n.get("discovered")),
+            "manual": bool(n.get("manual")),
         }
         if isinstance(n.get("x"), (int, float)) and isinstance(n.get("y"), (int, float)):
             node["x"], node["y"] = float(n["x"]), float(n["y"])
@@ -299,13 +447,15 @@ def parse_payload(data: Any) -> Tuple[Dict[str, Any], Optional[List[Dict[str, An
             "source_port": str(l.get("source_port") or ""),
             "target_port": str(l.get("target_port") or ""),
             "confirmed": bool(l.get("confirmed")),
+            "manual": bool(l.get("manual")),
         }
         for l in topo.get("links") or []
         if isinstance(l, dict) and l.get("source") and l.get("target")
     ]
     rows = data.get("neighbors")
     neighbors = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) and rows else None
-    return normalize_topology(nodes, links), neighbors
+    topology = normalize_topology(nodes, links)
+    return topology, neighbors, clean_annotations(data.get("annotations"), {n["id"] for n in topology["nodes"]})
 
 
 def _png_texts(content: bytes) -> Dict[str, str]:
@@ -335,7 +485,13 @@ def _png_texts(content: bytes) -> Dict[str, str]:
 # ---------------------------------------------------------------- entry point
 
 
-def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, Any], Optional[List[Dict[str, Any]]]]:
+def _from_drawio(text: str) -> Tuple[Dict[str, Any], None, Dict[str, Any]]:
+    nodes, links, annotations = parse_drawio(text)
+    topology = normalize_topology(nodes, links)
+    return topology, None, clean_annotations(annotations, {n["id"] for n in topology["nodes"]})
+
+
+def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, Any], Optional[List[Dict[str, Any]]], Dict[str, Any]]:
     if content[:4] == b"PK\x03\x04":
         if depth:
             raise TopologyImportError("Nested ZIP files are not supported")
@@ -348,8 +504,8 @@ def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, A
                 for info in members:
                     if info.filename.lower().endswith(ext):
                         try:
-                            fmt, topology, neighbors = _detect(zf.read(info), info.filename, depth + 1)
-                            return f"zip/{fmt}", topology, neighbors
+                            fmt, topology, neighbors, annotations = _detect(zf.read(info), info.filename, depth + 1)
+                            return f"zip/{fmt}", topology, neighbors, annotations
                         except TopologyImportError:
                             continue
         raise TopologyImportError("ZIP has no importable topology (topology.json, .drawio, .svg or .png)")
@@ -357,10 +513,9 @@ def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, A
     if content[:8] == b"\x89PNG\r\n\x1a\n":
         texts = _png_texts(content)
         if PAYLOAD_FORMAT in texts:
-            topology, neighbors = parse_payload(json.loads(texts[PAYLOAD_FORMAT]))
-            return "png", topology, neighbors
+            return ("png", *parse_payload(json.loads(texts[PAYLOAD_FORMAT])))
         if "mxfile" in texts:
-            return "drawio.png", normalize_topology(*parse_drawio(unquote(texts["mxfile"]))), None
+            return ("drawio.png", *_from_drawio(unquote(texts["mxfile"])))
         raise TopologyImportError("PNG has no embedded topology data (only PNGs exported after this feature, or draw.io PNGs with an embedded diagram)")
 
     try:
@@ -370,18 +525,16 @@ def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, A
     head = text.lstrip()[:5000]
 
     if head.startswith("{"):
-        topology, neighbors = parse_payload(json.loads(text))
-        return "json", topology, neighbors
+        return ("json", *parse_payload(json.loads(text)))
     if "<mxfile" in head or head.startswith("<mxGraphModel"):
-        return "drawio", normalize_topology(*parse_drawio(text)), None
+        return ("drawio", *_from_drawio(text))
     if "<svg" in head:
         root = _parse_xml(text)
         for el in root.iter():
             if _local(el.tag) == "metadata" and el.get("id") == PAYLOAD_FORMAT and (el.text or "").strip():
-                topology, neighbors = parse_payload(json.loads(el.text))
-                return "svg", topology, neighbors
+                return ("svg", *parse_payload(json.loads(el.text)))
         if "mxfile" in (root.get("content") or ""):
-            return "drawio.svg", normalize_topology(*parse_drawio(root.get("content"))), None
+            return ("drawio.svg", *_from_drawio(root.get("content")))
         raise TopologyImportError("SVG has no embedded topology data (only SVGs exported after this feature, or draw.io SVGs)")
     raise TopologyImportError(f"Unsupported file '{name}': use .drawio, .svg, .png, .zip or .json exported from LLDP Discovery")
 
@@ -390,7 +543,7 @@ def import_topology_file(file_name: str, content: bytes) -> Dict[str, Any]:
     if len(content) > MAX_IMPORT_BYTES:
         raise TopologyImportError(f"File is larger than {MAX_IMPORT_BYTES // (1024 * 1024)} MB")
     try:
-        fmt, topology, neighbors = _detect(content, file_name)
+        fmt, topology, neighbors, annotations = _detect(content, file_name)
     except TopologyImportError:
         raise
     except (ValueError, SyntaxError, KeyError, TypeError, struct.error, zlib.error, binascii.Error, zipfile.BadZipFile) as e:
@@ -412,4 +565,5 @@ def import_topology_file(file_name: str, content: bytes) -> Dict[str, Any]:
         "neighbors": neighbors,
         "hosts": hosts,
         "topology": topology,
+        "annotations": annotations,
     }

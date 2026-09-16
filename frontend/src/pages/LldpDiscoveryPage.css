@@ -906,3 +906,379 @@
     flex-basis: 100%;
   }
 }
+
+/* Topology editor */
+.topo-canvas {
+  position: relative;
+}
+
+.topo-canvas.tool-device svg,
+.topo-canvas.tool-note svg,
+.topo-canvas.tool-zone svg {
+  cursor: crosshair;
+}
+
+.topo-canvas.tool-connect svg,
+.topo-canvas.tool-flow svg {
+  cursor: alias;
+}
+
+.topo-canvas.tool-delete svg,
+.topo-canvas.tool-delete svg g {
+  cursor: not-allowed !important;
+}
+
+.topo-palette {
+  position: absolute;
+  top: 0.6rem;
+  left: 0.6rem;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.3rem;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.topo-palette button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.topo-palette button:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.15);
+  color: #e0e7ff;
+}
+
+.topo-palette button.active {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: #6366f1;
+  color: #e0e7ff;
+}
+
+.topo-palette button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.topo-palette-sep {
+  height: 1px;
+  margin: 0.15rem 0.2rem;
+  background: #334155;
+}
+
+.topo-hintbar {
+  position: absolute;
+  top: 0.6rem;
+  left: 3.6rem;
+  right: 0.6rem;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.6rem;
+  width: fit-content;
+  max-width: calc(100% - 4.2rem);
+  padding: 0.4rem 0.7rem;
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  pointer-events: auto;
+}
+
+.topo-hintbar strong {
+  color: #e2e8f0;
+}
+
+.topo-hint-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #fbbf24;
+}
+
+.topo-hint-actions .lldp-btn-mini {
+  align-self: center;
+}
+
+.topo-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.topo-flow-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.topo-flow-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 9999px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: #e2e8f0;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.topo-flow-chip.active {
+  border-color: #fbbf24;
+}
+
+.topo-flow-chip i {
+  width: 0.9rem;
+  height: 0.25rem;
+  border-radius: 2px;
+}
+
+.topo-flow-chip .muted {
+  color: #94a3b8;
+}
+
+/* Editor dialogs */
+.lldp-modal.lldp-modal-wide {
+  width: min(960px, 100%);
+  max-height: 90vh;
+}
+
+.topo-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem 0.8rem;
+}
+
+.topo-conn-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.8rem;
+  margin-top: 0.4rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid #1e293b;
+  font-size: 0.8rem;
+  color: #e2e8f0;
+}
+
+.topo-conn-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.topo-conn-row {
+  display: grid;
+  grid-template-columns: 1.4rem minmax(0, 1fr) 1rem minmax(0, 1.2fr) minmax(0, 1fr) 6.5rem auto;
+  align-items: end;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #1e293b;
+  border-radius: 0.45rem;
+  background: rgba(2, 6, 23, 0.6);
+}
+
+.topo-conn-no {
+  align-self: center;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.topo-conn-arrow {
+  align-self: center;
+  margin-top: 1.1rem;
+  color: #64748b;
+}
+
+.topo-conn-status {
+  align-self: center;
+  margin-top: 1.1rem;
+  font-size: 0.68rem;
+  text-align: center;
+  padding: 0.15rem 0.35rem;
+  border-radius: 9999px;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.topo-conn-status.ok {
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+.topo-conn-status.warn {
+  color: #fcd34d;
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+.topo-conn-status.manual,
+.topo-conn-status.new {
+  color: #5eead4;
+  border-color: rgba(45, 212, 191, 0.4);
+}
+
+.topo-conn-del {
+  align-self: center;
+  margin-top: 1.1rem;
+}
+
+.topo-conn-empty {
+  padding: 0.4rem 0;
+}
+
+.lldp-field input:disabled {
+  opacity: 0.5;
+}
+
+@media (max-width: 760px) {
+  .topo-conn-row {
+    grid-template-columns: 1.4rem minmax(0, 1fr) auto;
+  }
+
+  .topo-conn-row .lldp-field {
+    grid-column: 2 / 4;
+  }
+
+  .topo-conn-arrow {
+    display: none;
+  }
+
+  .topo-conn-status,
+  .topo-conn-del {
+    margin-top: 0;
+  }
+}
+
+.topo-errors ul,
+.topo-warnings {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.topo-errors {
+  align-items: flex-start;
+}
+
+.topo-warnings {
+  font-size: 0.72rem;
+  color: #fbbf24;
+}
+
+.topo-colors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.topo-color {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 9999px;
+  border: 2px solid #0f172a;
+  outline: 1px solid #334155;
+  cursor: pointer;
+}
+
+.topo-color.active {
+  outline: 2px solid #fbbf24;
+}
+
+.topo-colors input[type='color'] {
+  width: 2rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid #334155;
+  border-radius: 0.3rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+.topo-inline-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+.topo-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem;
+  color: #64748b;
+}
+
+.topo-path-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.topo-path-hop code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  color: #e2e8f0;
+  background: #1e293b;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+}
+
+.topo-path-hop button {
+  display: inline-flex;
+  background: none;
+  border: none;
+  padding: 0;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.topo-path-hop button:hover {
+  color: #f87171;
+}
+
+.topo-push-right {
+  margin-left: auto;
+}
+
+.topo-canvas.drop-active {
+  border-color: #6366f1;
+}
+
+.topo-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(99, 102, 241, 0.12);
+  border: 2px dashed #818cf8;
+  border-radius: 0.5rem;
+  color: #c7d2fe;
+  font-weight: 600;
+  pointer-events: none;
+}
