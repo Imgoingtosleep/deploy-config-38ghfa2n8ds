@@ -1,582 +1,810 @@
-# Network Automation & Diagnostic Web Platform
+# NetAuto Hub — Network Automation & Diagnostic Web Platform
 
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
-[![Vite](https://img.shields.io/badge/Vite-5.0+-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3.4+-06B6D4?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
-[![Netmiko](https://img.shields.io/badge/Netmiko-4.3+-4B8BBE?style=flat)](https://github.com/ktbyers/netmiko)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![TailwindCSS](https://img.shields.io/badge/TailwindCSS-3-06B6D4?style=flat&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![Netmiko](https://img.shields.io/badge/Netmiko-4.2+-4B8BBE?style=flat)](https://github.com/ktbyers/netmiko)
 [![Nornir](https://img.shields.io/badge/Nornir-3.4+-orange?style=flat)](https://nornir.readthedocs.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
 
-เว็บแอปพลิเคชันระดับองค์กรสำหรับบริหารจัดการ, ตรวจสอบสถานะสุขภาพ (Health Check), วินิจฉัยและแก้ไขปัญหา (Troubleshoot) ตลอดจนปรับแต่งและกระจายการตั้งค่า (Deploy Configuration) บนอุปกรณ์เครือข่าย (Switch / Router / Firewall) แบบครบวงจร รองรับตั้งแต่ระดับรายเครื่อง (Single Device) จนถึงระดับกลุ่มขนาดใหญ่ระดับ **10,000+ อุปกรณ์ (Multi-Device Fleet Scalability)** พร้อมระบบแปลคำสั่งข้ามยี่ห้ออัตโนมัติ (Multi-Vendor Universal Command Translation Engine) ผ่าน Web UI ที่ทันสมัย รวดเร็ว และปลอดภัย
+**เว็บแอปสำหรับทีม Network/NOC ใช้ Health Check, Troubleshoot, Deploy Config และค้นหา Topology ด้วย LLDP บน Switch / Router หลายยี่ห้อ ผ่าน SSH/Telnet พร้อมกันได้หลักหมื่นเครื่อง**
+
+ปัญหาที่แก้: แทนที่จะต้อง SSH เข้าไปทีละเครื่อง พิมพ์คำสั่งคนละแบบตามยี่ห้อ แล้วมานั่งรวม Log / วาด Topology เอง ระบบนี้รับรายชื่ออุปกรณ์ (หรือ Subnet) รันคำสั่งขนานกันด้วย Nornir แปลคำสั่งข้ามยี่ห้อให้ เก็บผลเป็นรายงาน ZIP / Excel และวาดแผนผังเครือข่ายจริงจาก LLDP ออกมาเป็น SVG / PNG / draw.io ได้ทันที
+
+![LLDP Topology](docs/screenshots/05-lldp-topology.png)
 
 ---
 
-## สารบัญ (Table of Contents)
-1. [สถาปัตยกรรมของระบบ (System Architecture)](#1-สถาปัตยกรรมของระบบ-system-architecture)
-2. [ฟังก์ชันเด่นของระบบอย่างละเอียด (Key Features Deep Dive)](#2-ฟังก์ชันเด่นของระบบอย่างละเอียด-key-features-deep-dive)
-   - [2.1 Multi-Vendor Command Translation Engine](#21-multi-vendor-command-translation-engine)
-   - [2.2 Massive Fleet Scalability (10,000+ Devices Engine)](#22-massive-fleet-scalability-10000-devices-engine)
-   - [2.3 Asynchronous Job Queue & Real-time SSE Stream](#23-asynchronous-job-queue--real-time-sse-stream)
-   - [2.4 Dual-Report & ZIP Export Engine](#24-dual-report--zip-export-engine)
-   - [2.5 Advanced Inventory Import Engine](#25-advanced-inventory-import-engine)
-   - [2.6 4 โมดูลปฏิบัติการหลัก (Health Check, Troubleshoot, Deploy, Template Studio)](#26-4-โมดูลปฏิบัติการหลัก)
-3. [โครงสร้างโปรเจกต์ (Project Structure)](#3-โครงสร้างโปรเจกต์-project-structure)
-4. [ตารางเปรียบเทียบคำสั่ง 7 แพลตฟอร์ม (Command Equivalents Matrix)](#4-ตารางเปรียบเทียบคำสั่ง-7-แพลตฟอร์ม-command-equivalents-matrix)
-5. [สคริปต์สุ่มสร้างข้อมูลอุปกรณ์จำลอง (Mock Device Generator)](#5-สคริปต์สุ่มสร้างข้อมูลอุปกรณ์จำลอง-mock-device-generator)
-6. [รูปแบบไฟล์สำหรับนำเข้ารายชื่ออุปกรณ์ (Inventory Import Formats)](#6-รูปแบบไฟล์สำหรับนำเข้ารายชื่ออุปกรณ์-inventory-import-formats)
-7. [ไดรเวอร์อุปกรณ์เครือข่ายที่รองรับ (Supported Device Drivers)](#7-ไดรเวอร์อุปกรณ์เครือข่ายที่รองรับ-supported-device-drivers)
-8. [คู่มือการตั้งค่าอุปกรณ์เครือข่ายจริง (Network Equipment Setup Guide)](#8-คู่มือการตั้งค่าอุปกรณ์เครือข่ายจริง-network-equipment-setup-guide)
-9. [การตั้งค่า Environment Variables (.env)](#9-การตั้งค่า-environment-variables-env)
-10. [วิธีการติดตั้งและเริ่มต้นใช้งาน (Installation & Quick Start)](#10-วิธีการติดตั้งและเริ่มต้นใช้งาน-installation--quick-start)
-11. [REST API Reference ฉบับสมบูรณ์](#11-rest-api-reference-ฉบับสมบูรณ์)
-12. [การปรับแต่งประสิทธิภาพระดับหมื่นเครื่อง (Performance & Kernel Tuning)](#12-การปรับแต่งประสิทธิภาพระดับหมื่นเครื่อง-performance--kernel-tuning)
-13. [มาตรฐานความปลอดภัย (Security & Enterprise Hardening)](#13-มาตรฐานความปลอดภัย-security--enterprise-hardening)
-14. [การแก้ไขปัญหาที่พบบ่อย (Troubleshooting & FAQ)](#14-การแก้ไขปัญหาที่พบบ่อย-troubleshooting--faq)
+## สารบัญ
+
+1. [Architecture & Network Topology](#1-architecture--network-topology)
+2. [Key Features](#2-key-features)
+3. [Tech Stack](#3-tech-stack)
+4. [Getting Started](#4-getting-started)
+5. [Usage — วิธีใช้งานแต่ละหน้า](#5-usage--วิธีใช้งานแต่ละหน้า)
+6. [Demo / Output](#6-demo--output)
+7. [Project Structure](#7-project-structure)
+8. [REST API Reference](#8-rest-api-reference)
+9. [Configuration (.env)](#9-configuration-env)
+10. [Supported Vendors & Command Matrix](#10-supported-vendors--command-matrix)
+11. [Inventory Import Formats](#11-inventory-import-formats)
+12. [เตรียมอุปกรณ์จริงให้พร้อมใช้งาน](#12-เตรียมอุปกรณ์จริงให้พร้อมใช้งาน)
+13. [Testing & Mock Data](#13-testing--mock-data)
+14. [Performance Tuning](#14-performance-tuning)
+15. [Security Notes](#15-security-notes)
+16. [Troubleshooting & FAQ](#16-troubleshooting--faq)
 
 ---
 
-## 1. สถาปัตยกรรมของระบบ (System Architecture)
+## 1. Architecture & Network Topology
 
-ระบบถูกออกแบบด้วยสถาปัตยกรรมแบบ Decoupled Client-Server โดยแยกการทำงานระหว่าง Web Frontend ที่ตอบสนองรวดเร็ว และ High-Concurrency Async Backend ที่เชื่อมต่อไปยังอุปกรณ์เครือข่าย:
+### 1.1 System Architecture
+
+ระบบแยกเป็น 2 container: **Frontend** (React + Vite, port 4000) คุยกับ **Backend** (FastAPI, port 4050) ผ่าน REST + Server-Sent Events แล้ว Backend เป็นตัวเปิด SSH/Telnet/Serial ไปยังอุปกรณ์จริง
 
 ```mermaid
-flowchart TD
-    subgraph Client ["Frontend Layer (React 18 + Vite + Tailwind CSS)"]
-        UI["Web UI Single Page Application
-(Port 4000)"]
-        UI -->|Mode: Single Device| DevForm["Single Device Control Panel
-(Real-time CLI Terminal)"]
-        UI -->|Mode: Fleet (10,000+)| FleetForm["Fleet Control Panel
-(Batch Setup + Worker Slider)"]
-        UI --> ModalJob["Async Job Monitor Modal
-(Real-time SSE EventStream)"]
+flowchart LR
+    subgraph Browser["Web Browser"]
+        UI["NetAuto Hub UI<br/>React 18 + Vite + Tailwind"]
     end
 
-    subgraph Backend ["Backend Layer (Python FastAPI - Port 4050)"]
-        API["FastAPI App Router
-(/api/v1)"]
-        
-        API --> Endpoints
-        subgraph Endpoints ["API Router Endpoints"]
-            EP_Dev["/devices
-(Connect, Auto-detect, Import, Templates)"]
-            EP_Job["/jobs
-(SSE Stream, Status, Cancel, Export ZIP)"]
-            EP_HC["/healthcheck
-(Single & Fleet Metrics)"]
-            EP_TB["/troubleshoot
-(Interactive CLI, Ping, Trace, Log Filter)"]
-            EP_DP["/deploy
-(Pre/Post Check, Backup, Rollback)"]
-            EP_Sys["/system
-(Nornir Dynamic Worker Tuning)"]
-            EP_PB["/playbooks & /templates
-(CRUD & Jinja2 Engine)"]
+    subgraph FE["Container: net-auto-frontend :4000"]
+        Vite["Vite Dev Server"]
+    end
+
+    subgraph BE["Container: net-auto-backend :4050"]
+        API["FastAPI Router<br/>/api/v1/*"]
+        subgraph SVC["Services"]
+            JOB["JobService<br/>Background jobs + SSE + ZIP"]
+            NR["NornirService<br/>Parallel workers 1-100"]
+            NM["NetmikoService<br/>SSH / Telnet / Serial"]
+            TR["CommandTranslator<br/>Huawei VRP pivot to 7 vendors"]
+            AD["AutoDetect<br/>banner / prompt heuristics"]
+            LL["LldpService + LldpScanService<br/>subnet scan, TCP pre-check"]
+            TI["TopologyImport<br/>drawio / svg / png / json"]
+            PS["ParserService<br/>CPU / Memory / Interfaces"]
         end
-
-        subgraph Engines ["Core Services & Automation Engines"]
-            CT["Command Translator Engine
-(Universal Pivot: Huawei VRP)"]
-            IP["Inventory Parser Engine
-(CSV / Excel / JSON / YAML / TXT)"]
-            JS["Job Service Manager
-(Background Queue & SSE Broadcast)"]
-            NR["Nornir Multithreaded Engine
-(Dynamic In-Memory Inventory)"]
-            NM["Netmiko Driver Layer
-(SSH / Telnet / Serial Drivers)"]
-            AD["Auto-Detect Engine
-(Banner / Prompt Heuristics)"]
-            PR["Parser Service
-(Regex CPU, Mem, Interface Status)"]
-        end
-
-        Endpoints --> Engines
+        DATA[("app/data/*.json<br/>credential & command profiles,<br/>playbooks, templates")]
+        LOGS[("logs/lldp/<br/>scan logs on disk")]
     end
 
-    subgraph NetworkFleet ["Target Network Infrastructure"]
-        D_HW["Huawei VRP
-(CloudEngine / Quidway / AR / USG)"]
-        D_CS["Cisco IOS / XE / NX-OS
-(Catalyst / Nexus / ISR / ASR)"]
-        D_JN["Juniper JunOS
-(EX / QFX / SRX)"]
-        D_AR["HPE Aruba
-(ArubaOS-CX / ProCurve)"]
-        D_CW["HP / H3C Comware
-(FlexNetwork 5130/5510/5900)"]
-        D_MT["MikroTik RouterOS
-(CRS / CCR)"]
+    subgraph NET["Management Network"]
+        HW["Huawei VRP"]
+        CS["Cisco IOS / NX-OS"]
+        JN["Juniper JunOS"]
+        AR["Aruba / HP Comware"]
+        MT["MikroTik"]
     end
 
-    Engines --> NetworkFleet
-    ModalJob -.->|Listen SSE Stream| JS
-    JS -->|Generate Reports| ExportZip["ZIP Report Archive
-├── report_summary.csv
-├── report_per_device.csv
-├── raw_logs/
-└── regex_logs/"]
+    UI -->|HTTP| Vite
+    UI -->|REST + SSE| API
+    API --> SVC
+    SVC --- DATA
+    LL --- LOGS
+    NR --> NM
+    LL --> NM
+    NM -->|SSH 22 / Telnet 23| NET
+```
+
+### 1.2 Network Deployment Topology
+
+ตัวอย่างการวางระบบจริง: Server ที่รัน Docker ต้องเข้าถึง Management IP ของอุปกรณ์ได้ (SSH 22 / Telnet 23) ส่วนผู้ใช้เข้าผ่านเบราว์เซอร์อย่างเดียว
+
+```mermaid
+flowchart TB
+    OPS["Network Engineer<br/>Browser"] -->|"TCP 4000 (UI)<br/>TCP 4050 (API)"| SRV
+
+    subgraph SRV["Automation Server (Linux / WSL2 + Docker)"]
+        direction LR
+        F["frontend :4000"] --- B["backend :4050"]
+    end
+
+    SRV -->|"SSH 22 / Telnet 23"| MGMT["Management VLAN / OOB<br/>10.10.0.0/24"]
+    SRV -.->|"USB-to-Serial<br/>/dev/ttyUSB0"| CON["Console Port"]
+
+    MGMT --> RT["EDGE-RT-01<br/>AR6120-S"]
+    MGMT --> C1["CORE-SW-01<br/>CE6881"]
+    MGMT --> C2["CORE-SW-02<br/>CE6881"]
+    C1 --- C2
+    RT --- C1
+    C1 --- DA["DIST-SW-A<br/>S5735 (Huawei)"]
+    C2 --- DB["DIST-SW-B<br/>C9300 (Cisco)"]
+    DA --- A1["ACC-SW-A1"]
+    DA --- A2["ACC-SW-A2"]
+    DB --- B1["ACC-SW-B1<br/>C2960X"]
+```
+
+### 1.3 Flow ของงาน Fleet (Async Job)
+
+```mermaid
+sequenceDiagram
+    participant UI as Web UI
+    participant API as FastAPI
+    participant JOB as JobService
+    participant NR as Nornir Workers
+    participant DEV as Devices
+
+    UI->>API: POST /jobs/submit-healthcheck (devices[])
+    API->>JOB: create job (chunked)
+    API-->>UI: { job_id }
+    UI->>API: GET /jobs/{job_id}/stream (SSE)
+    loop each chunk
+        JOB->>NR: run chunk (N workers)
+        NR->>DEV: SSH + commands
+        DEV-->>NR: CLI output
+        NR-->>JOB: results
+        JOB-->>UI: progress %, success/failed, dev/s, ETA
+    end
+    UI->>API: GET /jobs/{job_id}/export-zip
+    API-->>UI: report_summary.csv + report_per_device.csv + raw_logs/ + regex_logs/
+```
+
+### 1.4 Flow ของ LLDP Subnet Scan
+
+```mermaid
+flowchart LR
+    T["Targets<br/>10.0.0.0/24, 10.0.1.10-50"] --> X["Expand + Exclude<br/>(max 16,384 IP)"]
+    X --> P["TCP pre-scan :22<br/>200 workers, 1.5s timeout"]
+    P -->|open| S["SSH with credential profile<br/>P1 then P2 then P3"]
+    P -->|closed| U["UNREACHABLE"]
+    S --> C1["Command profile C1<br/>Huawei: display lldp ..."]
+    C1 -->|rejected| C2["Command profile C2<br/>Cisco: show lldp ... (same session)"]
+    C1 --> R["Parse neighbors<br/>Local/Remote Device, Model, Port, IP"]
+    C2 --> R
+    R -->|recursive| S
+    R --> O["Topology + Excel + ZIP logs"]
 ```
 
 ---
 
-## 2. ฟังก์ชันเด่นของระบบอย่างละเอียด (Key Features Deep Dive)
+## 2. Key Features
 
-### 2.1 Multi-Vendor Command Translation Engine
-ระบบใช้ **Huawei VRP Syntax (`display ...`)** เป็นแกนกลางสากล (Universal Pivot) ช่วยให้วิศวกรเครือข่ายพิมพ์คำสั่งเพียงรูปแบบเดียว แต่ส่งไปรันบนอุปกรณ์ต่างค่ายได้ทันที:
-- **Heuristic Parameter Translation**: ไม่เพียงแปลคำสั่งสถิต แต่ยังวิเคราะห์ Parameter ต่อท้าย เช่น:
-  - `display ip routing-table 10.50.0.0` -> `show ip route 10.50.0.0` (Cisco) -> `show route 10.50.0.0` (Juniper) -> `/ip route print where dst-address in 10.50.0.0` (MikroTik)
-  - `display arp 192.168.1.1` -> `show ip arp 192.168.1.1` (Cisco) -> `show arp no-resolve hostname 192.168.1.1` (Juniper)
-- **Interface & Link Aggregation Normalization**:
-  - `Eth-Trunk 10` (Huawei) <-> `Port-channel 10` (Cisco) <-> `ae10` (Juniper) <-> `Bridge-Aggregation 10` (Comware) <-> `bonding` (MikroTik)
-- **CLI Shorthand Expansion**:
-  - ผู้ใช้งานสามารถพิมพ์ตัวย่อที่คุ้นเคย เช่น `dis ver`, `disp cur`, `sh ip int br`, `sh run` ระบบจะ Normalize เป็นคำสั่งทางการก่อนประมวลผล
+### Fleet & Inventory
+- **Fleet Device Inventory** ใช้ร่วมกันทุกหน้า: เพิ่ม/ลบ/ค้นหา host, ตั้ง driver ทีละเครื่องหรือทั้งหมด
+- **Import Fleet** จาก CSV / Excel / JSON / YAML / TXT (ตรวจ delimiter และ encoding อัตโนมัติ) + ดาวน์โหลดไฟล์ template
+- **Auto Detect Device Type** รายเครื่องหรือทั้ง fleet จาก banner / prompt / `show version`
+- **Credential Profiles** เก็บ username/password หลายชุดเรียงลำดับ Priority (P1 → P2 → P3) ระบบลองทีละชุดจนเข้าได้ และบันทึกว่าเข้าด้วยชุดไหน
+- **Nornir Workers** ปรับ concurrency 1–100 ได้จาก UI (sync กับ backend)
+- **SSH Legacy Compatibility** เปิด KEX/HostKey รุ่นเก่า (`diffie-hellman-group1/14-sha1`, `ssh-rsa`) ให้ต่อ Switch รุ่นเก่าได้
 
-### 2.2 Massive Fleet Scalability (10,000+ Devices Engine)
-- **In-Memory Dynamic Inventory (Nornir 3.x)**: ไม่ต้องเขียนไฟล์ YAML ลงดิสก์ในระหว่างรัน ช่วยขจัดปัญหา Disk I/O Bottleneck เมื่อจัดการอุปกรณ์ระดับหลักพันถึงหลักหมื่นเครื่อง
-- **Dynamic Concurrent Worker Pool**: ปรับตั้งจำนวน Worker ได้ตั้งแต่ 1 ถึง 100 Workers ผ่านหน้าจอ UI หรือ API เพื่อให้เหมาะสมกับสเปก Server และขีดจำกัด Bandwidth
-- **Smart Batch Chunking**: แบ่งชุดอุปกรณ์ออกเป็น Chunk ย่อย (เช่น 50-100 เครื่องต่อรอบ) ป้องกันปัญหา Socket Exhaustion และ Memory Leak ในระบบเครือข่าย
-- **Paramiko Enterprise Compatibility**: รองรับอัลกอริทึม SSH ทั้งสมัยใหม่และ Legacy (`diffie-hellman-group14-sha1`, `diffie-hellman-group1-sha1`, `rsa-sha2-512`, `rsa`) ทำให้เชื่อมต่อ Switch รุ่นเก่าและรุ่นใหม่ได้พร้อมกันอย่างไร้รอยต่อ
+### Health Check
+- 6 preset: Standard, Interfaces, Transceiver (SFP), Hardware/Environment, Routing & ARP, System Logs + Custom Playbook
+- **Saved Command Profiles** (Playbooks) สร้าง/แก้ไข/ลบได้ พร้อม regex filter รายคำสั่ง
+- Parser สรุป CPU %, Memory %, จำนวน Interface ที่ Up
 
-### 2.3 Asynchronous Job Queue & Real-time SSE Stream
-- สั่งรันงานบน Fleet แล้วรับ `job_id` ทันที โดยหน้าเว็บไม่บล็อกหรือค้าง (Non-blocking Asynchronous Execution)
-- ติดตามสถานะผ่าน **Server-Sent Events (SSE)** ส่งข้อมูลสถานะสด:
-  - เปอร์เซ็นต์ความคืบหน้า (Progress Bar 0-100%)
-  - ตัวนับสถานะเรียลไทม์: Total, Completed, Running, Success, Failed
-  - เวลาที่ใช้ไปแล้ว (Elapsed Time) และการคาดการณ์เวลาที่เหลือ (Estimated Time Arrival - ETA)
-  - ความเร็วการประมวลผล (Devices per Second)
-- **Graceful Cancellation**: มีปุ่มสั่งหยุดงาน (Cancel) ได้ทันทีอย่างปลอดภัยระหว่างรอบ Chunking
+### Troubleshoot & CLI
+- รันหลายคำสั่งพร้อมกันทั้ง fleet พร้อม **regex filter ต่อคำสั่ง**
+- Ping / Traceroute จากตัวอุปกรณ์, ค้นหา Log Buffer (Syslog) ด้วย keyword
+- Terminal output มี copy และ **mask password/secret อัตโนมัติ**
 
-### 2.4 Dual-Report & ZIP Export Engine
-เมื่องานเสร็จสิ้น ระบบสามารถ Export ผลลัพธ์ออกมาเป็นไฟล์ ZIP สมบูรณ์แบบ ประกอบด้วย:
-1. **`report_summary.csv`**: ตารางสรุปภาพรวมของงาน (Job ID, Start Time, End Time, Total Devices, Success Count, Failed Count, Duration Seconds, Success Rate %)
-2. **`report_per_device.csv`**: รายละเอียดแยกรายอุปกรณ์:
-   - `hostname_import`: Hostname ตามที่ผู้ใช้ระบุหรือนำเข้าจากไฟล์
-   - `sysname_device`: Prompt / System Name จริงที่อ่านได้จาก CLI ของอุปกรณ์
-   - `ip`: IP Address
-   - `result`: สถานะ (`SUCCESS` หรือ `FAILED`)
-   - `detail`: ข้อมูลสรุปหรือ Error Message
-3. **`raw_logs/{host}_{hostname}.txt`**: ข้อความดิบทั้งหมดที่อุปกรณ์ตอบกลับ
-4. **`regex_logs/{host}_{hostname}.txt`**: ข้อความเฉพาะส่วนสำคัญที่ผ่านการกรอง
+### Deploy Config
+- Script Editor + Verified Template Snippets (Huawei / Cisco / Aruba / Juniper) + Interactive GUI Config Builder
+- **Pre-check → Backup running-config → Push → Save → Post-check → Rollback commands** ในงานเดียว
+- Backup config ทั้ง fleet, ดูผลรายเครื่องและ History
 
-### 2.5 Advanced Inventory Import Engine
-- **Dual Column Support**: รองรับทั้งคอลัมน์ `hostname` และ `ip` (หรือระบุเฉพาะ `ip` ก็ได้)
-- **Auto Delimiter & Encoding Detection**: รองรับตัวคั่น `,`, `;`, `\t` และระบบตรวจจับ Encoding อัตโนมัติ (`utf-8-sig`, `utf-8`, `latin-1`, `cp1252`)
-- **5 รูปแบบไฟล์**: CSV, Excel (`.xlsx`, `.xls`), JSON, YAML, และ Plain Text (`.txt`)
-- **Replace vs Append Mode**: เลือกระหว่างแทนที่อุปกรณ์ทั้งหมด หรือเพิ่มต่อท้ายจากรายการเดิม
+### LLDP Discovery & Topology (ใหม่)
+- **Seed Devices** หรือ **Subnet Scan** (CIDR / range / IP เดี่ยว + exclude) รันเป็น background job
+- TCP pre-scan port 22 ก่อน SSH เพื่อข้าม IP ที่ไม่มีเครื่อง, **Recursive discovery** ตาม LLDP management IP (max depth 1–10)
+- **Command Profiles** (Huawei VRP → Cisco IOS) ลองคำสั่งทีละ profile บน SSH session เดียว ไม่ต้อง login ซ้ำ
+- ดึง Model (Huawei `CE6881`, `S5735`, Cisco `C2960X`, `C9300` ...) และย่อ FQDN เป็น hostname
+- Scan log เขียนลงดิสก์ทันทีต่อ host (`job.log`, `scan_result.csv`, `lldp_inventory.csv`, `hosts/*.log`) — ปิดเบราว์เซอร์ก็ไม่หาย
+- ผลลัพธ์: **LLDP Inventory**, **Execution Summary**, **Topology** และ export **Excel** (`LLDP_Inventory`, `Execution_Summary`, `Raw_Logs`)
+- **Topology แบ่งเป็นภาพตาม Subnet** (อุปกรณ์ต่าง subnet ที่เชื่อมกันจะรวมภาพเดียว)
+- **Topology Editor**: Select, Add device, Connect, Traffic flow, Zone, Note, Delete, Undo/Redo, Snap, แก้ interface ต่ออุปกรณ์
+- Export **SVG / PNG / draw.io** (ฝัง metadata) และ **Import กลับ** จาก `.drawio / .svg / .png / .zip / .json` เพื่อแก้ต่อได้
 
-### 2.6 4 โมดูลปฏิบัติการหลัก
-1. **Health Check**:
-   - ตรวจ 6 หมวดหมู่มาตรฐาน: Standard Health, Interfaces, Transceiver/Optics, Environment, Routing & ARP, System Logs
-   - Regex Metrics Parser: คำนวณสรุปค่า **CPU Utilization (%)**, **Memory Usage (%)**, และ **Active Interfaces**
-2. **Troubleshoot & Interactive CLI**:
-   - หน้าต่าง Console สำหรับพิมพ์คำสั่งโต้ตอบ แสดงผลทันที
-   - ระบบ Ping และ Traceroute ข้ามยี่ห้อ
-   - Log Filter กรอง Syslog ตาม Keyword สำคัญ
-   - Runner สำหรับรัน Saved Profiles / Playbooks
-3. **Deploy Configuration**:
-   - Pre-Checks & Post-Checks ตรวจสอบก่อน-หลังเปลี่ยนคอนฟิก
-   - Automated Running-Config Backup เก็บประวัติก่อนเริ่มงาน
-   - Dynamic Rollback Generator สร้างคำสั่งย้อนกลับอัตโนมัติ
-   - Error Pattern Detection ตรวจจับข้อผิดพลาด CLI อัตโนมัติ
-   - Automated Save / Commit บันทึกลง NVRAM
-4. **Template Studio**:
-   - ออกแบบ Jinja2 Templates พร้อมรองรับตัวแปร YAML/JSON
-   - ระบบเรนเดอร์ดูผลลัพธ์แบบ Live Preview ก่อน Deploy จริง
+### Async Jobs & Reports
+- ส่งงาน fleet ได้ `job_id` ทันที, ติดตามผ่าน **SSE**: %, completed/success/failed, dev/s, ETA
+- Pagination + filter + search ผลลัพธ์, **Cancel** กลางทาง
+- Export ZIP: `report_summary.csv`, `report_per_device.csv`, `raw_logs/`, `regex_logs/`
 
 ---
 
-## 3. โครงสร้างโปรเจกต์ (Project Structure)
+## 3. Tech Stack
+
+| Layer | เครื่องมือ | ใช้ทำอะไร |
+| :--- | :--- | :--- |
+| Backend | **Python 3.10**, **FastAPI**, Uvicorn, Pydantic v2 | REST API, SSE, validation |
+| Network Automation | **Netmiko**, **Paramiko**, **Nornir** (+ nornir-netmiko) | SSH/Telnet ไปอุปกรณ์, รันขนาน |
+| Serial Console | pyserial | ต่อสาย console USB-to-Serial |
+| Templating | Jinja2 | Config templates |
+| Reports | openpyxl, csv, zipfile | Excel / CSV / ZIP |
+| Frontend | **React 18**, **Vite 5**, **TailwindCSS 3**, axios, lucide-react | Web UI, Topology editor (SVG) |
+| Diagram export | SVG / PNG / draw.io XML (เขียนเอง ไม่ใช้ lib) | Export + round-trip import |
+| Infra | **Docker**, **Docker Compose** | รัน frontend + backend |
+| Testing | unittest + mock (`test_fleet_simulation.py`) | จำลอง fleet 1,000–10,000 เครื่อง |
+
+---
+
+## 4. Getting Started
+
+### 4.1 Prerequisites
+
+| รายการ | ขั้นต่ำ | แนะนำ |
+| :--- | :--- | :--- |
+| OS | Linux, macOS, Windows + WSL2 | Ubuntu 22.04+ / WSL2 |
+| CPU / RAM | 2 vCPU / 4 GB | 4–8 vCPU / 8–16 GB (fleet หลักพัน+) |
+| Disk | 2 GB | 10 GB+ (เก็บ scan logs) |
+| Docker | Docker Engine 24+ และ Docker Compose v2 | Docker Desktop (Windows/macOS) |
+| รันแบบไม่ใช้ Docker | Python 3.10+, Node.js 20+ | — |
+| Network | Server ต้องเข้าถึง Management IP ของอุปกรณ์ทาง TCP 22 (SSH) หรือ 23 (Telnet) | แยก Management VLAN / OOB |
+| Browser | Chrome / Edge / Firefox รุ่นปัจจุบัน | — |
+
+### 4.2 Clone
+
+```bash
+git clone <repository-url> deploy-config
+cd deploy-config
+```
+
+### 4.3 Setup Environment
+
+```bash
+cp .env.example .env
+```
+
+แก้ค่าใน `.env` อย่างน้อย:
+- `SECRET_KEY` — เปลี่ยนเป็นค่าสุ่ม
+- `VITE_API_BASE_URL` — ถ้าเปิดเว็บจากเครื่องอื่น ให้ใส่ IP ของ server แทน `localhost` เช่น `http://192.168.10.5:4050`
+- `ALLOWED_ORIGINS` — ใส่ URL ที่ใช้เปิดหน้าเว็บ
+
+ดูตัวแปรทั้งหมดที่ [หัวข้อ 9](#9-configuration-env)
+
+### 4.4 Run ด้วย Docker Compose (แนะนำ)
+
+```bash
+docker compose up --build -d     # build + start
+docker compose ps                # ตรวจสถานะ
+docker compose logs -f backend   # ดู log backend
+```
+
+| Service | URL |
+| :--- | :--- |
+| Web UI | http://localhost:4000 |
+| API Swagger | http://localhost:4050/docs |
+| API ReDoc | http://localhost:4050/redoc |
+
+ตรวจว่า backend ขึ้นแล้ว:
+
+```bash
+$ curl -s http://localhost:4050/
+{"status":"online","service":"Network Automation & Diagnostics Web API","version":"1.0.0","docs_url":"/docs"}
+```
+
+หมายเหตุ:
+- `docker-compose.yml` mount `./backend/app` และ `./frontend` เข้า container — แก้โค้ดแล้ว reload อัตโนมัติ
+- scan logs ของ LLDP เก็บที่ `./backend/logs` บนเครื่อง host
+- backend รันแบบ `privileged: true` เพื่อให้ใช้สาย console (`/dev/ttyUSB0`) ได้ ถ้าไม่ใช้ serial สามารถเอาออกได้
+
+ปิดระบบ:
+
+```bash
+docker compose down
+```
+
+### 4.5 Run แบบ Local Development (ไม่ใช้ Docker)
+
+**Backend**
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 4050 --reload
+```
+
+**Frontend** (terminal ใหม่)
+
+```bash
+cd frontend
+npm install
+npm run dev                        # http://localhost:4000
+```
+
+---
+
+## 5. Usage — วิธีใช้งานแต่ละหน้า
+
+### 5.1 เตรียม Fleet (ทุกหน้าใช้ร่วมกัน)
+1. **Profiles** → สร้าง Credential Profile ใส่ username/password เรียง P1, P2, P3 แล้วตั้งเป็น Default
+2. เพิ่มอุปกรณ์ด้วย **Add Row** หรือ **Import Fleet** (ไฟล์ตาม [หัวข้อ 11](#11-inventory-import-formats))
+3. เลือก driver ด้วย **Set All Vendors → Apply Driver** หรือกด **Detect Types** ให้ระบบหาเอง
+4. ปรับ **Nornir Workers** ตามสเปก server
+
+### 5.2 Health Check
+เลือก preset (เช่น Standard Overall Check) หรือ Saved Command Profile → **Run Fleet Suite** → ดู progress ใน Job Monitor → Export ZIP
+
+### 5.3 Troubleshoot & CLI
+พิมพ์คำสั่ง (ใส่ regex filter ได้) → **Add Another Command** ถ้ามีหลายคำสั่ง → **Run Across Fleet**
+ด้านล่างมี Ping / Traceroute และค้นหา Syslog
+
+### 5.4 Deploy Config
+1. เขียนคำสั่งใน **Configuration Commands Script** หรือเลือกจาก Template Snippets
+2. เปิด Pre-check / Post-check / Backup / Save ตามต้องการ
+3. Deploy → ดูผลใน **Deployment Results & Analytics** (มี rollback commands ให้) และ **History**
+
+### 5.5 LLDP Discovery
+1. เลือกโหมด **Seed Devices** (ใช้ fleet ด้านบน) หรือ **Subnet Scan** (ใส่ `10.10.0.0/24`, `10.10.1.10-50`)
+2. เรียง **Command Profile Priority** (C1 Huawei, C2 Cisco)
+3. เปิด TCP Pre-Check / Recursive ตามต้องการ → Start
+4. ดูแท็บ **LLDP Inventory**, **Execution Summary**, **Topology**
+5. Export Excel / ZIP logs หรือ Topology เป็น SVG / PNG / draw.io
+6. กด **Edit** เพื่อวาดเพิ่ม (traffic flow, zone, note) หรือ **Import Topology** เพื่อเปิดไฟล์ที่ export ไว้มาแก้ต่อ
+
+---
+
+## 6. Demo / Output
+
+> ภาพทั้งหมดถ่ายจากระบบที่รันจริงด้วย Docker Compose (headless Chrome 1600×1000) — ข้อมูล topology ในภาพเป็นชุดตัวอย่าง
+
+### 6.1 Health Check — Fleet Inventory + Credential Profile + Presets
+![Health Check](docs/screenshots/01-health-check.png)
+
+### 6.2 Troubleshoot & CLI — รันคำสั่งทั้ง fleet พร้อม regex filter
+![Troubleshoot](docs/screenshots/02-troubleshoot.png)
+
+### 6.3 Deploy Config — Script editor + Template snippets
+![Deploy Config](docs/screenshots/03-deploy-config.png)
+
+### 6.4 LLDP Discovery — Seed devices + Command profile priority
+![LLDP Discovery](docs/screenshots/04-lldp-discovery.png)
+
+### 6.5 LLDP Topology — วาดจาก LLDP (Huawei + Cisco ผสม)
+![LLDP Topology](docs/screenshots/05-lldp-topology.png)
+
+### 6.6 Terminal: Fleet Simulation Test (1,000 / 10,000 / Cancel)
+
+```text
+$ docker exec net-auto-backend python test_fleet_simulation.py
+
+######################################################################
+  NETWORK AUTOMATION PLATFORM - BACKGROUND FLEET AUTOMATION SUITE
+######################################################################
+======================================================================
+  [TEST 1] Scale Simulation: 1,000 Devices (Troubleshoot & Diagnostics)
+======================================================================
+Generated 1,000 devices across 5 network vendor platforms.
+Job Submitted Successfully! Job ID: 631560e6-e723-4782-89e5-abc6e19c6c4b
+Initial Status: pending, Total Devices: 1,000
+Monitoring Real-Time Progress Stream:
+  [##############################] 100.0% | Completed: 1000/1000 | Success:  900 | Failed: 100 | Speed:   328 dev/s | Time: 3.05s
+ Job Completed in 3.06s!
+Verifying Paginated Results API (Page 1 - 50 items):
+  - Total Items: 1,000
+  - Total Pages: 20 (50 items/page)
+  - Failed Devices Filter: 100 items found (All with success=False)
+  - Search '10.0.1.' Filter: 256 matching devices found
+ [TEST 1 PASSED] 1,000 Devices Chunking & Pagination Verified!
+======================================================================
+  [TEST 2] Massive Scale Simulation: 10,000 Devices (Config Deployment)
+======================================================================
+  [##############################] 100.0% | Completed: 10000/10000 | Speed:   482 dev/s | Time: 20.77s
+ 10,000 Devices Config Deployed in 20.8s!
+ [TEST 2 PASSED] 10,000 Devices Chunking & Memory Performance Verified!
+======================================================================
+  [TEST 3] Mid-Execution Cancellation Simulation: 5,000 Devices
+======================================================================
+Final Job Status: 'cancelled'
+Completed Devices Before Halt: 30 / 5,000
+ [TEST 3 PASSED] Job Cancellation Successfully Aborted Remaining Chunks!
+======================================================================
+  ALL 3 FLEET SIMULATION TESTS PASSED SUCCESSFULLY! (100% OPERATIONAL)
+======================================================================
+```
+
+> การทดสอบนี้ mock การเชื่อมต่อ SSH เพื่อวัด job engine (chunking, SSE, pagination, cancel) ไม่ได้ต่ออุปกรณ์จริง
+
+### 6.7 Terminal: เรียก API โดยตรง
+
+```bash
+# แปลคำสั่ง Huawei เป็นทุกยี่ห้อ
+$ curl -s -X POST localhost:4050/api/v1/playbooks/auto-translate \
+    -H 'content-type: application/json' -d '{"commands":["display interface brief"]}'
+{"source_vendor":"huawei","commands":["display interface brief"],
+ "translations":{"huawei":["display interface brief"],"cisco_ios":["show ip interface brief"],
+ "juniper_junos":["show interfaces terse"],"cisco_nxos":["show interface status"],
+ "aruba_os":["show interface brief"],"hp_comware":["display interface brief"],
+ "mikrotik_routeros":["/interface print brief"]}}
+
+# ดูจำนวน IP ก่อนสั่ง subnet scan
+$ curl -s -X POST localhost:4050/api/v1/lldp/scan-subnet/preview \
+    -H 'content-type: application/json' \
+    -d '{"targets":["10.0.0.0/24","10.0.1.10-50"],"exclude":["10.0.0.1"]}'
+{"count":294,"first":"10.0.0.2","last":"10.0.1.50"}
+
+# ดู/ตั้งค่า Nornir workers
+$ curl -s localhost:4050/api/v1/system/nornir-workers
+{"num_workers":10,"min_workers":1,"max_workers":100,"default_workers":10}
+```
+
+### 6.8 ไฟล์ผลลัพธ์
+
+**Fleet job ZIP** (`GET /jobs/{id}/export-zip`)
+```text
+report_summary.csv        # Job ID, start/end, total, success, failed, duration, success rate
+report_per_device.csv     # hostname_import, sysname_device, ip, result, detail
+raw_logs/{host}_{name}.txt
+regex_logs/{host}_{name}.txt
+```
+
+**LLDP scan logs** (`backend/logs/lldp/<timestamp>_<job>/` และ `GET /lldp/scan-subnet/{id}/export-zip`)
+```text
+job.log                   # timeline ของทั้ง job
+scan_result.csv           # ip, depth, tcp_open, status, sysname, model, credential, command_profile, neighbors, time_s, detail
+lldp_inventory.csv        # Local Device, Local Model, Local IP, Local Port, Remote Device, Remote Model, Remote Port, Remote IP
+hosts/<ip>_<sysname>.log  # execution log + raw CLI
+summary.json, topology.json, lldp_report.xlsx
+```
+
+สถานะใน `scan_result.csv`: `SUCCESS`, `NO_LLDP`, `DUPLICATE`, `AUTH_FAILED`, `FAILED`, `UNREACHABLE`
+
+---
+
+## 7. Project Structure
 
 ```text
 deploy-config/
-├── .env                              # ไฟล์คอนฟิกระบบหลัก (Ports, Hosts, Timeouts, Workers)
-├── .env.example                      # ตัวอย่างไฟล์คอนฟิกสำหรับ Clone โปรเจกต์
-├── .gitignore                        # ป้องกันการบันทึก Secrets, Cache, และข้อมูลชั่วคราว
-├── docker-compose.yml                # Docker Compose Orchestration (Frontend + Backend)
-├── NETWORK_SETUP_GUIDE.md            # คู่มือการเตรียมเครือข่ายและคำสั่งคอนฟิกบนอุปกรณ์จริง
-├── README.md                         # คู่มือและเอกสารการใช้งานระบบฉบับสมบูรณ์
-├── generate_devices.py               # สคริปต์สุ่มสร้างข้อมูลอุปกรณ์จำลอง (1,000 - 10,000+ devices)
-├── devices_1000.csv                  # ตัวอย่างชุดข้อมูลทดสอบ 1,000 อุปกรณ์
-├── devices_10000.csv                 # ตัวอย่างชุดข้อมูลทดสอบ 10,000 อุปกรณ์
+├── .env.example                 # ตัวอย่าง config
+├── docker-compose.yml           # frontend + backend
+├── generate_devices.py          # สร้าง CSV อุปกรณ์จำลอง
+├── devices_10000.csv            # ชุดทดสอบ 10,000 เครื่อง
+├── docs/screenshots/            # ภาพประกอบ README
 │
-├── backend/                          # Python FastAPI Backend Service
-│   ├── Dockerfile                    # Container definition (Python 3.11-slim)
-│   ├── requirements.txt              # FastAPI, Netmiko, Nornir, Paramiko, openpyxl, pyyaml
-│   ├── test_fleet_simulation.py      # สคริปต์จำลองทดสอบประสิทธิภาพ Fleet 10,000 เครื่อง
+├── backend/
+│   ├── Dockerfile               # python:3.10-slim + ping/traceroute
+│   ├── requirements.txt
+│   ├── test_fleet_simulation.py # simulation 1k/10k/cancel
 │   └── app/
-│       ├── main.py                   # FastAPI Application Entrypoint & CORS Middleware
-│       ├── test_autodetect_simulation.py # สคริปต์ทดสอบจำลอง Auto-detect Device Type
-│       ├── core/
-│       │   └── config.py             # ตั้งค่าระบบและโหลด Environment Variables จาก .env
-│       ├── data/                     # ที่เก็บข้อมูลถาวร (Persistent JSON Storage)
-│       │   ├── playbooks.json        # บันทึก Command Playbooks / Profiles
-│       │   └── templates.json        # บันทึก Jinja2 Configuration Templates
-│       ├── schemas/                  # Pydantic Data Models & Validation
-│       │   ├── command.py            # สกีมาสำหรับ Single/Batch Command, Health Check, Workers
-│       │   ├── device.py             # สกีมาสำหรับ Device Credentials, Connection Test, Fleet
-│       │   ├── playbook.py           # สกีมาสำหรับ Command Profiles และ Auto-Translate API
-│       │   └── template.py           # สกีมาสำหรับ Jinja2 Config Templates
-│       ├── services/                 # Core Automation Engines & Network Drivers
-│       │   ├── autodetect_service.py # วิเคราะห์และตรวจจับประเภทอุปกรณ์ (Device Type) อัตโนมัติ
-│       │   ├── command_translator.py # เครื่องยนต์แปลคำสั่ง 7 แพลตฟอร์มเครือข่าย (Universal Pivot)
-│       │   ├── inventory_parser.py   # ตัวถอดรหัสไฟล์ CSV, XLSX, JSON, YAML, TXT
-│       │   ├── job_service.py        # จัดการคิวงาน Background Async Job, Chunking, SSE Stream
-│       │   ├── netmiko_service.py    # ไดรเวอร์ SSH/Telnet/Serial และ Credential Masking
-│       │   ├── nornir_service.py     # Multithreaded Engine สำหรับรันงานบน Fleet ขนานพร้อมกัน
-│       │   ├── parser_service.py     # ตัววิเคราะห์ Regex สรุป Version, CPU, Memory, Interfaces
-│       │   ├── playbook_service.py   # จัดการ CRUD บันทึก/แก้ไข/ลบโปรไฟล์คำสั่ง Multi-Vendor
-│       │   └── template_service.py   # จัดการเรนเดอร์และบันทึก Jinja2 Config Templates
-│       └── api/
-│           └── endpoints/            # REST API Router Endpoints
-│               ├── deploy.py         # พุชคอนฟิก, Pre/Post Check, Backup, และ Rollback
-│               ├── devices.py        # ทดสอบการเชื่อมต่อ, Auto-detect, นำเข้าไฟล์, ดาวน์โหลด Template
-│               ├── healthcheck.py    # ตรวจสอบสุขภาพอุปกรณ์ (Single และ Fleet)
-│               ├── jobs.py           # ตรวจสอบสถานะ Job, Real-time SSE Stream, ส่งออก ZIP Report
-│               ├── playbooks.py      # จัดการ Playbooks และเรียกใช้ระบบแปลคำสั่งอัตโนมัติ
-│               ├── profiles.py       # จัดการโปรไฟล์ชุดคำสั่งเพิ่มเติม
-│               ├── system.py         # ดูและปรับเปลี่ยนจำนวน Nornir Concurrent Workers แบบไดนามิก
-│               ├── templates.py      # จัดการและเรนเดอร์ Jinja2 Templates
-│               └── troubleshoot.py   # Interactive CLI, Ping, Traceroute, และ Log Filter
+│       ├── main.py              # FastAPI app + routers
+│       ├── core/config.py       # Settings จาก env
+│       ├── data/                # JSON storage
+│       │   ├── credential_profiles.json
+│       │   ├── command_profiles.json   # LLDP command profiles (Huawei, Cisco)
+│       │   ├── playbooks.json
+│       │   └── templates.json
+│       ├── schemas/             # Pydantic models
+│       ├── services/
+│       │   ├── autodetect_service.py
+│       │   ├── command_profile_service.py
+│       │   ├── command_translator.py
+│       │   ├── inventory_parser.py
+│       │   ├── job_service.py
+│       │   ├── lldp_service.py          # collect + parse LLDP, Excel
+│       │   ├── lldp_scan_service.py     # subnet scan job + disk logs
+│       │   ├── netmiko_service.py
+│       │   ├── nornir_service.py
+│       │   ├── parser_service.py
+│       │   ├── playbook_service.py
+│       │   ├── profile_service.py
+│       │   ├── ssh_compat.py            # legacy KEX / host key
+│       │   ├── template_service.py
+│       │   └── topology_import_service.py
+│       └── api/endpoints/
+│           ├── command_profiles.py  deploy.py  devices.py  healthcheck.py
+│           ├── jobs.py  lldp.py  playbooks.py  profiles.py
+│           └── system.py  templates.py  troubleshoot.py
 │
-└── frontend/                         # React Frontend (Vite + TailwindCSS)
-    ├── Dockerfile                    # Multi-stage production build ด้วย Nginx
-    ├── Dockerfile.dev                # Development container สำหรับ Live Reload
-    ├── nginx.conf                    # การตั้งค่า Nginx Reverse Proxy & Static Hosting
-    ├── package.json                  # รายการ Dependencies (React 18, Vite, TailwindCSS, Lucide)
-    ├── vite.config.js                # การตั้งค่า Vite Dev Server (Port 4000) และ Proxy
-    ├── tailwind.config.js            # การตั้งค่าชุดสีและธีม Enterprise Dark Theme
+└── frontend/
+    ├── Dockerfile / Dockerfile.dev / nginx.conf
+    ├── package.json / vite.config.js / tailwind.config.js
     └── src/
-        ├── App.jsx & App.css         # คอมโพเนนต์หลัก จัดการแท็บเมนูและสถานะระบบ
-        ├── main.jsx & index.css      # จุดเริ่มต้น React Application
-        ├── services/
-        │   └── api.js                # ตัวกลางเรียก REST API, SSE Progress Stream, และอัปโหลดไฟล์
+        ├── App.jsx                  # tabs + shared fleet state
+        ├── services/api.js          # axios client + SSE
         ├── components/
-        │   ├── Navbar.jsx            # แถบนำทางด้านบน พร้อมแสดงสถานะการเชื่อมต่อ Backend
-        │   ├── DeviceForm.jsx        # ฟอร์มจัดการอุปกรณ์ (Single / Fleet / Import / Batch Setup)
-        │   ├── TerminalOutput.jsx    # หน้าต่าง CLI Terminal แสดงผลพร้อมฟังก์ชัน Copy และ Masking
-        │   └── AsyncJobModal.jsx     # หน้าต่างติดตามสถานะงาน Fleet 10,000+ แบบ SSE Stream
+        │   ├── Navbar.jsx  DeviceForm.jsx  TerminalOutput.jsx  AsyncJobModal.jsx
+        │   ├── NornirWorkersControl.jsx  TcpWorkersControl.jsx
+        │   ├── LldpTopology.jsx      # topology view + editor
+        │   ├── TopologyDialogs.jsx   # device / interface dialogs
+        │   ├── topologyModel.js  topologyLayout.js  topologyGroups.js
+        │   ├── topologyIcons.jsx     # router, switch, firewall, server, cloud, pc, wireless
+        │   └── topologyExport.js     # SVG / PNG / draw.io export
         └── pages/
-            ├── HealthCheckPage.jsx   # หน้าตรวจสุขภาพอุปกรณ์ และรายงานผลสรุป Metrics
-            ├── TroubleshootPage.jsx  # หน้า Interactive CLI, Ping/Traceroute, และ Log Filter
-            ├── DeployConfigPage.jsx  # หน้าพุชคอนฟิก, Pre/Post Checks, Backup, และ Rollback
-            └── TemplateStudioPage.jsx # หน้าออกแบบ เรนเดอร์ และ Deploy Jinja2 Templates
+            ├── HealthCheckPage.jsx  TroubleshootPage.jsx
+            ├── DeployConfigPage.jsx  LldpDiscoveryPage.jsx
+            └── TemplateStudioPage.jsx   # ยังไม่ได้ผูกกับ Navbar
 ```
 
 ---
 
-## 4. ตารางเปรียบเทียบคำสั่ง 7 แพลตฟอร์ม (Command Equivalents Matrix)
+## 8. REST API Reference
 
-| หมวดหมู่คำสั่ง | Huawei VRP (Universal Pivot) | Cisco IOS / IOS-XE | Juniper JunOS | HPE Aruba | HP Comware | MikroTik RouterOS |
+Base URL: `http://localhost:4050/api/v1` — ดูรายละเอียด request/response ได้ที่ `/docs`
+
+### Devices — `/devices`
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| GET | `/types` | รายการ driver ที่รองรับ |
+| GET | `/serial-ports` | serial port ที่มีในเครื่อง |
+| POST | `/test-connection` | ทดสอบเชื่อมต่อ |
+| POST | `/detect-type` | auto-detect 1 เครื่อง |
+| POST | `/detect-fleet` | auto-detect ทั้ง fleet |
+| POST | `/import` | upload ไฟล์ inventory |
+| GET | `/templates/{format_name}` | ดาวน์โหลด template (`csv`, `xlsx`, `json`, `yaml`) |
+
+### Credential Profiles — `/profiles`
+`GET ""`, `GET /{id}`, `POST ""`, `PUT /{id}`, `DELETE /{id}`, `POST /{id}/default`
+
+### Health Check — `/healthcheck`
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| GET | `/presets` | preset ทั้ง 6 หมวดพร้อมคำสั่ง |
+| POST | `/run` | รัน 1 เครื่อง |
+| POST | `/run-batch` | รันหลายเครื่อง (sync) |
+
+### Troubleshoot — `/troubleshoot`
+`POST /execute-command`, `POST /execute-batch`
+
+### Deploy — `/deploy`
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| POST | `/push` | push config 1 เครื่อง |
+| POST | `/push-advanced` | pre-check, backup, push, save, post-check, rollback |
+| POST | `/push-batch` | push หลายเครื่อง |
+| POST | `/backup` / `/backup-batch` | backup running-config |
+
+### Async Jobs — `/jobs`
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| POST | `/submit-troubleshoot` · `/submit-deploy` · `/submit-backup` · `/submit-healthcheck` | ส่งงาน fleet ได้ `job_id` |
+| GET | `/{job_id}/status` | สถานะ |
+| GET | `/{job_id}/results` | ผลแบบแบ่งหน้า (filter/search) |
+| GET | `/{job_id}/results/all` | ผลทั้งหมด |
+| GET | `/{job_id}/stream` | SSE progress |
+| POST | `/{job_id}/cancel` | ยกเลิก |
+| GET | `/{job_id}/export-zip` | ZIP report |
+
+### LLDP — `/lldp`
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| POST | `/discover` | LLDP จาก seed devices |
+| POST | `/scan-subnet/preview` | นับ IP ก่อน scan |
+| POST | `/scan-subnet` | เริ่ม subnet scan job |
+| GET | `/scan-subnet/{job_id}` | สถานะ (+ `include_report`, `log_lines`) |
+| POST | `/scan-subnet/{job_id}/cancel` | ยกเลิก |
+| GET | `/scan-subnet/{job_id}/export-zip` | ZIP ของ log directory |
+| POST | `/import-topology` | import `.drawio/.svg/.png/.zip/.json` (≤ 50 MB) |
+| POST | `/export-excel` | สร้าง `lldp_detailed_report_*.xlsx` |
+
+### LLDP Command Profiles — `/command-profiles`
+`GET ""`, `GET /{id}`, `POST ""`, `PUT /{id}`, `DELETE /{id}`, `POST /reorder`
+
+### Playbooks / Templates / System
+| Method | Path | คำอธิบาย |
+| :--- | :--- | :--- |
+| GET/POST/PUT/DELETE | `/playbooks`, `/playbooks/{id}` | CRUD command profiles |
+| POST | `/playbooks/auto-translate` | แปลคำสั่ง Huawei → vendor อื่น |
+| GET/POST/PUT/DELETE | `/templates`, `/templates/{id}` | CRUD Jinja2 templates |
+| POST | `/templates/execute` | render + รัน template |
+| GET/POST | `/system/nornir-workers` | ดู/ตั้ง workers (1–100) |
+
+---
+
+## 9. Configuration (.env)
+
+| ตัวแปร | ค่าเริ่มต้น | คำอธิบาย |
+| :--- | :--- | :--- |
+| `FRONTEND_PORT` | `4000` | port ของ Web UI |
+| `BACKEND_PORT` | `4050` | port ของ API |
+| `BACKEND_HOST` | `0.0.0.0` | bind address |
+| `VITE_API_BASE_URL` | `http://localhost:4050` | URL ที่เบราว์เซอร์ใช้เรียก API |
+| `ALLOWED_ORIGINS` | `http://localhost:4000,http://127.0.0.1:4000` | CORS origins |
+| `DEFAULT_DEVICE_TYPE` | `huawei` (`.env.example` ตั้ง `cisco_ios`) | driver เริ่มต้น |
+| `DEFAULT_SSH_PORT` | `22` | |
+| `DEFAULT_TELNET_PORT` | `23` | |
+| `DEFAULT_TIMEOUT` | `30` | timeout เชื่อมต่อ (วินาที) |
+| `DEFAULT_NUM_WORKERS` | `10` | Nornir workers เริ่มต้น |
+| `GLOBAL_DELAY_FACTOR` | `1` | Netmiko delay factor (เพิ่มถ้าอุปกรณ์ตอบช้า) |
+| `LLDP_LOG_DIR` | `logs/lldp` | ที่เก็บ scan logs |
+| `LLDP_SCAN_MAX_IPS` | `16384` | จำนวน IP สูงสุดต่อ subnet scan |
+| `SECRET_KEY` | — | เปลี่ยนก่อนใช้งานจริง |
+| `ENVIRONMENT` | `development` | `development` / `production` |
+
+---
+
+## 10. Supported Vendors & Command Matrix
+
+### 10.1 Drivers
+
+| Driver (`device_type`) | ชื่อใน UI | Protocol | ตัวอย่างอุปกรณ์ |
+| :--- | :--- | :--- | :--- |
+| `autodetect` | Auto Detect (Recommended) | SSH | ตรวจหาเอง |
+| `huawei` | Huawei VRP (SSH) | SSH 22 | CloudEngine, S-Series, AR, NE, USG |
+| `huawei_telnet` | Huawei VRP (Telnet) | Telnet 23 | Huawei รุ่นเก่า |
+| `cisco_ios` | Cisco IOS / IOS-XE (SSH) | SSH 22 | Catalyst 2960/3850/9200/9300, ISR, ASR |
+| `cisco_ios_telnet` | Cisco IOS (Telnet) | Telnet 23 | lab / legacy |
+| `cisco_nxos` | Cisco NX-OS | SSH 22 | Nexus 3000–9000 |
+| `aruba_os` | Aruba OS-CX / ProCurve | SSH 22 | Aruba CX 6100–8320, 2530, 2930 |
+| `juniper_junos` | Juniper JunOS | SSH 22 | EX, QFX, SRX |
+| `hp_comware` | HP / H3C Comware | SSH 22 | HPE FlexNetwork 5130/5510/5900, H3C |
+| `mikrotik_routeros` | MikroTik RouterOS | SSH 22 | CRS, CCR |
+| `linux` | Linux / Cumulus | SSH 22 | Ubuntu, Cumulus, SONiC |
+| `generic_termserver_telnet` | Generic Telnet | Telnet | lab switch ไม่มี auth |
+| `generic_termserver` | Generic SSH / Paramiko | SSH | อุปกรณ์อื่น ๆ |
+
+> LLDP Discovery ปัจจุบันมี command profile สำหรับ **Huawei VRP** และ **Cisco IOS / IOS-XE / NX-OS** — เพิ่ม vendor อื่นได้จากปุ่ม **Manage** (ต้องมี parser รองรับ)
+
+### 10.2 Command Equivalents (Huawei VRP เป็น pivot)
+
+| หมวด | Huawei VRP | Cisco IOS | Juniper JunOS | HPE Aruba | HP Comware | MikroTik |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **System Version** | `display version` | `show version` | `show version` | `show version` | `display version` | `/system resource print` |
-| **Interface Status** | `display interface brief` | `show ip interface brief` | `show interfaces terse` | `show interface brief` | `display interface brief` | `/interface print brief` |
-| **IP Addresses** | `display ip interface brief` | `show ip interface brief` | `show interfaces terse` | `show ip interface brief` | `display ip interface brief` | `/ip address print` |
-| **Port Description** | `display interface description` | `show interfaces description` | `show interfaces descriptions` | `show interface custom` | `display interface description` | `/interface print` |
-| **Active Config** | `display current-configuration` | `show running-config` | `show configuration` | `show running-config` | `display current-configuration` | `/export` |
-| **Saved Config** | `display saved-configuration` | `show startup-config` | `show configuration` | `show config` | `display saved-configuration` | `/export file=backup` |
-| **Routing Table** | `display ip routing-table` | `show ip route` | `show route` | `show ip route` | `display ip routing-table` | `/ip route print` |
-| **ARP Table** | `display arp all` | `show ip arp` | `show arp` | `show arp` | `display arp all` | `/ip arp print` |
-| **MAC Address Table** | `display mac-address` | `show mac address-table` | `show ethernet-switching table` | `show mac-address` | `display mac-address` | `/interface bridge host print` |
-| **CPU Utilization** | `display cpu-usage` | `show processes cpu sorted` | `show chassis routing-engine` | `show cpu` | `display cpu-usage` | `/system resource print` |
-| **Memory Usage** | `display memory-usage` | `show processes memory` | `show system storage` | `show system` | `display memory` | `/system resource print` |
-| **Link Aggregation** | `display eth-trunk` | `show etherchannel summary` | `show lacp interfaces` | `show lacp` | `display link-aggregation verbose` | `/interface bonding print` |
-| **VLAN Config** | `display vlan` | `show vlan brief` | `show vlans` | `show vlans` | `display vlan all` | `/interface vlan print` |
-| **LLDP Neighbors** | `display lldp neighbor brief` | `show lldp neighbors` | `show lldp neighbors` | `show lldp info remote-device` | `display lldp neighbor list` | `/ip neighbor print` |
-| **Optical / SFP** | `display transceiver diagnosis interface` | `show interfaces transceiver` | `show interfaces diagnostics optics` | `show interface transceiver` | `display transceiver diagnosis interface` | `/interface ethernet monitor [find] once` |
-| **System Logs** | `display logbuffer` | `show logging` | `show log messages` | `show logging` | `display logbuffer` | `/log print` |
+| Version | `display version` | `show version` | `show version` | `show version` | `display version` | `/system resource print` |
+| Interface | `display interface brief` | `show ip interface brief` | `show interfaces terse` | `show interface brief` | `display interface brief` | `/interface print brief` |
+| Running config | `display current-configuration` | `show running-config` | `show configuration` | `show running-config` | `display current-configuration` | `/export` |
+| Routing | `display ip routing-table` | `show ip route` | `show route` | `show ip route` | `display ip routing-table` | `/ip route print` |
+| ARP | `display arp all` | `show ip arp` | `show arp` | `show arp` | `display arp all` | `/ip arp print` |
+| MAC table | `display mac-address` | `show mac address-table` | `show ethernet-switching table` | `show mac-address` | `display mac-address` | `/interface bridge host print` |
+| CPU | `display cpu-usage` | `show processes cpu sorted` | `show chassis routing-engine` | `show cpu` | `display cpu-usage` | `/system resource print` |
+| Link aggregation | `display eth-trunk` | `show etherchannel summary` | `show lacp interfaces` | `show lacp` | `display link-aggregation verbose` | `/interface bonding print` |
+| VLAN | `display vlan` | `show vlan brief` | `show vlans` | `show vlans` | `display vlan all` | `/interface vlan print` |
+| LLDP | `display lldp neighbor brief` | `show lldp neighbors` | `show lldp neighbors` | `show lldp info remote-device` | `display lldp neighbor list` | `/ip neighbor print` |
+| Transceiver | `display transceiver diagnosis interface` | `show interfaces transceiver` | `show interfaces diagnostics optics` | `show interface transceiver` | `display transceiver diagnosis interface` | `/interface ethernet monitor [find] once` |
+| Logs | `display logbuffer` | `show logging` | `show log messages` | `show logging` | `display logbuffer` | `/log print` |
+
+ตัวแปลยังรองรับ parameter ต่อท้าย (เช่น `display arp 192.168.1.1` → `show ip arp 192.168.1.1`), ชื่อ interface (`Eth-Trunk 10` ↔ `Port-channel 10` ↔ `ae10` ↔ `Bridge-Aggregation 10`) และตัวย่อ (`dis ver`, `sh ip int br`, `sh run`)
 
 ---
 
-## 5. สคริปต์สุ่มสร้างข้อมูลอุปกรณ์จำลอง (Mock Device Generator)
+## 11. Inventory Import Formats
 
-โปรเจกต์มีสคริปต์ [generate_devices.py](generate_devices.py) ในตัวสำหรับสร้างไฟล์ CSV จำลองรายชื่ออุปกรณ์ขนาดใหญ่ เพื่อนำไปทดสอบประสิทธิภาพระบบ Fleet:
+รองรับ CSV, Excel (`.xlsx/.xls`), JSON, YAML, TXT — ใส่ `hostname` + `ip` หรือ `ip` อย่างเดียวก็ได้ เลือกโหมด **Replace** หรือ **Append** ได้
 
-### จุดเด่นของสคริปต์:
-1. **Realistic Naming**: สุ่มชื่อ Hostname ตามมาตรฐาน Enterprise: `{Role}-{Site}-{ID}` (เช่น `SW-Core-HQ-00142`, `RT-Edge-CNX-03819`, `FW-Perim-DC1-09124`)
-2. **Valid Private IPv4**: สุ่ม IP ที่ถูกต้องตามมาตรฐาน RFC 1918 (Subnet `10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`) โดยไม่สุ่มโดน Network ID (`.0`) และ Broadcast (`.255`)
-3. **100% Unique Guarantee**: รับประกันว่าไม่มี Hostname หรือ IP ซ้ำกันแม้แต่รายการเดียว
-4. **Header มาตรฐาน**: เขียนหัวคอลัมน์ `hostname,ip` พร้อมนำเข้าในหน้าระบบได้ทันที
-
-### ตัวอย่างคำสั่งรัน:
-```bash
-# 1. สร้าง 1,000 อุปกรณ์ (บันทึกลง devices_1000.csv)
-python3 generate_devices.py 1000 devices_1000.csv
-
-# 2. สร้าง 10,000 อุปกรณ์ (บันทึกลง devices_10000.csv)
-python3 generate_devices.py 10000 devices_10000.csv
-
-# 3. กำหนดจำนวนเองตามต้องการ (เช่น 50,000 อุปกรณ์)
-python3 generate_devices.py 50000 devices_50000.csv
-```
-
----
-
-## 6. รูปแบบไฟล์สำหรับนำเข้ารายชื่ออุปกรณ์ (Inventory Import Formats)
-
-ระบบรองรับการนำเข้าไฟล์อุปกรณ์ 5 รูปแบบ โดยสามารถระบุทั้ง `hostname` และ `ip` หรือระบุเฉพาะ `ip` ได้อย่างยืดหยุ่น:
-
-### 6.1 ไฟล์ CSV (`fleet.csv`)
+**CSV** (`,` `;` หรือ tab)
 ```csv
 hostname,ip
 SW-Core-HQ-001,192.168.1.1
-SW-Dist-BKK-002,192.168.1.2
 RT-Edge-DC1-003,10.10.0.1
-FW-Perim-DC2-004,172.16.50.1
 ```
-*(รองรับทั้ง Comma `,`, Semicolon `;`, และ Tab `\t`)*
 
-### 6.2 ไฟล์ Excel (`fleet.xlsx` หรือ `fleet.xls`)
-จัดตารางโดยให้ Row 1 เป็นหัวคอลัมน์:
-| hostname | ip |
-| :--- | :--- |
-| SW-Core-HQ-001 | 192.168.1.1 |
-| SW-Dist-BKK-002 | 192.168.1.2 |
-| RT-Edge-DC1-003 | 10.10.0.1 |
-
-### 6.3 ไฟล์ JSON (`fleet.json`)
-รองรับทั้งแบบ Array of Objects หรือ Array of Strings:
+**JSON**
 ```json
 [
   { "hostname": "SW-Core-HQ-001", "ip": "192.168.1.1" },
-  { "hostname": "SW-Dist-BKK-002", "ip": "192.168.1.2" },
-  { "hostname": "RT-Edge-DC1-003", "ip": "10.10.0.1" }
-]
-```
-*หรือระบุเฉพาะ IP:*
-```json
-[
-  "192.168.1.1",
-  "192.168.1.2",
   "10.10.0.1"
 ]
 ```
 
-### 6.4 ไฟล์ YAML (`fleet.yaml` หรือ `fleet.yml`)
+**YAML**
 ```yaml
 - hostname: SW-Core-HQ-001
   ip: 192.168.1.1
-- hostname: SW-Dist-BKK-002
-  ip: 192.168.1.2
-- hostname: RT-Edge-DC1-003
-  ip: 10.10.0.1
 ```
 
-### 6.5 ไฟล์ Plain Text (`fleet.txt`)
-ใส่ IP Address บรรทัดละ 1 เครื่อง:
+**TXT** — IP บรรทัดละเครื่อง
 ```text
 192.168.1.1
-192.168.1.2
 10.10.0.1
-172.16.50.1
 ```
+
+**Excel** — แถวแรกเป็นหัวคอลัมน์ `hostname | ip`
 
 ---
 
-## 7. ไดรเวอร์อุปกรณ์เครือข่ายที่รองรับ (Supported Device Drivers)
+## 12. เตรียมอุปกรณ์จริงให้พร้อมใช้งาน
 
-| ยี่ห้อ / แบรนด์ | Driver Name (`device_type`) | โปรโตคอล | อุปกรณ์ตัวอย่างที่รองรับ |
-| :--- | :--- | :--- | :--- |
-| **Huawei (SSH)** | `huawei` | SSH (22) | CloudEngine Series, Quidway S-Series, NetEngine, AR Series, USG Firewall |
-| **Huawei (Telnet)** | `huawei_telnet` | Telnet (23) | อุปกรณ์ Huawei รุ่นเก่าที่เปิดใช้ Telnet |
-| **Cisco IOS / IOS-XE** | `cisco_ios` | SSH (22) | Catalyst 2960, 3650, 3850, 9200, 9300, 9500, ISR 4000, ASR 1000 |
-| **Cisco IOS (Telnet)** | `cisco_ios_telnet` | Telnet (23) | Legacy Cisco Switch / Lab Devices |
-| **Cisco NX-OS** | `cisco_nxos` | SSH (22) | Nexus 3000, 5000, 7000, 9000 Data Center Switches |
-| **HP / H3C Comware** | `hp_comware` | SSH (22) | HPE FlexNetwork (5130, 5510, 5900, 7500, 10500), H3C Switches, 3Com |
-| **Aruba / ProCurve** | `aruba_os` | SSH (22) | Aruba CX Series (6100, 6200, 6300, 8320), Aruba 2530, 2930, ProCurve |
-| **Juniper JunOS** | `juniper_junos` | SSH (22) | EX Series (EX2300, EX3400, EX4300), QFX Series, SRX Firewalls |
-| **MikroTik RouterOS** | `mikrotik_routeros` | SSH (22) | Cloud Router Switch (CRS Series), Cloud Core Router (CCR Series) |
-| **Linux Server / NOS** | `linux` | SSH (22) | Ubuntu/Debian Linux Server, Cumulus Linux, SONiC Network OS |
-| **Serial Console** | `serial` | Serial RS-232 | เชื่อมต่อผ่านสาย Console USB-to-Serial (`/dev/ttyUSB0` หรือ `COM3`) |
+เปิด SSH, สร้าง user และ LLDP บนอุปกรณ์ (ระบบสั่งปิด pager ให้เองทุกครั้ง)
 
----
-
-## 8. คู่มือการตั้งค่าอุปกรณ์เครือข่ายจริง (Network Equipment Setup Guide)
-
-เพื่อให้ระบบสามารถเชื่อมต่อและรันคำสั่งโดยไม่ติด Pager (`--More--`) กรุณาเตรียมคำสั่งบนอุปกรณ์ดังนี้:
-
-### 8.1 Cisco IOS / IOS-XE
-```cisco
-username admin privilege 15 secret SuperSecretPassword
-ip ssh version 2
-line vty 0 4
- transport input ssh
- login local
- exec-timeout 0 0
- length 0
-```
-
-### 8.2 Huawei VRP
-```huawei
+**Huawei VRP**
+```text
 aaa
- local-user admin password irreversible-cipher SuperSecretPassword
- local-user admin service-type ssh terminal
- local-user admin level 15
+ local-user netauto password irreversible-cipher <password>
+ local-user netauto service-type ssh
+ local-user netauto privilege level 15
 #
 stelnet server enable
-ssh user admin authentication-type password
-ssh user admin service-type stelnet
+ssh user netauto authentication-type password
+ssh user netauto service-type stelnet
 #
 user-interface vty 0 4
  authentication-mode aaa
  protocol inbound ssh
- screen-length 0 temporary
+#
+lldp enable
 ```
 
-### 8.3 Juniper JunOS
-```junos
-set system login user admin class super-user authentication plain-text-password
-set system services ssh root-login allow
+**Cisco IOS / IOS-XE**
+```text
+username netauto privilege 15 secret <password>
+ip domain-name lab.local
+crypto key generate rsa modulus 2048
+ip ssh version 2
+line vty 0 4
+ transport input ssh
+ login local
+!
+lldp run
+```
+
+**Juniper JunOS**
+```text
+set system login user netauto class super-user authentication plain-text-password
 set system services ssh protocol-version v2
+set protocols lldp interface all
 commit
 ```
 
 ---
 
-## 9. การตั้งค่า Environment Variables (`.env`)
+## 13. Testing & Mock Data
 
-| ตัวแปร | ค่าเริ่มต้น | ชนิด | คำอธิบาย |
-| :--- | :--- | :--- | :--- |
-| `FRONTEND_PORT` | `4000` | Integer | พอร์ตสำหรับเรียกใช้งาน Web UI |
-| `BACKEND_PORT` | `4050` | Integer | พอร์ตของ FastAPI Backend Server |
-| `BACKEND_HOST` | `0.0.0.0` | String | Bind IP Address สำหรับ Backend |
-| `VITE_API_BASE_URL` | `http://localhost:4050` | URL | URL ของ API ที่ Frontend จะเรียกใช้งาน |
-| `DEFAULT_DEVICE_TYPE` | `huawei` | String | ค่าเริ่มต้นของ Vendor Driver |
-| `DEFAULT_SSH_PORT` | `22` | Integer | พอร์ต SSH เริ่มต้น |
-| `DEFAULT_TELNET_PORT` | `23` | Integer | พอร์ต Telnet เริ่มต้น |
-| `DEFAULT_TIMEOUT` | `30` | Integer | Timeout การเชื่อมต่อ (วินาที) |
-| `DEFAULT_NUM_WORKERS` | `10` | Integer | จำนวน Nornir Concurrent Workers เริ่มต้น |
-| `GLOBAL_DELAY_FACTOR` | `1` | Integer | ตัวคูณการหน่วงเวลาการตอบสนองของ Netmiko |
-| `ALLOWED_ORIGINS` | `http://localhost:4000,http://127.0.0.1:4000` | String | Origins ที่อนุญาตใน CORS Middleware |
-| `SECRET_KEY` | `supersecret-key` | String | Security Secret Key สำหรับเข้ารหัส |
-| `ENVIRONMENT` | `development` | String | สภาพแวดล้อม (`development` หรือ `production`) |
-
----
-
-## 10. วิธีการติดตั้งและเริ่มต้นใช้งาน (Installation & Quick Start)
-
-### วิธีที่ 1: รันด้วย Docker Compose (แนะนำสำหรับ Production)
-
+**สร้างรายชื่ออุปกรณ์จำลอง** — hostname รูปแบบ `SW-Core-HQ-00142`, IP private ไม่ซ้ำ ไม่ใช้ `.0` / `.255`
 ```bash
-# 1. โคลนและเตรียมไฟล์ .env
-cp .env.example .env
-
-# 2. เริ่มต้นระบบด้วย Docker Compose
-docker compose up --build -d
-
-# 3. ตรวจสอบสถานะ Service
-docker compose ps
-
-# 4. ดูบันทึกการทำงานแบบ Real-time
-docker compose logs -f
+python3 generate_devices.py 1000 devices_1000.csv
+python3 generate_devices.py 10000 devices_10000.csv
 ```
 
-- **Frontend Dashboard**: [http://localhost:4000](http://localhost:4000)
-- **Backend Swagger UI Docs**: [http://localhost:4050/docs](http://localhost:4050/docs)
-- **Backend ReDoc**: [http://localhost:4050/redoc](http://localhost:4050/redoc)
-
-เมื่อต้องการปิดระบบ:
+**Fleet simulation** (mock SSH, ทดสอบ chunking / progress / pagination / cancel)
 ```bash
-docker compose down
+docker exec net-auto-backend python test_fleet_simulation.py
+# หรือ local
+cd backend && python test_fleet_simulation.py
+```
+
+**Auto-detect simulation**
+```bash
+cd backend && python -m app.test_autodetect_simulation
 ```
 
 ---
 
-### วิธีที่ 2: รันแยก Service สำหรับ Local Development
+## 14. Performance Tuning
 
-#### 1. เริ่มการทำงานของ Backend (FastAPI)
+แนวทางเลือกจำนวน Nornir workers:
+
+| Server | Workers |
+| :--- | :--- |
+| 2 vCPU / 2–4 GB | 10–20 |
+| 4–8 vCPU / 8–16 GB | 30–50 (แนะนำ) |
+| 16+ vCPU / 32+ GB | 80–100 |
+
+LLDP subnet scan: TCP pre-scan ใช้ได้ถึง 1,000 workers (default 200) และ SSH workers แยกจาก TCP workers
+
+สำหรับงานหลักหมื่นเครื่อง ปรับ kernel บน host:
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate       # บน Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 4050 --reload
-```
-
-#### 2. เริ่มการทำงานของ Frontend (React + Vite)
-เปิด Terminal หน้าต่างใหม่:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-เปิดเบราว์เซอร์ไปที่ [http://localhost:4000](http://localhost:4000)
-
----
-
-## 11. REST API Reference ฉบับสมบูรณ์
-
-### 11.1 Devices & Inventory Endpoints (`/api/v1/devices`)
-- **`POST /api/v1/devices/test-connection`**: ทดสอบการเชื่อมต่อ SSH/Telnet รายเครื่อง
-- **`GET /api/v1/devices/drivers`**: ดึงรายการ Driver ทั้งหมดที่ระบบรองรับ
-- **`POST /api/v1/devices/autodetect`**: ส่ง Probe ไปยังอุปกรณ์เพื่อตรวจจับยี่ห้อและ Model อัตโนมัติ
-- **`POST /api/v1/devices/import`**: อัปโหลดไฟล์รายชื่ออุปกรณ์ (CSV, XLSX, JSON, YAML, TXT)
-- **`GET /api/v1/devices/templates/{format}`**: ดาวน์โหลดไฟล์ Template ตัวอย่าง (`csv`, `xlsx`, `json`, `yaml`)
-
-### 11.2 Fleet & Async Jobs Endpoints (`/api/v1/jobs`)
-- **`GET /api/v1/jobs/{job_id}`**: ตรวจสอบสถานะสรุปของ Job
-- **`GET /api/v1/jobs/{job_id}/stream`**: รับ Real-time Progress Stream ผ่าน Server-Sent Events (SSE)
-- **`POST /api/v1/jobs/{job_id}/cancel`**: ส่งคำสั่งขอยกเลิก Job ที่กำลังรันอยู่
-- **`GET /api/v1/jobs/{job_id}/export-zip`**: ดาวน์โหลด ZIP Archive บรรจุรายงานสรุป, รายงานรายเครื่อง, และ Log ดิบ
-
-### 11.3 Operations Endpoints
-- **`POST /api/v1/healthcheck/single`**: สั่งตรวจสุขภาพอุปกรณ์รายเครื่อง
-- **`POST /api/v1/healthcheck/fleet`**: สั่งตรวจสุขภาพทั้ง Fleet (ส่งคืน Job ID)
-- **`POST /api/v1/troubleshoot/run`**: ส่งคำสั่งรัน CLI แสดงผลแบบ Real-time
-- **`POST /api/v1/troubleshoot/ping`**: รันคำสั่ง Ping ข้ามยี่ห้อ
-- **`POST /api/v1/troubleshoot/traceroute`**: รันคำสั่ง Traceroute ข้ามยี่ห้อ
-- **`POST /api/v1/troubleshoot/logfilter`**: ค้นหา Syslog ด้วย Keyword
-- **`POST /api/v1/deploy/fleet`**: กระจายการตั้งค่าสู่ Fleet พร้อม Pre/Post Check และ Backup
-- **`POST /api/v1/playbooks/auto-translate`**: แปลคำสั่งจาก Huawei VRP ไปยัง 6 ยี่ห้อที่เหลือ
-- **`GET /api/v1/system/nornir-workers`**: ดึงจำนวน Concurrent Workers ที่กำลังทำงาน
-- **`POST /api/v1/system/nornir-workers`**: ปรับเปลี่ยนจำนวน Workers (1 ถึง 100 Workers)
-
----
-
-## 12. การปรับแต่งประสิทธิภาพระดับหมื่นเครื่อง (Performance & Kernel Tuning)
-
-เมื่อต้องการบริหารจัดการอุปกรณ์มากกว่า 10,000 เครื่องพร้อมกัน ควรปรับค่า Linux Kernel บน Host Server:
-
-```bash
-# ปรับแต่งจำนวน File Descriptors และ Network Sockets ชั่วคราว
 sudo sysctl -w fs.file-max=2097152
 sudo sysctl -w net.core.somaxconn=65535
 sudo sysctl -w net.ipv4.tcp_max_syn_backlog=65535
-
-# เพิ่ม Limit ใน /etc/security/limits.conf
+# /etc/security/limits.conf
 # * soft nofile 65535
 # * hard nofile 65535
 ```
 
-### คำแนะนำการเลือกจำนวน Concurrent Workers:
-- **10 - 20 Workers**: เหมาะสำหรับ Server ขนาดเล็ก (RAM 2-4 GB, 2 vCPU)
-- **30 - 50 Workers**: เหมาะสำหรับ Server ระดับกลาง (RAM 8-16 GB, 4-8 vCPU) - *แนะนำสำหรับการใช้งานทั่วไป*
-- **80 - 100 Workers**: เหมาะสำหรับ Enterprise Server (RAM 32+ GB, 16+ vCPU) บนเครือข่าย High-Bandwidth
+---
+
+## 15. Security Notes
+
+- Password / secret / pre-shared-key ถูก mask เป็น `******` ใน terminal และ log
+- ตรวจ sysname จริงของอุปกรณ์เทียบกับ hostname ที่ import เพื่อกัน deploy ผิดเครื่อง
+- Backup running-config ก่อน deploy และสร้าง rollback commands ให้
+- `.env`, `logs/`, `backend/logs/` อยู่ใน `.gitignore`
+- **ข้อควรระวัง**:
+  - Credential profiles เก็บเป็น plain text ใน `backend/app/data/credential_profiles.json` — อย่า commit รหัสจริง และจำกัดสิทธิ์เข้าถึง server
+  - ยังไม่มีระบบ login ของเว็บ และ CORS เปิด `*` — ควรรันใน network ภายในหรือหลัง reverse proxy ที่มี auth
+  - `ssh_compat.py` เปิด algorithm รุ่นเก่า (SHA1) เพื่อรองรับอุปกรณ์เก่า
 
 ---
 
-## 13. มาตรฐานความปลอดภัย (Security & Enterprise Hardening)
+## 16. Troubleshooting & FAQ
 
-1. **Regex Credential Masking**: ระบบตรวจจับข้อความรหัสผ่านในคำสั่ง เช่น `password`, `secret`, `pre-shared-key` และแทนที่ด้วย `******` ในหน้าจอ Terminal และไฟล์ Log อัตโนมัติ
-2. **Sysname Verification**: ในกระบวนการ Deploy ระบบจะตรวจสอบ Prompt/Sysname จริงจากหน้างานเทียบกับ Hostname ที่ระบุ เพื่อป้องกันการส่งคอนฟิกผิดเครื่อง
-3. **Automated Rollback & Backup**: สำรอง Running Config ทุกครั้งก่อนเปลี่ยนแปลง พร้อมเตรียม Rollback Script ให้ทันที
-4. **Environment Secrets Protection**: ไฟล์ `.env` ถูกตั้งค่าใน `.gitignore` เพื่อไม่ให้ Credential รั่วไหลขึ้นระบบ Version Control
+**หน้าเว็บขึ้นแต่เรียก API ไม่ได้ / Backend disconnected**
+ตรวจ `docker compose ps` และ `VITE_API_BASE_URL` — ถ้าเปิดจากเครื่องอื่นต้องเป็น IP ของ server ไม่ใช่ `localhost` แก้แล้ว `docker compose up -d --force-recreate frontend`
 
----
+**Import CSV แล้วไม่พบ IP**
+ตรวจหัวคอลัมน์ `ip` หรือ `hostname,ip` ถ้าไม่มีหัว ระบบจะหาค่าที่เป็น IP ในคอลัมน์แรก
 
-## 14. การแก้ไขปัญหาที่พบบ่อย (Troubleshooting & FAQ)
+**Authentication failed / Timeout**
+ตรวจ ACL/Firewall ระหว่าง server กับอุปกรณ์ (TCP 22/23), ลองเพิ่ม `DEFAULT_TIMEOUT=45` และ `GLOBAL_DELAY_FACTOR=2` และเพิ่ม credential สำรองใน profile
 
-- **Q: ทำไมนำเข้าไฟล์ CSV แล้วแจ้งเตือนไม่พบ IP?**  
-  **A:** ตรวจสอบว่าไฟล์ CSV มีหัวตารางชื่อ `ip` หรือ `hostname,ip` หากไม่มีหัวตาราง ระบบจะมองหาค่าที่ตรงกับรูปแบบ IP Address ในคอลัมน์แรกให้โดยอัตโนมัติ
-- **Q: การเชื่อมต่อแจ้งเตือน Authentication Timeout?**  
-  **A:** ตรวจสอบ Firewall / ACL ระหว่าง Server กับ Switch ว่าอนุญาตพอร์ต SSH (22) หรือ Telnet (23) หรือไม่ และลองเพิ่ม `DEFAULT_TIMEOUT=45` ในไฟล์ `.env`
-- **Q: Output คำสั่งแสดงไม่ครบหรือค้างอยู่ที่ `--More--`?**  
-  **A:** ระบบมีคำสั่งสั่งปิด Paging อัตโนมัติ (`screen-length 0 temporary` หรือ `terminal length 0`) หากอุปกรณ์ของท่านเป็นรุ่นพิเศษ ให้ตรวจสอบว่า user มีสิทธิ์รันคำสั่งดังกล่าวหรือไม่
+**LLDP scan ได้สถานะ `NO_LLDP`**
+login ได้แต่ไม่มี neighbor — ตรวจว่าเปิด LLDP แล้ว (`lldp enable` / `lldp run`) และลำดับ command profile ถูก vendor
 
----
+**Output ค้างที่ `--More--`**
+ระบบส่ง `screen-length 0 temporary` / `terminal length 0` ให้อัตโนมัติ ถ้ายังค้างให้ตรวจสิทธิ์ user ว่ารันคำสั่งนี้ได้
 
-## สิทธิ์การใช้งานและการสนับสนุน (License & Support)
-ระบบนี้พัฒนาขึ้นเพื่อเพิ่มประสิทธิภาพและความแม่นยำในการทำงานของทีมปฏิบัติการเครือข่าย (Network Engineers / NOC / NetOps) หากต้องการสอบถามข้อมูลเพิ่มเติมหรือแจ้งปัญหา สามารถเปิด Issue หรือติดต่อทีมผู้ดูแลได้ทันที
+**Topology ว่างหลัง import**
+ไฟล์ต้อง export จาก LLDP Discovery (มี metadata `lldp-topology`) หรือเป็น draw.io ที่มี label hostname/IP บน shape
+
+**แก้ backend แล้วไม่เปลี่ยน**
+Uvicorn `--reload` ปกติจะโหลดเอง ถ้าไม่ขึ้น: `docker restart net-auto-backend`
