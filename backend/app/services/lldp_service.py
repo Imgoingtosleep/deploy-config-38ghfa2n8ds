@@ -131,6 +131,14 @@ class LldpService:
         The vendor is taken from the text itself, so a Huawei switch still reads a
         Cisco neighbor's model (and vice versa); the parser is only a fallback.
         """
+        # Model rules edited on the LLDP page win over the built-in regexes
+        from app.services.model_rule_service import ModelRuleService
+        custom = ModelRuleService.match_model(text or "")
+        return custom["model"] if custom else cls.builtin_model(text, parser)
+
+    @classmethod
+    def builtin_model(cls, text: str, parser: str = "") -> str:
+        """Model from the built-in Huawei / Cisco regexes only"""
         text = text or ""
         vendor = cls.detect_vendor(text, parser)
         if vendor == "cisco":
@@ -138,8 +146,15 @@ class LldpService:
         candidates = _MODEL_RE.findall(text)
         return max(candidates, key=len) if candidates else ""
 
+    @classmethod
+    def device_role(cls, model: str) -> str:
+        """A model rule with a role wins over the built-in router / switch guess"""
+        from app.services.model_rule_service import ModelRuleService
+        custom = ModelRuleService.match_role(model)
+        return custom["role"] if custom else cls.builtin_role(model)
+
     @staticmethod
-    def device_role(model: str) -> str:
+    def builtin_role(model: str) -> str:
         """Huawei AR / NE and Cisco ISR / ASR / C8000 / C1100 are routers, any other recognized model is a switch"""
         if not model:
             return "unknown"
@@ -279,6 +294,7 @@ class LldpService:
                     "remote_port": port_id.group(1).strip() if port_id else "N/A",
                     "remote_ip": remote_ip,
                     "remote_model": cls.extract_model(desc.group(1), "huawei") if desc else "",
+                    "remote_description": desc.group(1).strip() if desc else "",
                 })
         return results
 
@@ -317,6 +333,7 @@ class LldpService:
                 "remote_port": port_id.group(1).strip() if port_id else "N/A",
                 "remote_ip": remote_ip,
                 "remote_model": cls.extract_model(desc.group(1), "cisco") if desc else "",
+                "remote_description": desc.group(1).strip() if desc else "",
             })
         return results
 
@@ -347,6 +364,7 @@ class LldpService:
         status = "Success"
         error = None
         used_profile = ""
+        version_output = ""
 
         from app.services.command_profile_service import CommandProfileService
         cmd_profiles = CommandProfileService.resolve_ordered(command_profile_ids)
@@ -402,6 +420,7 @@ class LldpService:
                         )
                         raw_parts.append(f"<{sysname}> {cmds['version']}\n{ver_raw}")
                         model = cls.extract_model(ver_raw, parser)
+                        version_output = ver_raw
                         log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from '{cmds['version']}'")
                     except Exception as e:
                         log_lines.append(f"Step 1b: '{cmds.get('version')}' failed: {e}")
@@ -494,6 +513,8 @@ class LldpService:
                                 "Remote Model": d.get("remote_model", ""),
                                 "Remote Port": d["remote_port"],
                                 "Remote IP": d.get("remote_ip", ""),
+                                # Source of Remote Model, kept for 'Re-parse' after the model rules change
+                                "Remote Description": d.get("remote_description", ""),
                             })
 
                     # Reaching here means the device accepted this profile's commands
@@ -510,6 +531,8 @@ class LldpService:
             "hostname": sysname,
             "ip": local_ip,
             "model": model,
+            # Source of the model, kept for 'Re-parse' after the model rules change
+            "version_output": version_output,
             "command_profile": used_profile,
             "depth": depth,
             "status": status,
@@ -636,6 +659,59 @@ class LldpService:
             "topology": cls.build_topology(all_neighbors, hosts),
         }
 
+    @staticmethod
+    def version_from_raw(raw_output: str) -> str:
+        """
+        The 'display version' / 'show version' output inside a host's raw output
+        (results collected before version_output was stored). Sections look like
+        '<SW1> display version\n...'; the last one is from the profile that worked.
+        """
+        found = ""
+        section = re.compile(r"^<[^<>\r\n]*> (.+)$", re.MULTILINE)
+        heads = list(section.finditer(raw_output or ""))
+        for i, m in enumerate(heads):
+            if re.search(r"\bversion\b", m.group(1), re.I):
+                end = heads[i + 1].start() if i + 1 < len(heads) else len(raw_output)
+                body = raw_output[m.end():end]
+                # Drop the '===== Command profile: X =====' line that starts the next profile
+                found = re.split(r"^={5} Command profile: .*$", body, flags=re.MULTILINE)[0].strip()
+        return found
+
+    @classmethod
+    def reparse(cls, neighbors: List[Dict[str, Any]], hosts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Re-run model extraction and role guessing on an existing result with the
+        current model rules, without SSH. Hosts use their version output, neighbor
+        rows their LLDP System description; rows without a source keep their model.
+        """
+        changed_hosts = changed_rows = 0
+        for h in hosts:
+            text = h.get("version_output") or cls.version_from_raw(h.get("raw_output") or "")
+            if not text:
+                continue
+            model = cls.extract_model(text)
+            if model and model != h.get("model"):
+                h["model"] = model
+                changed_hosts += 1
+        host_models = {h.get("hostname"): h.get("model", "") for h in hosts if h.get("hostname")}
+        for n in neighbors:
+            before = (n.get("Local Model", ""), n.get("Remote Model", ""))
+            if host_models.get(n.get("Local Device")):
+                n["Local Model"] = host_models[n.get("Local Device")]
+            desc = n.get("Remote Description") or ""
+            if desc:
+                n["Remote Model"] = cls.extract_model(desc) or n.get("Remote Model", "")
+            if (n.get("Local Model", ""), n.get("Remote Model", "")) != before:
+                changed_rows += 1
+        cls.fill_remote_models(neighbors, hosts)
+        return {
+            "neighbors": neighbors,
+            "hosts": hosts,
+            "topology": cls.build_topology(neighbors, hosts),
+            "changed_hosts": changed_hosts,
+            "changed_rows": changed_rows,
+        }
+
     @classmethod
     def build_topology(cls, neighbors: List[Dict[str, Any]], hosts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
@@ -702,9 +778,10 @@ class LldpService:
             node["role"] = cls.device_role(node["model"])
             node["degree"] = degree.get(node["id"], 0)
 
-        role_order = {"router": 0, "switch": 1, "unknown": 2}
+        # Model rules can also give firewall / server / wireless ...
+        role_order = {"router": 0, "firewall": 1, "switch": 2, "wireless": 3, "server": 4, "unknown": 9}
         return {
-            "nodes": sorted(nodes.values(), key=lambda x: (role_order[x["role"]], -x["degree"], x["hostname"])),
+            "nodes": sorted(nodes.values(), key=lambda x: (role_order.get(x["role"], 5), -x["degree"], x["hostname"])),
             "links": list(links.values()),
         }
 

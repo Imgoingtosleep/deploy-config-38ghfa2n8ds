@@ -159,6 +159,12 @@ async def import_topology(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Cannot import {file.filename}: {e}")
 
 
+@router.post("/reparse")
+def reparse_lldp(request: LldpExportRequest):
+    """Re-read models / device types of an existing result with the current model rules (no SSH)"""
+    return LldpService.reparse(request.neighbors, request.hosts)
+
+
 @router.post("/export-excel")
 def export_lldp_excel(request: LldpExportRequest):
     """Build lldp_detailed_report.xlsx (LLDP_Inventory, Execution_Summary, Raw_Logs)"""

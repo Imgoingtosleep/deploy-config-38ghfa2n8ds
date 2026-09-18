@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.endpoints import (
     devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp,
-    command_profiles,
+    command_profiles, model_rules,
 )
 
 app = FastAPI(
@@ -36,6 +36,11 @@ app.include_router(
     command_profiles.router,
     prefix=f"{settings.API_V1_STR}/command-profiles",
     tags=["LLDP Command Profiles"],
+)
+app.include_router(
+    model_rules.router,
+    prefix=f"{settings.API_V1_STR}/model-rules",
+    tags=["LLDP Model Rules"],
 )
 
 

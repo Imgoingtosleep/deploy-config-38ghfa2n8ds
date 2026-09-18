@@ -434,6 +434,45 @@ export const reorderCommandProfiles = async (orderedIds) => {
   return response.data;
 };
 
+// --- LLDP Model Rules (custom regex that reads the model / device type) ---
+export const getModelRules = async () => {
+  const response = await apiClient.get('/model-rules');
+  return response.data;
+};
+
+export const createModelRule = async (rule) => {
+  const response = await apiClient.post('/model-rules', rule);
+  return response.data;
+};
+
+export const updateModelRule = async (id, rule) => {
+  const response = await apiClient.put(`/model-rules/${id}`, rule);
+  return response.data;
+};
+
+export const deleteModelRule = async (id) => {
+  const response = await apiClient.delete(`/model-rules/${id}`);
+  return response.data;
+};
+
+// Runs the real backend regex: { model, model_source, role, role_source, keyword_found, draft_matches }
+// `samples`: more texts to preview on, answered in the same order under `samples`
+export const testModelRules = async (text, rule = null, ruleId = null, samples = []) => {
+  const response = await apiClient.post('/model-rules/test', { text, rule, rule_id: ruleId, samples });
+  return response.data;
+};
+
+export const reorderModelRules = async (orderedIds) => {
+  const response = await apiClient.post('/model-rules/reorder', { ordered_ids: orderedIds });
+  return response.data;
+};
+
+// Re-read models / device types of a result with the current rules, no SSH
+export const reparseLldp = async (neighbors, hosts) => {
+  const response = await apiClient.post('/lldp/reparse', { neighbors, hosts }, { timeout: 0 });
+  return response.data;
+};
+
 // --- LLDP Discovery APIs ---
 export const discoverLldp = async (
   devices,

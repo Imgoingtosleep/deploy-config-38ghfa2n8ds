@@ -23,6 +23,8 @@ import {
   X,
   Check,
   FilePlus2,
+  FlaskConical,
+  RefreshCw,
 } from 'lucide-react';
 import {
   discoverLldp,
@@ -38,8 +40,10 @@ import {
   cancelLldpSubnetScan,
   exportLldpScanZip,
   importLldpTopology,
+  reparseLldp,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import ModelRulesModal from '../components/ModelRulesModal';
 import { neighborsFromDoc, hostsFromDoc } from '../components/topologyModel';
 import TcpWorkersControl from '../components/TcpWorkersControl';
 import './LldpDiscoveryPage.css';
@@ -115,6 +119,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const [editingCmd, setEditingCmd] = useState(null);
   const [cmdError, setCmdError] = useState('');
   const [cmdSaving, setCmdSaving] = useState(false);
+
+  // Model rules: custom regex for the model / device type, and re-reading a result with them
+  const [showRulesModal, setShowRulesModal] = useState(false); // false | true | { teach: sample }
+  const [reparsing, setReparsing] = useState(false);
+  const [reparseMsg, setReparseMsg] = useState('');
 
   // TCP workers & timeout state (persisted)
   const [enableTcpScan, setEnableTcpScan] = useState(() => {
@@ -269,6 +278,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const resetRun = () => {
     setRunning(true);
     setErrorMessage('');
+    setReparseMsg('');
     setReport(null);
     setExpandedHost(null);
   };
@@ -399,6 +409,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     if (!file) return;
     setImporting(true);
     setErrorMessage('');
+    setReparseMsg('');
     try {
       const data = await importLldpTopology(file);
       setReport(data);
@@ -433,6 +444,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     setSearch('');
     setView('topology');
     setErrorMessage('');
+    setReparseMsg('');
   };
 
   // Edits from the topology editor: devices / links rebuild the LLDP rows so the table and Excel follow
@@ -452,6 +464,63 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
       return next;
     });
   }, []);
+
+  // Collected results only: an imported / drawn diagram has no version output to re-read
+  const canReparse = Boolean(report && !report.imported && report.hosts?.length);
+
+  // Returns the summary line (also shown under the buttons), or null when nothing was done
+  const handleReparse = async () => {
+    if (!canReparse) return null;
+    if (report.edited && !window.confirm('Re-parse rebuilds the topology from the LLDP rows; edits made in the topology editor are replaced. Continue?')) return null;
+    setReparsing(true);
+    setErrorMessage('');
+    setReparseMsg('');
+    try {
+      const data = await reparseLldp(report.neighbors, report.hosts);
+      // Keep the device positions the diagram already had
+      const placed = Object.fromEntries((report.topology?.nodes || []).filter((n) => n.x != null).map((n) => [n.id, n]));
+      const nodes = data.topology.nodes.map((n) => (placed[n.id] ? { ...n, x: placed[n.id].x, y: placed[n.id].y } : n));
+      setReport((prev) => ({
+        ...prev,
+        neighbors: data.neighbors,
+        hosts: data.hosts,
+        topology: { ...data.topology, nodes },
+        edited: false,
+      }));
+      const msg = `Re-parsed with the current model rules: ${data.changed_hosts} host(s) and ${data.changed_rows} LLDP row(s) changed.`;
+      setReparseMsg(msg);
+      return msg;
+    } catch (err) {
+      setErrorMessage(errMsg(err, 'Re-parse failed'));
+      throw err;
+    } finally {
+      setReparsing(false);
+    }
+  };
+
+  // Texts from the current result to teach models on; devices without a model first
+  const ruleSamples = useMemo(() => {
+    if (!report || report.imported) return [];
+    const out = [];
+    (report.hosts || []).forEach((h) => {
+      if (h.version_output) out.push({ device: h.hostname, kind: 'version', text: h.version_output, model: h.model || '' });
+    });
+    const seen = new Set();
+    (report.neighbors || []).forEach((n) => {
+      const text = n['Remote Description'] || '';
+      const key = `${n['Remote Device']}\n${text}`;
+      if (!text || seen.has(key)) return;
+      seen.add(key);
+      out.push({ device: n['Remote Device'], kind: 'LLDP description', text, model: n['Remote Model'] || '' });
+    });
+    return out.sort((a, b) => Number(Boolean(a.model)) - Number(Boolean(b.model)));
+  }, [report]);
+
+  // Devices the topology will show as "Unknown model"
+  const unknownDevices = useMemo(
+    () => (report && !report.imported ? (report.topology?.nodes || []).filter((n) => !n.model).map((n) => n.hostname) : []),
+    [report]
+  );
 
   const handleExport = async () => {
     if (!report) return;
@@ -623,17 +692,27 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               Command Profile Priority
               {cmdPoolProfiles.length ? ` (${cmdPoolProfiles.map((p) => p.name).join(' → ')})` : ''}
             </span>
-            <button
-              className="lldp-btn-secondary lldp-btn-mini"
-              onClick={() => {
-                setCmdError('');
-                setEditingCmd(null);
-                setShowCmdModal(true);
-              }}
-            >
-              <Settings className="h-3.5 w-3.5" />
-              Manage ({(cmdProfiles || []).length})
-            </button>
+            <div className="lldp-prio-head-actions">
+              <button
+                className="lldp-btn-secondary lldp-btn-mini"
+                onClick={() => setShowRulesModal(true)}
+                title="Custom regex that reads the model and device type of new product lines"
+              >
+                <FlaskConical className="h-3.5 w-3.5" />
+                Model Rules
+              </button>
+              <button
+                className="lldp-btn-secondary lldp-btn-mini"
+                onClick={() => {
+                  setCmdError('');
+                  setEditingCmd(null);
+                  setShowCmdModal(true);
+                }}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                Manage ({(cmdProfiles || []).length})
+              </button>
+            </div>
           </div>
 
           <div className="lldp-prio-rows">
@@ -729,6 +808,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           </button>
           <button
             className="lldp-btn-secondary"
+            onClick={() => handleReparse().catch(() => {})}
+            disabled={!canReparse || running || reparsing}
+            title="Read the models / device types of this result again with the current Model Rules (no SSH)"
+          >
+            {reparsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Re-parse
+          </button>
+          <button
+            className="lldp-btn-secondary"
             onClick={() => importInputRef.current?.click()}
             disabled={running || importing}
             title="Load a topology exported from here (.drawio, .svg, .png, .zip) back into the LLDP table"
@@ -760,6 +848,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             <span>{errorMessage}</span>
           </div>
         )}
+        {reparseMsg && <span className="lldp-hint ok">{reparseMsg}</span>}
       </div>
 
       {/* Subnet scan progress + live log */}
@@ -833,6 +922,27 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               <span className="lldp-stat-value">{report.overall_time_seconds}s</span>
             </div>
           </div>
+          )}
+
+          {unknownDevices.length > 0 && (
+            <div className="lldp-rule-callout">
+              <AlertCircle className="h-4 w-4" />
+              <span>
+                <strong>{unknownDevices.length}</strong> device(s) have no model and show as <em>Unknown</em> in the
+                topology: {unknownDevices.slice(0, 5).join(', ')}
+                {unknownDevices.length > 5 ? ' …' : ''}
+                {ruleSamples.some((s) => !s.model) ? '' : ' (no version / LLDP description text was collected for them)'}
+              </span>
+              {ruleSamples.some((s) => !s.model) && (
+                <button
+                  className="lldp-btn-primary lldp-btn-mini"
+                  onClick={() => setShowRulesModal({ teach: ruleSamples.find((s) => !s.model) })}
+                >
+                  <FlaskConical className="h-3.5 w-3.5" />
+                  Teach model
+                </button>
+              )}
+            </div>
           )}
 
           <div className="lldp-toolbar">
@@ -977,6 +1087,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             </div>
           )}
         </div>
+      )}
+
+      {showRulesModal && (
+        <ModelRulesModal
+          onClose={() => setShowRulesModal(false)}
+          samples={ruleSamples}
+          teach={showRulesModal.teach || null}
+          onApply={canReparse ? handleReparse : null}
+        />
       )}
 
       {/* Manage command profiles: the CLI commands used to collect LLDP */}
