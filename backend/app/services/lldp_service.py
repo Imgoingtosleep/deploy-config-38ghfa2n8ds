@@ -58,12 +58,22 @@ _FAMILY_RE_CISCO = re.compile(r"\bCAT(\d{1,2})K(?![A-Za-z0-9])", re.I)
 _CISCO_ROUTER_RE = re.compile(r"^(?:ISR|ASR|CSR|CISCO\d{4}|C8\d{3}|C11\d{2}|C[1-3]900$)", re.I)
 
 
+# Netmiko driver to log in with for each command profile parser: an LLDP neighbor
+# has no device type of its own, so its driver is swept in command profile order
+PARSER_DRIVERS = {"huawei": "huawei", "cisco": "cisco_ios"}
+
+
 def cli_rejected(text: str) -> bool:
     """True when the CLI answered with a syntax error instead of running the command"""
     return bool(text) and bool(_CLI_REJECT_RE.search(text))
 
 
 class LldpService:
+    @classmethod
+    def name_key(cls, name: str) -> str:
+        """Device name as it is compared: domain dropped, case-insensitive"""
+        return cls.short_hostname(name).strip().lower()
+
     @staticmethod
     def short_hostname(name: str) -> str:
         """
@@ -371,10 +381,17 @@ class LldpService:
         device: DeviceCredentials,
         depth: int = 0,
         command_profile_ids: Optional[List[str]] = None,
+        driver: Optional[str] = None,
+        cmd_profiles: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         SSH to one device -> 'display lldp neighbor brief' -> loop every local
         interface that has a neighbor with 'display lldp neighbor interface <if>'.
+
+        driver:       netmiko device type to log in with, overriding the credential
+                      profile's (used by the driver sweep on discovered neighbors)
+        cmd_profiles: command profiles to run, already resolved (the sweep passes
+                      only the ones whose parser matches the driver)
         """
         start = time.time()
         local_ip = device.host or ""
@@ -389,7 +406,13 @@ class LldpService:
         version_output = ""
 
         from app.services.command_profile_service import CommandProfileService
-        cmd_profiles = CommandProfileService.resolve_ordered(command_profile_ids)
+        if cmd_profiles is None:
+            cmd_profiles = CommandProfileService.resolve_ordered(command_profile_ids)
+        if driver:
+            device.device_type = driver
+            device.force_device_type = True
+            log_lines.append(f"Step 0a: SSH driver [{driver}] from the command profile parser")
+        rejected_profiles = 0
 
         try:
             with NetmikoService.connect_with_fallback(device) as (net_connect, winning_cred, attempt_logs):
@@ -456,11 +479,13 @@ class LldpService:
 
                     # Wrong vendor for this profile: the CLI rejected the LLDP command,
                     # or it returned nothing and the version command was rejected too
-                    if not is_last_profile and (cli_rejected(brief_raw) or (not brief_rows and cli_rejected(ver_raw))):
-                        log_lines.append(
-                            f"Step 2b: [{cprof['name']}] commands rejected by this device, trying the next command profile"
-                        )
-                        continue
+                    if cli_rejected(brief_raw) or (not brief_rows and cli_rejected(ver_raw)):
+                        rejected_profiles += 1
+                        if not is_last_profile:
+                            log_lines.append(
+                                f"Step 2b: [{cprof['name']}] commands rejected by this device, trying the next command profile"
+                            )
+                            continue
 
                     # Step 3: per-interface detail for every port that has a neighbor
                     intf_order: List[str] = []
@@ -562,10 +587,54 @@ class LldpService:
             "error": error,
             "neighbors_found": len(neighbors),
             "neighbors": neighbors,
+            # Every command profile was rejected: this driver / vendor is the wrong one
+            "commands_rejected": bool(cmd_profiles) and rejected_profiles >= len(cmd_profiles),
             "log": "\n".join(log_lines),
             "raw_output": "\n\n".join(raw_parts),
             "execution_time_seconds": round(time.time() - start, 2),
         }
+
+    @classmethod
+    def collect_device_sweep(
+        cls,
+        device: DeviceCredentials,
+        depth: int = 0,
+        command_profile_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        A device found through LLDP has no device type of its own, so logging in
+        with the seed's driver fails on another vendor. Log in once per driver in
+        command profile order (C1's parser first) and stop at the first one whose
+        commands the device accepts; each driver is tried with its own profiles only.
+        """
+        from app.services.command_profile_service import CommandProfileService
+        profiles = CommandProfileService.resolve_ordered(command_profile_ids)
+
+        order: List[str] = []
+        by_driver: Dict[str, List[Dict[str, Any]]] = {}
+        for prof in profiles:
+            drv = PARSER_DRIVERS.get(prof["parser"], prof["parser"])
+            if drv not in by_driver:
+                by_driver[drv] = []
+                order.append(drv)
+            by_driver[drv].append(prof)
+
+        logs: List[str] = []
+        result: Optional[Dict[str, Any]] = None
+        for attempt, drv in enumerate(order, 1):
+            result = cls.collect_device(device, depth, driver=drv, cmd_profiles=by_driver[drv])
+            logs.append(result["log"])
+            # Logged in and the commands were understood: this is the right vendor
+            if result["success"] and not result.get("commands_rejected"):
+                break
+            if attempt < len(order):
+                logs.append(
+                    f"--- Driver [{drv}] {'rejected the commands' if result['success'] else 'could not be used'}, "
+                    f"retrying as [{order[attempt]}] ---"
+                )
+        if result is not None and len(logs) > 1:
+            result["log"] = "\n".join(logs)
+        return result if result is not None else cls.collect_device(device, depth, command_profile_ids)
 
     @classmethod
     def discover(
@@ -589,12 +658,17 @@ class LldpService:
         visited_ips: Set[str] = set()
         visited_names: Set[str] = set()
         hosts: List[Dict[str, Any]] = []
+        # Log lines about the queue itself, appended to the first host of each wave
+        queue_log: List[str] = []
 
         wave = []
         for d in devices:
             if d.host and d.host not in visited_ips:
                 visited_ips.add(d.host)
                 wave.append(d)
+            # A fleet device is never re-visited through LLDP, whatever name it answers with
+            if d.name:
+                visited_names.add(cls.name_key(d.name))
 
         depth = 0
         while wave:
@@ -635,9 +709,12 @@ class LldpService:
                 alive_indices = list(range(len(wave)))
 
             if alive_indices:
+                # Seeds keep the device type the fleet gives them; neighbors found by
+                # LLDP have none, so their driver is swept in command profile order
+                collect = cls.collect_device if depth == 0 else cls.collect_device_sweep
                 with ThreadPoolExecutor(max_workers=min(workers, len(alive_indices))) as executor:
                     futures = {
-                        executor.submit(cls.collect_device, wave[i], depth, command_profile_ids): i
+                        executor.submit(collect, wave[i], depth, command_profile_ids): i
                         for i in alive_indices
                     }
                     for fut in as_completed(futures):
@@ -647,25 +724,51 @@ class LldpService:
             for dev, res in zip(wave, results):
                 hosts.append(res)
                 if res["success"]:
-                    visited_names.add(res["hostname"])
+                    visited_names.add(cls.name_key(res["hostname"]))
 
             if recursive and depth < max_depth:
+                # The whole wave is finished first, so every management IP it learned is
+                # known before anything is queued: fleet devices and IPs already SSH'd
+                # are dropped here, and the rest are SSH'd as the next wave.
+                seen_here: Set[str] = set()
+                total = skipped_fleet = skipped_dup = no_ip = 0
                 for dev, res in zip(wave, results):
                     for n in res["neighbors"]:
-                        ip = n.get("Remote IP")
-                        if not ip or ip in visited_ips or n["Remote Device"] in visited_names:
+                        total += 1
+                        ip = (n.get("Remote IP") or "").strip()
+                        name_key = cls.name_key(n.get("Remote Device") or "")
+                        if not ip:
+                            no_ip += 1
                             continue
+                        # seen_here first, so a neighbor both sides report is counted
+                        # as a duplicate rather than as an already-visited device
+                        if ip in seen_here:
+                            skipped_dup += 1
+                            continue
+                        if ip in visited_ips or name_key in visited_names:
+                            skipped_fleet += 1
+                            continue
+                        seen_here.add(ip)
                         visited_ips.add(ip)
-                        visited_names.add(n["Remote Device"])
+                        if name_key:
+                            visited_names.add(name_key)
                         next_wave.append(dev.copy(update={
                             "id": None,
                             "host": ip,
                             "name": n["Remote Device"],
                             "active_credential_name": None,
                         }))
+                queue_log.append(
+                    f"Depth {depth} -> {depth + 1}: {total} neighbor row(s) seen, {len(next_wave)} new IP(s) queued "
+                    f"({skipped_fleet} already in the fleet or visited, {skipped_dup} duplicate, {no_ip} without a management IP)"
+                )
 
             wave = next_wave
             depth += 1
+            # Keep the queue decision visible in the logs of the wave that produced it
+            if queue_log and hosts:
+                hosts[-1]["log"] = f"{hosts[-1]['log']}\n{queue_log[-1]}"
+                queue_log.clear()
 
         all_neighbors = [n for h in hosts for n in h["neighbors"]]
         cls.fill_remote_models(all_neighbors, hosts)

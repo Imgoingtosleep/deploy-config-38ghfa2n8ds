@@ -322,7 +322,9 @@ class NetmikoService:
             attempt_device.username = cred["username"]
             attempt_device.password = cred["password"]
             attempt_device.secret = cred.get("secret")
-            if cred.get("device_type") and cred["device_type"] != "autodetect":
+            # force_device_type: the caller already decided the driver (LLDP sweeps the
+            # command profiles' parsers on a neighbor), so the profile must not override it
+            if cred.get("device_type") and cred["device_type"] != "autodetect" and not device.force_device_type:
                 attempt_device.device_type = cred["device_type"]
             if cred.get("port"):
                 attempt_device.port = cred["port"]

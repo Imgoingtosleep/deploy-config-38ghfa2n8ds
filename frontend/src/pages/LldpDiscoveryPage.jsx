@@ -798,7 +798,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           <span className="lldp-hint">
             Commands only — the SSH login comes from the credential profile above. C1's commands run first on the open
             session; if the device rejects them (Huawei <code>display</code> on a Cisco), C2's commands are run on the
-            same session instead, with no second login.
+            same session instead, with no second login. Devices found by recursive discovery have no device type of
+            their own, so they are logged in with C1's SSH driver first and tried again with C2's when the commands
+            are rejected.
           </span>
         </div>
 
