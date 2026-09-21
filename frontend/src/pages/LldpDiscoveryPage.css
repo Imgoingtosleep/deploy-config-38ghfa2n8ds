@@ -1820,3 +1820,240 @@
     flex-basis: auto;
   }
 }
+
+/* Topology editor: find, zoom and multi-selection overlays */
+.topo-palette-sep.vertical {
+  width: 1px;
+  height: 1.2rem;
+  margin: 0 0.15rem;
+}
+
+.topo-search {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.topo-search > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.topo-search > button:hover {
+  background: rgba(99, 102, 241, 0.15);
+  color: #e0e7ff;
+}
+
+.topo-search input {
+  width: 14rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  background: #020617;
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.topo-search input:focus {
+  border-color: #6366f1;
+}
+
+.topo-search-hits {
+  position: absolute;
+  top: 2.6rem;
+  right: 0.3rem;
+  width: 17rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.3rem;
+  background: rgba(15, 23, 42, 0.98);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.topo-search-hits button {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.35rem;
+  border: none;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.topo-search-hits button:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.topo-search-hits .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topo-search-hits .muted {
+  color: #64748b;
+  margin-left: auto;
+  font-family: ui-monospace, monospace;
+}
+
+.topo-search-hits .other {
+  flex: 0 0 auto;
+  color: #fbbf24;
+  font-size: 0.65rem;
+}
+
+.topo-zoombar {
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.topo-zoombar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.topo-zoombar button:hover {
+  background: rgba(99, 102, 241, 0.15);
+  color: #e0e7ff;
+}
+
+.topo-zoombar .pct {
+  padding: 0 0.35rem;
+  font-family: ui-monospace, monospace;
+}
+
+.topo-selbar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 0.6rem;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.3rem 0.45rem;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid #fbbf24;
+  border-radius: 0.5rem;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+.topo-selbar-count {
+  margin-right: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fbbf24;
+}
+
+.topo-selbar button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.topo-selbar button:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.2);
+  color: #e0e7ff;
+}
+
+.topo-selbar button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Legend chips double as a device-type filter */
+.lldp-topo-legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.lldp-topo-legend-chip:hover {
+  border-color: #475569;
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.lldp-topo-legend-chip.off {
+  color: #64748b;
+  text-decoration: line-through;
+}
+
+.lldp-topo-legend-chip.off i {
+  opacity: 0.35;
+}
+
+.lldp-topo-legend-chip.show-all {
+  color: #a5b4fc;
+  border-color: #4338ca;
+  text-decoration: none;
+}
+
+.topo-hint-more {
+  color: #a5b4fc;
+  text-decoration: underline dotted;
+  cursor: help;
+}

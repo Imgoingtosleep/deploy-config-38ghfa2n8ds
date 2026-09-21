@@ -20,6 +20,22 @@ import {
   Check,
   X,
   Upload,
+  Search,
+  ZoomIn,
+  ZoomOut,
+  Copy,
+  CopyPlus,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignCenterHorizontal,
+  AlignEndHorizontal,
+  AlignHorizontalDistributeCenter,
+  AlignVerticalDistributeCenter,
+  LayoutGrid,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { splitTopology } from './topologyGroups';
 import { groupLinks, computeForceLayout, computeHierarchicalLayout, FORCE_MAX_NODES } from './topologyLayout';
@@ -61,7 +77,7 @@ const HISTORY_LIMIT = 100;
 const MANUAL_LINK = '#2dd4bf';
 
 const TOOLS = [
-  { id: 'select', key: 'v', icon: MousePointer2, label: 'Select / move', hint: 'Drag devices, zones and notes. Double-click a device to edit its interface connections.' },
+  { id: 'select', key: 'v', icon: MousePointer2, label: 'Select / move', hint: 'Drag to move, double-click to edit.' },
   { id: 'device', key: 'n', icon: PlusSquare, label: 'Add device', hint: 'Click an empty spot on the canvas to add a device.' },
   { id: 'connect', key: 'c', icon: Cable, label: 'Connect', hint: 'Drag from one device to another, then choose which interfaces are connected.' },
   { id: 'flow', key: 't', icon: Waypoints, label: 'Traffic flow', hint: 'Click devices in the order the traffic passes. Enter or double-click the last device to finish, Backspace removes the last hop.' },
@@ -200,6 +216,17 @@ export default function LldpTopology({
   const [width, setWidth] = useState(1000);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [selected, setSelected] = useState(null);
+  // Every device selected together; `selected` is the single one the panel describes
+  const [multi, setMulti] = useState(NONE);
+  const [marquee, setMarquee] = useState(null);
+  // Device types hidden from this picture (drawing and export), never from the document
+  const [hiddenRoles, setHiddenRoles] = useState(NONE);
+  const [guides, setGuides] = useState(null);
+  const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [focusId, setFocusId] = useState(null);
+  const clipboardRef = useRef([]);
+  const searchRef = useRef(null);
   const [selItem, setSelItem] = useState(null);
   const [showPorts, setShowPorts] = useState(false);
   const [showFlows, setShowFlows] = useState(true);
@@ -225,6 +252,7 @@ export default function LldpTopology({
     setAnchorId(null);
     setPinned([]);
     setSelected(null);
+    setMulti(NONE);
     setSelItem(null);
     setFlowDraft(null);
     setReinit((r) => r + 1);
@@ -277,10 +305,17 @@ export default function LldpTopology({
   const group = (anchorId && groups.find((g) => g.topology.nodes.some((n) => n.id === anchorId))) || groups[0] || null;
   const docIds = useMemo(() => new Set(doc.nodes.map((n) => n.id)), [doc.nodes]);
   const viewIds = useMemo(() => {
-    if (groups.length <= 1) return docIds;
     // Devices added in this picture stay visible here until they are connected
-    return new Set([...(group?.topology.nodes.map((n) => n.id) || []), ...pinned.filter((id) => docIds.has(id))]);
-  }, [groups, group, pinned, docIds]);
+    const base =
+      groups.length <= 1
+        ? docIds
+        : new Set([...(group?.topology.nodes.map((n) => n.id) || []), ...pinned.filter((id) => docIds.has(id))]);
+    if (!hiddenRoles.length) return base;
+    return new Set(doc.nodes.filter((n) => base.has(n.id) && !hiddenRoles.includes(n.role || 'unknown')).map((n) => n.id));
+  }, [groups, group, pinned, docIds, hiddenRoles, doc.nodes]);
+
+  const toggleRole = (role) =>
+    setHiddenRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
 
   const nodes = useMemo(() => doc.nodes.filter((n) => viewIds.has(n.id)), [doc.nodes, viewIds]);
   const links = useMemo(() => doc.links.filter((l) => viewIds.has(l.source) && viewIds.has(l.target)), [doc.links, viewIds]);
@@ -514,9 +549,51 @@ export default function LldpTopology({
     return best;
   };
 
+  /**
+   * Lines the dragged device up with the ones already placed: returns the snapped
+   * point plus the guide lines to draw, or null coordinates when nothing lines up.
+   */
+  const alignGuides = (raw, movingIds) => {
+    const tol = 8 / view.scale;
+    const moving = new Set(movingIds);
+    let gx = null;
+    let gy = null;
+    let bestX = tol;
+    let bestY = tol;
+    nodes.forEach((n) => {
+      if (moving.has(n.id)) return;
+      const q = positions[n.id];
+      if (!q) return;
+      const dx = Math.abs(q.x - raw.x);
+      const dy = Math.abs(q.y - raw.y);
+      if (dx < bestX) {
+        bestX = dx;
+        gx = q.x;
+      }
+      if (dy < bestY) {
+        bestY = dy;
+        gy = q.y;
+      }
+    });
+    return { x: gx, y: gy };
+  };
+
   const clearSelection = () => {
     setSelected(null);
+    setMulti(NONE);
     setSelItem(null);
+  };
+
+  /** Select these devices; a single one also fills the details panel */
+  const selectNodes = (ids) => {
+    setMulti(ids);
+    setSelected(ids.length === 1 ? ids[0] : null);
+    setSelItem(null);
+  };
+
+  const toggleInSelection = (id) => {
+    const next = multi.includes(id) ? multi.filter((x) => x !== id) : [...multi, id];
+    selectNodes(next);
   };
 
   const startPan = (e, hit) => {
@@ -569,12 +646,17 @@ export default function LldpTopology({
     if (hit.kind === 'node') {
       setSelItem(null);
       if (dbl) {
-        setSelected(hit.id);
+        selectNodes([hit.id]);
         openNode(hit.id);
-      } else setSelected((s) => (s === hit.id ? null : hit.id));
+      } else if (selected === hit.id && multi.length === 1) {
+        clearSelection();
+      } else {
+        selectNodes([hit.id]);
+      }
       return;
     }
     setSelected(null);
+    setMulti(NONE);
     setSelItem(hit);
     if (!dbl) return;
     if (hit.kind === 'link') openNode(hit.source);
@@ -601,6 +683,14 @@ export default function LldpTopology({
       setCursor(p);
       return;
     }
+    // Shift + drag on empty canvas picks every device inside the box
+    if (activeTool === 'select' && e.shiftKey) {
+      capture(e);
+      const w = toWorld(e);
+      dragRef.current = { type: 'marquee', x0: w.x, y0: w.y, add: multi.length > 0, moved: false, startX: e.clientX, startY: e.clientY };
+      setMarquee({ x0: w.x, y0: w.y, x1: w.x, y1: w.y });
+      return;
+    }
     startPan(e, { kind: 'bg' });
   };
 
@@ -625,6 +715,10 @@ export default function LldpTopology({
       lastClickRef.current = { kind: 'node', id, t: now };
       return;
     }
+    if (activeTool === 'select' && e.shiftKey) {
+      toggleInSelection(id);
+      return;
+    }
     capture(e);
     if (activeTool === 'connect') {
       dragRef.current = { type: 'connect', from: id, moved: false, startX: e.clientX, startY: e.clientY };
@@ -633,7 +727,9 @@ export default function LldpTopology({
     }
     const p = positions[id];
     const w = toWorld(e);
-    dragRef.current = { type: 'node', id, startX: e.clientX, startY: e.clientY, moved: false, dx: w.x - p.x, dy: w.y - p.y, before: positions };
+    // Dragging a device that is part of a multi-selection moves the whole selection
+    const ids = multi.length > 1 && multi.includes(id) ? multi : null;
+    dragRef.current = { type: 'node', id, ids, startX: e.clientX, startY: e.clientY, moved: false, dx: w.x - p.x, dy: w.y - p.y, before: positions };
   };
 
   const onItemPointerDown = (e, hit) => {
@@ -676,10 +772,32 @@ export default function LldpTopology({
       setCursor(d.type === 'zone-draw' ? snap(toWorld(e)) : toWorld(e));
       return;
     }
+    if (d.type === 'marquee') {
+      const w = toWorld(e);
+      setMarquee({ x0: d.x0, y0: d.y0, x1: w.x, y1: w.y });
+      return;
+    }
     if (!d.moved) return;
     if (d.type === 'node') {
       const w = toWorld(e);
-      setPositions((p) => ({ ...p, [d.id]: snap({ x: w.x - d.dx, y: w.y - d.dy }) }));
+      const raw = { x: w.x - d.dx, y: w.y - d.dy };
+      // Guides win over the grid: lining up with a neighbour is what the user aims at
+      const g = editing ? alignGuides(raw, d.ids || [d.id]) : { x: null, y: null };
+      const np = { x: g.x == null ? snapV(raw.x) : g.x, y: g.y == null ? snapV(raw.y) : g.y };
+      setGuides(g.x == null && g.y == null ? null : g);
+      if (d.ids) {
+        const from = d.before[d.id];
+        const ddx = np.x - from.x;
+        const ddy = np.y - from.y;
+        const next = { ...d.before };
+        d.ids.forEach((id) => {
+          const o = d.before[id];
+          if (o) next[id] = { x: o.x + ddx, y: o.y + ddy };
+        });
+        setPositions(next);
+      } else {
+        setPositions((p) => ({ ...p, [d.id]: np }));
+      }
     } else if (d.type === 'pan') {
       setView((v) => ({ ...v, x: d.vx + e.clientX - d.startX, y: d.vy + e.clientY - d.startY }));
     } else {
@@ -697,6 +815,7 @@ export default function LldpTopology({
   const onPointerUp = (e) => {
     const d = dragRef.current;
     dragRef.current = null;
+    setGuides(null);
     if (!d) return;
     if (d.type === 'node') {
       if (d.moved) commit(doc, positions, false, { doc, positions: d.before });
@@ -706,6 +825,21 @@ export default function LldpTopology({
       const target = nodeAt(toWorld(e), d.from);
       if (target) openNode(d.from, target);
       else if (!d.moved) clickOn({ kind: 'node', id: d.from });
+    } else if (d.type === 'marquee') {
+      const box = marquee;
+      setMarquee(null);
+      if (!box) return;
+      const minX = Math.min(box.x0, box.x1);
+      const maxX = Math.max(box.x0, box.x1);
+      const minY = Math.min(box.y0, box.y1);
+      const maxY = Math.max(box.y0, box.y1);
+      const inside = nodes
+        .filter((n) => {
+          const q = positions[n.id];
+          return q && q.x >= minX && q.x <= maxX && q.y >= minY && q.y <= maxY;
+        })
+        .map((n) => n.id);
+      selectNodes(d.add ? [...new Set([...multi, ...inside])] : inside);
     } else if (d.type === 'zone-draw') {
       setCursor(null);
       const p = snap(toWorld(e));
@@ -733,9 +867,179 @@ export default function LldpTopology({
     }
   };
 
+  // ------------------------------------------------------------ selection actions
+  /** Line the selected devices up on one edge or their shared centre */
+  const alignNodes = (mode) => {
+    const ids = multi.filter((id) => positions[id]);
+    if (ids.length < 2) return;
+    const xs = ids.map((id) => positions[id].x);
+    const ys = ids.map((id) => positions[id].y);
+    const target = {
+      left: Math.min(...xs),
+      right: Math.max(...xs),
+      centerX: (Math.min(...xs) + Math.max(...xs)) / 2,
+      top: Math.min(...ys),
+      bottom: Math.max(...ys),
+      centerY: (Math.min(...ys) + Math.max(...ys)) / 2,
+    };
+    const next = { ...positions };
+    ids.forEach((id) => {
+      const p = positions[id];
+      if (mode === 'left') next[id] = { ...p, x: target.left };
+      else if (mode === 'right') next[id] = { ...p, x: target.right };
+      else if (mode === 'centerX') next[id] = { ...p, x: target.centerX };
+      else if (mode === 'top') next[id] = { ...p, y: target.top };
+      else if (mode === 'bottom') next[id] = { ...p, y: target.bottom };
+      else if (mode === 'centerY') next[id] = { ...p, y: target.centerY };
+    });
+    commit(doc, next, false);
+  };
+
+  /** Equal gaps between the selected devices along one axis */
+  const distributeNodes = (axis) => {
+    const ids = multi.filter((id) => positions[id]);
+    if (ids.length < 3) return;
+    const key = axis === 'x' ? 'x' : 'y';
+    const sorted = [...ids].sort((a, b) => positions[a][key] - positions[b][key]);
+    const first = positions[sorted[0]][key];
+    const last = positions[sorted[sorted.length - 1]][key];
+    const step = (last - first) / (sorted.length - 1);
+    const next = { ...positions };
+    sorted.forEach((id, i) => {
+      next[id] = { ...positions[id], [key]: first + step * i };
+    });
+    commit(doc, next, false);
+  };
+
+  /** Copies of the given devices, offset so they do not sit on the originals */
+  const cloneNodes = (items, offset = 40) => {
+    if (!items.length) return;
+    let next = doc;
+    const pos = { ...positions };
+    const created = [];
+    items.forEach(({ node, pos: p }) => {
+      const hostname = uniqueHostname(next, node.hostname);
+      next = addNode(next, { hostname, ip: '', model: node.model, role: node.role });
+      pos[hostname] = { x: (p?.x || 0) + offset, y: (p?.y || 0) + offset };
+      created.push(hostname);
+    });
+    setPinned((prev) => [...prev, ...created]);
+    commit(next, pos, true);
+    selectNodes(created);
+  };
+
+  /** Re-run the layout on the selection only, keeping it where it already sits */
+  const arrangeSelection = () => {
+    const ids = multi.filter((id) => positions[id]);
+    if (ids.length < 3) return;
+    const set = new Set(ids);
+    const subNodes = nodes.filter((n) => set.has(n.id));
+    const subPairs = pairs.filter((pr) => set.has(pr.source) && set.has(pr.target));
+    const laid =
+      layoutMode === 'force' && subNodes.length <= FORCE_MAX_NODES
+        ? computeForceLayout(subNodes, subPairs)
+        : computeHierarchicalLayout(subNodes, subPairs);
+    const avg = (pick) => ids.reduce((sum, id) => sum + pick(id), 0) / ids.length;
+    const dx = avg((id) => positions[id].x) - avg((id) => laid[id]?.x || 0);
+    const dy = avg((id) => positions[id].y) - avg((id) => laid[id]?.y || 0);
+    const next = { ...positions };
+    ids.forEach((id) => {
+      if (laid[id]) next[id] = { x: laid[id].x + dx, y: laid[id].y + dy };
+    });
+    commit(doc, next, false);
+  };
+
+  const selectedIds = () => (multi.length ? multi : selected ? [selected] : []);
+
+  const duplicateSelection = () => {
+    const ids = selectedIds();
+    cloneNodes(ids.map((id) => ({ node: nodeById[id], pos: positions[id] })).filter((x) => x.node));
+  };
+
+  const copySelection = () => {
+    const ids = selectedIds();
+    clipboardRef.current = ids.map((id) => ({ node: { ...nodeById[id] }, pos: { ...(positions[id] || { x: 0, y: 0 }) } })).filter((x) => x.node.id);
+    if (clipboardRef.current.length) {
+      setExportMsg({ type: 'info', text: `${clipboardRef.current.length} device(s) copied - Ctrl+V pastes a copy` });
+    }
+  };
+
+  const pasteClipboard = () => cloneNodes(clipboardRef.current);
+
+  // ------------------------------------------------------------ zoom / find
+  const zoomBy = (factor) =>
+    setView((v) => {
+      const scale = Math.min(4, Math.max(0.02, v.scale * factor));
+      const ratio = scale / v.scale;
+      const cx = width / 2;
+      const cy = HEIGHT / 2;
+      return { scale, x: cx - (cx - v.x) * ratio, y: cy - (cy - v.y) * ratio };
+    });
+
+  const zoomReset = () =>
+    setView((v) => {
+      const ratio = 1 / v.scale;
+      const cx = width / 2;
+      const cy = HEIGHT / 2;
+      return { scale: 1, x: cx - (cx - v.x) * ratio, y: cy - (cy - v.y) * ratio };
+    });
+
+  /** Fit the whole picture, or only the selected devices when there are several */
+  const fitSelection = () => {
+    const ids = multi.filter((id) => positions[id]);
+    if (ids.length < 2) {
+      fitTo(positions);
+      return;
+    }
+    setView(fitView(Object.fromEntries(ids.map((id) => [id, positions[id]])), wrapRef.current?.clientWidth || width));
+  };
+
+  const searchHits = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return NONE;
+    return doc.nodes
+      .filter((n) => `${n.hostname} ${n.ip || ''} ${n.model || ''}`.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [query, doc.nodes]);
+
+  /** Select a device and bring it to the middle, switching picture when needed */
+  const goToNode = (id) => {
+    if (!viewIds.has(id)) setAnchorId(id);
+    selectNodes([id]);
+    setFocusId(id);
+  };
+
+  // Switching picture leaves devices selected that are no longer drawn
+  useEffect(() => {
+    if (multi.length && multi.some((id) => !viewIds.has(id))) {
+      const kept = multi.filter((id) => viewIds.has(id));
+      setMulti(kept);
+      setSelected((cur) => (cur && viewIds.has(cur) ? cur : kept.length === 1 ? kept[0] : null));
+    }
+  }, [viewIds]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Centring waits for the position, which a picture switch only fills in afterwards
+  useEffect(() => {
+    if (!focusId) return;
+    const p = positions[focusId];
+    if (!p) return;
+    setView((v) => {
+      const scale = Math.max(v.scale, 1);
+      return { scale, x: width / 2 - p.x * scale, y: HEIGHT / 2 - p.y * scale };
+    });
+    setFocusId(null);
+  }, [focusId, positions, width]);
+
   // ------------------------------------------------------------ keyboard
   const deleteSelection = () => {
-    if (selected) deleteHit({ kind: 'node', id: selected });
+    if (multi.length > 1) {
+      let next = doc;
+      multi.forEach((id) => {
+        next = deleteNode(next, id);
+      });
+      commit(next);
+      clearSelection();
+    } else if (selected) deleteHit({ kind: 'node', id: selected });
     else if (selItem) deleteHit(selItem);
   };
 
@@ -758,10 +1062,37 @@ export default function LldpTopology({
         redo();
         return;
       }
+      if (mod && key === 'f') {
+        e.preventDefault();
+        toggleSearch();
+        return;
+      }
+      if (mod && key === 'a') {
+        e.preventDefault();
+        selectNodes(nodes.map((n) => n.id));
+        return;
+      }
+      if (mod && key === 'd') {
+        e.preventDefault();
+        duplicateSelection();
+        return;
+      }
+      if (mod && key === 'c') {
+        e.preventDefault();
+        copySelection();
+        return;
+      }
+      if (mod && key === 'v') {
+        e.preventDefault();
+        pasteClipboard();
+        return;
+      }
       if (mod || e.altKey) return;
       if (e.key === 'Escape') {
         setFlowDraft(null);
         setCursor(null);
+        setMarquee(null);
+        setSearchOpen(false);
         clearSelection();
         return;
       }
@@ -783,6 +1114,35 @@ export default function LldpTopology({
       }
       const t = TOOLS.find((x) => x.key === key);
       if (t) chooseTool(t.id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const openSearch = () => {
+    setSearchOpen(true);
+    setTimeout(() => searchRef.current?.focus(), 0);
+  };
+
+  /** Ctrl+F opens the box, and closes it again when it is already open */
+  const toggleSearch = () => {
+    if (searchOpen) {
+      setSearchOpen(false);
+      searchRef.current?.blur();
+    } else openSearch();
+  };
+
+  // Ctrl+F works while only viewing too, where the editing shortcuts are off
+  useEffect(() => {
+    if (editing) return undefined;
+    const onKey = (e) => {
+      if (dialog) return;
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (['input', 'textarea', 'select'].includes(tag) || e.target?.isContentEditable) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        toggleSearch();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -874,6 +1234,13 @@ export default function LldpTopology({
 
   // ------------------------------------------------------------ derived render data
   const roleCounts = useMemo(() => nodes.reduce((acc, d) => ({ ...acc, [d.role]: (acc[d.role] || 0) + 1 }), {}), [nodes]);
+  const hiddenCounts = useMemo(
+    () =>
+      hiddenRoles.length
+        ? doc.nodes.reduce((acc, d) => (hiddenRoles.includes(d.role) ? { ...acc, [d.role]: (acc[d.role] || 0) + 1 } : acc), {})
+        : {},
+    [doc.nodes, hiddenRoles]
+  );
 
   const selectedNode = selected ? nodeById[selected] : null;
   const selectedLinks = useMemo(() => {
@@ -894,7 +1261,7 @@ export default function LldpTopology({
     [showFlows, flows, positions, viewIds]
   );
 
-  const isDim = (id) => selected && id !== selected && !adjacency[selected]?.has(id);
+  const isDim = (id) => multi.length <= 1 && selected && id !== selected && !adjacency[selected]?.has(id);
   const isSel = (kind, id) => selItem && selItem.kind === kind && selItem.id === id;
   const hasNodes = nodes.length > 0;
   const forceAllowed = nodes.length <= FORCE_MAX_NODES;
@@ -929,13 +1296,29 @@ export default function LldpTopology({
       <div className="lldp-topo-toolbar">
         <div className="lldp-topo-legend">
           {Object.entries(ROLE_STYLE)
-            .filter(([role]) => roleCounts[role] || ['router', 'switch', 'unknown'].includes(role))
-            .map(([role, s]) => (
-              <span key={role}>
-                <i style={{ background: s.fill, borderColor: s.stroke }} />
-                {s.label}: {roleCounts[role] || 0}
-              </span>
-            ))}
+            .filter(([role]) => roleCounts[role] || hiddenCounts[role] || ['router', 'switch', 'unknown'].includes(role))
+            .map(([role, s]) => {
+              const off = hiddenRoles.includes(role);
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  className={`lldp-topo-legend-chip${off ? ' off' : ''}`}
+                  onClick={() => toggleRole(role)}
+                  title={off ? `Show ${s.label} again` : `Hide ${s.label} from this picture and its export`}
+                >
+                  <i style={{ background: s.fill, borderColor: s.stroke }} />
+                  {s.label}: {off ? hiddenCounts[role] || 0 : roleCounts[role] || 0}
+                  {off ? <EyeOff className="h-3 w-3" /> : null}
+                </button>
+              );
+            })}
+          {hiddenRoles.length > 0 && (
+            <button type="button" className="lldp-topo-legend-chip show-all" onClick={() => setHiddenRoles(NONE)}>
+              <Eye className="h-3 w-3" />
+              Show all
+            </button>
+          )}
           <span>Links: {links.length}</span>
           <span>
             <i style={{ background: 'transparent', borderColor: MANUAL_LINK, borderRadius: 0, height: 0, borderWidth: '2px 0 0' }} />
@@ -1059,6 +1442,112 @@ export default function LldpTopology({
         }}
       >
         {dropActive && <div className="topo-drop">Drop to add this file to the diagram</div>}
+
+        {hasNodes && (
+          <div className={`topo-search${searchOpen ? ' open' : ''}`}>
+            <button onClick={toggleSearch} title="Find a device (Ctrl+F toggles)">
+              <Search className="h-4 w-4" />
+            </button>
+            {searchOpen && (
+              <>
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                      e.preventDefault();
+                      setSearchOpen(false);
+                      e.target.blur();
+                      return;
+                    }
+                    if (e.key === 'Enter' && searchHits.length) goToNode(searchHits[0].id);
+                    if (e.key === 'Escape') setSearchOpen(false);
+                  }}
+                  placeholder="Hostname, IP or model"
+                  spellCheck={false}
+                />
+                {query.trim() && (
+                  <div className="topo-search-hits">
+                    {searchHits.length === 0 && <span className="muted">No device matches</span>}
+                    {searchHits.map((n) => (
+                      <button key={n.id} onClick={() => goToNode(n.id)}>
+                        <svg width={18} height={18} viewBox="-22 -22 44 44">
+                          <NodeIcon role={n.role} />
+                        </svg>
+                        <span className="name">{n.hostname}</span>
+                        <span className="muted">{n.ip || n.model || ''}</span>
+                        {!viewIds.has(n.id) && <span className="other">other picture</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {hasNodes && (
+          <div className="topo-zoombar">
+            <button onClick={() => zoomBy(1 / 1.25)} title="Zoom out">
+              <ZoomOut className="h-4 w-4" />
+            </button>
+            <button className="pct" onClick={zoomReset} title="Reset zoom to 100%">
+              {Math.round(view.scale * 100)}%
+            </button>
+            <button onClick={() => zoomBy(1.25)} title="Zoom in">
+              <ZoomIn className="h-4 w-4" />
+            </button>
+            <button onClick={fitSelection} title={multi.length > 1 ? 'Fit the selected devices' : 'Fit the whole picture'}>
+              <Maximize2 className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {editing && multi.length > 1 && (
+          <div className="topo-selbar">
+            <span className="topo-selbar-count">{multi.length} selected</span>
+            <span className="topo-palette-sep vertical" />
+            <button onClick={() => alignNodes('left')} title="Align left edges">
+              <AlignStartVertical className="h-4 w-4" />
+            </button>
+            <button onClick={() => alignNodes('centerX')} title="Align centres vertically">
+              <AlignCenterVertical className="h-4 w-4" />
+            </button>
+            <button onClick={() => alignNodes('right')} title="Align right edges">
+              <AlignEndVertical className="h-4 w-4" />
+            </button>
+            <button onClick={() => alignNodes('top')} title="Align top edges">
+              <AlignStartHorizontal className="h-4 w-4" />
+            </button>
+            <button onClick={() => alignNodes('centerY')} title="Align centres horizontally">
+              <AlignCenterHorizontal className="h-4 w-4" />
+            </button>
+            <button onClick={() => alignNodes('bottom')} title="Align bottom edges">
+              <AlignEndHorizontal className="h-4 w-4" />
+            </button>
+            <span className="topo-palette-sep vertical" />
+            <button onClick={() => distributeNodes('x')} disabled={multi.length < 3} title="Equal horizontal gaps (3+ devices)">
+              <AlignHorizontalDistributeCenter className="h-4 w-4" />
+            </button>
+            <button onClick={() => distributeNodes('y')} disabled={multi.length < 3} title="Equal vertical gaps (3+ devices)">
+              <AlignVerticalDistributeCenter className="h-4 w-4" />
+            </button>
+            <span className="topo-palette-sep vertical" />
+            <button onClick={arrangeSelection} disabled={multi.length < 3} title="Re-arrange only these devices (3+ devices)">
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button onClick={duplicateSelection} title="Duplicate (Ctrl+D)">
+              <CopyPlus className="h-4 w-4" />
+            </button>
+            <button onClick={copySelection} title="Copy (Ctrl+C), paste with Ctrl+V">
+              <Copy className="h-4 w-4" />
+            </button>
+            <button onClick={deleteSelection} title="Delete the selected devices (Del)">
+              <Eraser className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         {editing && (
           <>
             <div className="topo-palette">
@@ -1094,6 +1583,22 @@ export default function LldpTopology({
             </div>
             <div className="topo-hintbar">
               <strong>{toolInfo.label}:</strong> {toolInfo.hint}
+              {activeTool === 'select' && (
+                <span
+                  className="topo-hint-more"
+                  title={[
+                    'Shift+drag: select a group',
+                    'Shift+click: add / remove one device',
+                    'Ctrl+A: select all',
+                    'Ctrl+D: duplicate, Ctrl+C / Ctrl+V: copy / paste',
+                    'Ctrl+F: find a device',
+                    'Del: delete the selection',
+                    'Pink guide: snaps to a device in line',
+                  ].join('\n')}
+                >
+                  Shortcuts
+                </span>
+              )}
               {flowDraft && (
                 <span className="topo-hint-actions">
                   <span>{flowDraft.hops.length} device(s)</span>
@@ -1279,6 +1784,9 @@ export default function LldpTopology({
                       .join('\n')}
                   </title>
                   {inDraft && <circle data-export-hide="" r={28} fill="none" stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 3" />}
+                  {multi.length > 1 && multi.includes(node.id) && (
+                    <circle data-export-hide="" r={26} fill="none" stroke="#fbbf24" strokeWidth={2} />
+                  )}
                   <NodeIcon role={node.role} selected={node.id === selected} />
                   <text y={34} textAnchor="middle" fill="#e2e8f0" fontSize={12} fontWeight={600} {...HALO}>
                     {node.hostname}
@@ -1345,6 +1853,46 @@ export default function LldpTopology({
                 fillOpacity={0.08}
                 stroke="#818cf8"
                 strokeDasharray="6 4"
+                pointerEvents="none"
+              />
+            )}
+            {guides && (
+              <g data-export-hide="" pointerEvents="none">
+                {guides.x != null && (
+                  <line
+                    x1={guides.x}
+                    y1={(-view.y - 2000) / view.scale}
+                    x2={guides.x}
+                    y2={(HEIGHT - view.y + 2000) / view.scale}
+                    stroke="#f472b6"
+                    strokeWidth={1 / view.scale}
+                    strokeDasharray={`${6 / view.scale} ${4 / view.scale}`}
+                  />
+                )}
+                {guides.y != null && (
+                  <line
+                    x1={(-view.x - 2000) / view.scale}
+                    y1={guides.y}
+                    x2={(width - view.x + 2000) / view.scale}
+                    y2={guides.y}
+                    stroke="#f472b6"
+                    strokeWidth={1 / view.scale}
+                    strokeDasharray={`${6 / view.scale} ${4 / view.scale}`}
+                  />
+                )}
+              </g>
+            )}
+            {marquee && (
+              <rect
+                data-export-hide=""
+                x={Math.min(marquee.x0, marquee.x1)}
+                y={Math.min(marquee.y0, marquee.y1)}
+                width={Math.abs(marquee.x1 - marquee.x0)}
+                height={Math.abs(marquee.y1 - marquee.y0)}
+                fill="#fbbf24"
+                fillOpacity={0.08}
+                stroke="#fbbf24"
+                strokeDasharray="5 4"
                 pointerEvents="none"
               />
             )}

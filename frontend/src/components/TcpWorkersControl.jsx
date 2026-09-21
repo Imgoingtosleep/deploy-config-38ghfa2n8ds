@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, Power, Zap, Clock, Sliders } from 'lucide-react';
 import './TcpWorkersControl.css';
 
 const MIN_WORKERS = 1;
@@ -57,7 +56,6 @@ export default function TcpWorkersControl({
       {/* Header bar: Toggle & Status Badge */}
       <div className="tcp-control-header">
         <div className="tcp-control-title-box">
-          <Sliders className="h-4 w-4 tcp-header-icon" />
           <span className="tcp-control-title">{title}</span>
         </div>
 
@@ -76,17 +74,7 @@ export default function TcpWorkersControl({
           </button>
 
           <span className={`tcp-status-pill ${enabled ? 'on' : 'off'}`}>
-            {enabled ? (
-              <>
-                <Activity className="h-3 w-3" />
-                <span>Active ({workers} workers &bull; {timeout}s)</span>
-              </>
-            ) : (
-              <>
-                <Power className="h-3 w-3" />
-                <span>Bypassed &bull; Direct SSH</span>
-              </>
-            )}
+            {enabled ? `Active (${workers} workers • ${timeout}s)` : 'Bypassed • Direct SSH'}
           </span>
         </div>
       </div>
@@ -97,7 +85,6 @@ export default function TcpWorkersControl({
           {/* Concurrency Section */}
           <div className="tcp-param-row">
             <div className="tcp-param-label">
-              <Zap className="h-3.5 w-3.5 text-amber-400" />
               <span>TCP Workers:</span>
             </div>
 
@@ -166,7 +153,6 @@ export default function TcpWorkersControl({
           {/* Timeout Section */}
           <div className="tcp-param-row">
             <div className="tcp-param-label">
-              <Clock className="h-3.5 w-3.5 text-cyan-400" />
               <span>TCP Timeout:</span>
             </div>
 
@@ -219,7 +205,6 @@ export default function TcpWorkersControl({
         </div>
       ) : (
         <div className="tcp-disabled-notice">
-          <Power className="h-4 w-4 text-slate-400 flex-shrink-0" />
           <p>
             <strong>TCP port check is turned OFF.</strong> The scan will bypass TCP port 22 probing and attempt SSH/LLDP
             collection directly on all target addresses. Useful if TCP SYN/connect is blocked by an intermediate firewall or ACL.
