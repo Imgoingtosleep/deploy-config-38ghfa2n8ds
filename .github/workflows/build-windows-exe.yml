@@ -1,0 +1,73 @@
+name: Build Windows app
+
+# Every push to download-application builds NetAuto.exe and publishes it as the
+# "app-latest" pre-release, so there is always one link to download it from.
+on:
+  push:
+    branches: [download-application]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build NetAuto.exe
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Smoke test (the .exe starts and serves the UI and the API)
+        shell: pwsh
+        run: |
+          $env:NETAUTO_PORT = "4077"
+          $env:NETAUTO_DATA_DIR = "$env:RUNNER_TEMP\netauto-data"
+          $p = Start-Process -FilePath dist\NetAuto.exe -PassThru -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $ui = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4077/
+              $api = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:4077/api/v1/command-profiles
+              if ($ui.StatusCode -eq 200 -and $api.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "NetAuto.exe did not answer on port 4077" }
+          Write-Host "UI and API answered"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetAuto-windows
+          path: dist/NetAuto.exe
+
+      - name: Remove the previous app-latest release
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete app-latest --yes --cleanup-tag
+
+      - name: Publish app-latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create app-latest dist/NetAuto.exe
+          --target $env:GITHUB_SHA
+          --prerelease
+          --title "NetAuto for Windows (latest build)"
+          --notes "Built from ${{ github.sha }} on branch ${{ github.ref_name }}. Download NetAuto.exe and double-click it: the app opens in your browser at http://127.0.0.1:4050. Data is kept in %APPDATA%\NetAuto."

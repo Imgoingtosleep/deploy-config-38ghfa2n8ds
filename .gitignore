@@ -27,6 +27,7 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+.build-venv/
 
 # Installer logs
 pip-log.txt

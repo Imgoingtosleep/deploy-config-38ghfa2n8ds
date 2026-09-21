@@ -13,7 +13,9 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "model_rules.json")
+from app.core.paths import data_file
+
+DATA_FILE = data_file("model_rules.json")
 file_lock = threading.Lock()
 
 # Same device types as the topology editor; '' = let the model decide (built-in router / switch guess)

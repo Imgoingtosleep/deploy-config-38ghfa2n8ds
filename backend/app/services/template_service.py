@@ -4,7 +4,9 @@ import uuid
 import datetime
 from typing import List, Dict, Any, Optional
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "templates.json")
+from app.core.paths import data_file
+
+DATA_FILE = data_file("templates.json")
 
 class TemplateService:
     @staticmethod

@@ -220,6 +220,20 @@ flowchart LR
 
 ## 4. Getting Started
 
+### ใช้แบบไฟล์ .exe บน Windows (ไม่ต้องลง Docker / Python / Node)
+
+1. ดาวน์โหลด `NetAuto.exe` จาก GitHub Releases → **NetAuto for Windows (latest build)** (tag `app-latest`)
+2. ดับเบิลคลิก — แอปจะเปิดในเบราว์เซอร์ที่ `http://127.0.0.1:4050` (ถ้าพอร์ตถูกใช้อยู่จะเลือกพอร์ตว่างให้เอง ดูได้ในหน้าต่าง console)
+3. ปิดหน้าต่าง console = ปิดแอป
+
+ข้อมูล (credential / command profiles, model rules, playbooks, templates, LLDP scan logs) เก็บที่ `%APPDATA%\NetAuto`
+ไฟล์ .exe ไม่มี credential ติดไปด้วย — เปิดครั้งแรกต้องตั้ง credential profile ใหม่
+exe ไม่ได้ sign ไว้ Windows SmartScreen อาจเตือนตอนเปิดครั้งแรก ให้กด *More info → Run anyway*
+
+**Build เอง:** ทุกครั้งที่ push ขึ้น branch `download-application` GitHub Actions จะ build และอัปเดต release `app-latest` ให้อัตโนมัติ
+หรือ build บนเครื่อง Windows ที่มี Python 3.11+ และ Node.js 18+ ด้วย
+`powershell -ExecutionPolicy Bypass -File .\build.ps1` → ได้ไฟล์ `dist\NetAuto.exe`
+
 ### 4.1 Prerequisites
 
 | รายการ | ขั้นต่ำ | แนะนำ |

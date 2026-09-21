@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050';
+// '' (the Windows .exe build) means same origin: the backend serves this app itself
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4050').replace(/\/$/, '');
 
 const apiClient = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
@@ -320,7 +321,7 @@ export const exportJobZipFile = async (jobId, title = 'fleet_job') => {
 };
 
 export const createJobEventSource = (jobId) => {
-  const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
+  const baseUrl = API_BASE_URL;
   return new EventSource(`${baseUrl}/api/v1/jobs/${jobId}/stream`);
 };
 
@@ -377,7 +378,7 @@ export const importDevicesFromFile = async (file, defaultOptions = {}) => {
 };
 
 export const downloadInventoryTemplate = (formatName) => {
-  const baseUrl = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:4050').replace(/\/$/, '');
+  const baseUrl = API_BASE_URL;
   window.open(`${baseUrl}/api/v1/devices/templates/${formatName}`, '_blank');
 };
 

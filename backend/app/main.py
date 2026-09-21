@@ -1,5 +1,9 @@
+import os
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.api.endpoints import (
     devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp,
@@ -44,11 +48,20 @@ app.include_router(
 )
 
 
-@app.get("/")
-def root():
-    return {
-        "status": "online",
-        "service": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "docs_url": "/docs",
-    }
+# The Windows .exe serves the built React app itself, on the same port as the API.
+# Source and Docker runs have no bundled frontend and keep the JSON status root.
+FRONTEND_DIST = os.getenv("NETAUTO_FRONTEND_DIST") or os.path.join(
+    getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "frontend_dist"
+)
+
+if os.path.isfile(os.path.join(FRONTEND_DIST, "index.html")):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    @app.get("/")
+    def root():
+        return {
+            "status": "online",
+            "service": settings.PROJECT_NAME,
+            "version": settings.VERSION,
+            "docs_url": "/docs",
+        }

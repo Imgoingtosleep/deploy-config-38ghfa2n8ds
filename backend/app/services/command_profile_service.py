@@ -14,7 +14,9 @@ import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "command_profiles.json")
+from app.core.paths import data_file
+
+DATA_FILE = data_file("command_profiles.json")
 file_lock = threading.Lock()
 
 COMMAND_KEYS = ["pager_disable", "sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]

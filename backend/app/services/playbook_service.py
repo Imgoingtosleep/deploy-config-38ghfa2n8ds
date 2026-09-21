@@ -5,7 +5,9 @@ import datetime
 from typing import List, Dict, Any, Optional
 from app.services.command_translator import CommandTranslator
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "playbooks.json")
+from app.core.paths import data_file
+
+DATA_FILE = data_file("playbooks.json")
 
 DEFAULT_PLAYBOOKS = [
     {

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port 4000 --host 0.0.0.0",
     "build": "vite build",
+    "build:exe": "vite build --mode exe",
     "preview": "vite preview --port 4000 --host 0.0.0.0"
   },
   "dependencies": {
