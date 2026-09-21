@@ -1034,7 +1034,7 @@ export default function LldpTopology({
       <input
         ref={importInputRef}
         type="file"
-        accept=".drawio,.xml,.svg,.png,.zip,.json"
+        accept=".drawio,.xml,.svg,.png,.zip,.json,.xlsx,.xlsm,.csv"
         hidden
         onChange={(e) => {
           const file = e.target.files?.[0];

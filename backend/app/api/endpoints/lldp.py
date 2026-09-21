@@ -151,12 +151,23 @@ def export_subnet_scan_zip(job_id: str):
 
 @router.post("/import-topology")
 async def import_topology(file: UploadFile = File(...)):
-    """Exported topology (.drawio / .svg / .png / .zip / .json) -> same report shape as /discover"""
+    """LLDP table (.xlsx / .csv) or exported topology (.drawio / .svg / .png / .zip / .json) -> same report shape as /discover"""
     content = await file.read(MAX_IMPORT_BYTES + 1)
     try:
         return import_topology_file(file.filename or "", content)
     except TopologyImportError as e:
         raise HTTPException(status_code=400, detail=f"Cannot import {file.filename}: {e}")
+
+
+@router.get("/import-template")
+def download_import_template():
+    """Excel template for an LLDP table that 'Import Topology' turns into a topology"""
+    from app.services.lldp_table_import import build_template
+    return Response(
+        content=build_template(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="lldp_table_template.xlsx"'},
+    )
 
 
 @router.post("/reparse")

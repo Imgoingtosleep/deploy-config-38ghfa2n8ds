@@ -547,6 +547,17 @@ export const importLldpTopology = async (file) => {
   return response.data;
 };
 
+// Empty LLDP table (.xlsx) that Import turns into a topology
+export const downloadLldpTableTemplate = async () => {
+  const response = await apiClient.get('/lldp/import-template', { responseType: 'blob' });
+  const url = URL.createObjectURL(response.data);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'lldp_table_template.xlsx';
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
 export const exportLldpExcel = async (neighbors, hosts) => {
   const response = await apiClient.post(
     '/lldp/export-excel',

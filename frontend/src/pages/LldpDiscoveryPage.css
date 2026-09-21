@@ -761,6 +761,39 @@
   color: #64748b;
 }
 
+.lldp-prio-badge.p3 {
+  color: #6ee7b7;
+  border-color: #047857;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.lldp-prio-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.lldp-prio-remove:hover:not(:disabled) {
+  border-color: #b91c1c;
+  color: #fca5a5;
+}
+
+.lldp-prio-remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.lldp-prio-add {
+  margin-top: 0.55rem;
+}
+
 .lldp-prio-manual {
   display: flex;
   flex-wrap: wrap;
@@ -1656,5 +1689,134 @@
   .lldp-rule-sample-pick {
     margin-left: 0;
     width: 100%;
+  }
+}
+
+/* Import LLDP table (Excel / CSV) */
+.lldp-btn-group {
+  display: inline-flex;
+}
+
+.lldp-btn-group > .lldp-btn-secondary:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.lldp-btn-addon {
+  border-left: none !important;
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  padding-left: 0.7rem !important;
+  padding-right: 0.7rem !important;
+  font-weight: 500 !important;
+  gap: 0.3rem !important;
+}
+
+.lldp-import-warnings {
+  margin: -0.5rem 0 1rem;
+  padding: 0.5rem 0.8rem 0.5rem 1.8rem;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 0.5rem;
+  background: rgba(251, 191, 36, 0.06);
+  color: #fcd34d;
+  font-size: 0.75rem;
+  list-style: disc;
+}
+
+/* Model -> icon legend under the topology */
+.lldp-legend {
+  border: 1px solid #1e293b;
+  border-radius: 0.5rem;
+  background: rgba(2, 6, 23, 0.6);
+  margin-top: 0.75rem;
+  overflow: hidden;
+}
+
+.lldp-legend-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.55rem 0.8rem;
+  background: none;
+  border: none;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lldp-legend-head:hover {
+  background: rgba(30, 41, 59, 0.5);
+}
+
+.lldp-legend-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.lldp-legend-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0 0.8rem 0.7rem;
+}
+
+.lldp-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 0.375rem;
+  background: rgba(15, 23, 42, 0.6);
+  min-width: 0;
+}
+
+.lldp-legend-row.unknown {
+  border: 1px dashed #475569;
+}
+
+.lldp-legend-model {
+  flex: 0 0 13rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.78rem;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lldp-legend-role {
+  flex: 0 0 7rem;
+  font-size: 0.75rem;
+  color: #a5b4fc;
+}
+
+.lldp-legend-devs {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.73rem;
+  color: #94a3b8;
+}
+
+.lldp-legend-src {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  color: #64748b;
+  font-style: italic;
+}
+
+@media (max-width: 900px) {
+  .lldp-legend-row {
+    flex-wrap: wrap;
+  }
+
+  .lldp-legend-model,
+  .lldp-legend-role {
+    flex-basis: auto;
   }
 }

@@ -9,6 +9,7 @@ Supported files:
   .png             PNG exported here (iTXt "lldp-topology") or a draw.io .drawio.png
   .zip             PNG tiles ZIP (topology.json) or any ZIP holding one of the files above
   .json            topology.json
+  .xlsx / .csv     an LLDP neighbor table (Excel exported here or made by hand), see lldp_table_import
 """
 import base64
 import binascii
@@ -536,12 +537,45 @@ def _detect(content: bytes, name: str, depth: int = 0) -> Tuple[str, Dict[str, A
         if "mxfile" in (root.get("content") or ""):
             return ("drawio.svg", *_from_drawio(root.get("content")))
         raise TopologyImportError("SVG has no embedded topology data (only SVGs exported after this feature, or draw.io SVGs)")
-    raise TopologyImportError(f"Unsupported file '{name}': use .drawio, .svg, .png, .zip or .json exported from LLDP Discovery")
+    raise TopologyImportError(
+        f"Unsupported file '{name}': use an LLDP table (.xlsx / .csv) or .drawio, .svg, .png, .zip, .json exported from LLDP Discovery"
+    )
+
+
+def _table_kind(content: bytes, name: str) -> Optional[str]:
+    """'xlsx' / 'csv' when the file is an LLDP table rather than a diagram export"""
+    lower = name.lower()
+    if content[:4] == b"PK\x03\x04":
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                return "xlsx" if "xl/workbook.xml" in zf.namelist() else None
+        except zipfile.BadZipFile:
+            return None
+    if lower.endswith((".xls",)) or content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        raise TopologyImportError("Old Excel 97-2003 (.xls) is not supported: open it in Excel and save as .xlsx")
+    if lower.endswith((".csv", ".tsv", ".txt")):
+        return "csv"
+    try:
+        from app.services.lldp_table_import import looks_like_csv_table
+        text = content[:8192].decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    head = text.lstrip()
+    if head.startswith(("{", "<")):
+        return None
+    return "csv" if looks_like_csv_table(text) else None
 
 
 def import_topology_file(file_name: str, content: bytes) -> Dict[str, Any]:
     if len(content) > MAX_IMPORT_BYTES:
         raise TopologyImportError(f"File is larger than {MAX_IMPORT_BYTES // (1024 * 1024)} MB")
+    kind = _table_kind(content, file_name)
+    if kind:
+        from app.services.lldp_table_import import TableImportError, parse_lldp_table
+        try:
+            return parse_lldp_table(file_name, content, kind)
+        except TableImportError as e:
+            raise TopologyImportError(str(e))
     try:
         fmt, topology, neighbors, annotations = _detect(content, file_name)
     except TopologyImportError:

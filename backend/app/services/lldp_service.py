@@ -149,9 +149,31 @@ class LldpService:
     @classmethod
     def device_role(cls, model: str) -> str:
         """A model rule with a role wins over the built-in router / switch guess"""
+        return cls.device_role_info(model)["role"]
+
+    @classmethod
+    def device_role_info(cls, model: str) -> Dict[str, Any]:
+        """
+        The role and where it came from, so the UI can show which model is drawn
+        with which icon and why: {role, source: 'rule'|'builtin'|'none', rule_id, rule_name}
+        """
         from app.services.model_rule_service import ModelRuleService
         custom = ModelRuleService.match_role(model)
-        return custom["role"] if custom else cls.builtin_role(model)
+        if custom:
+            rule = custom["rule"]
+            return {
+                "role": custom["role"],
+                "source": "rule",
+                "rule_id": rule.get("id", ""),
+                "rule_name": rule.get("name", ""),
+            }
+        role = cls.builtin_role(model)
+        return {
+            "role": role,
+            "source": "none" if role == "unknown" else "builtin",
+            "rule_id": "",
+            "rule_name": "",
+        }
 
     @staticmethod
     def builtin_role(model: str) -> str:
@@ -775,7 +797,11 @@ class LldpService:
             degree[link["source"]] = degree.get(link["source"], 0) + 1
             degree[link["target"]] = degree.get(link["target"], 0) + 1
         for node in nodes.values():
-            node["role"] = cls.device_role(node["model"])
+            info = cls.device_role_info(node["model"])
+            node["role"] = info["role"]
+            # Where the icon came from: a model rule, the built-in guess, or nothing
+            node["role_source"] = info["source"]
+            node["role_rule"] = info["rule_name"]
             node["degree"] = degree.get(node["id"], 0)
 
         # Model rules can also give firewall / server / wireless ...

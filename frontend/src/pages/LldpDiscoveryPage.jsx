@@ -25,6 +25,7 @@ import {
   FilePlus2,
   FlaskConical,
   RefreshCw,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   discoverLldp,
@@ -41,8 +42,10 @@ import {
   exportLldpScanZip,
   importLldpTopology,
   reparseLldp,
+  downloadLldpTableTemplate,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import ModelIconLegend from '../components/ModelIconLegend';
 import ModelRulesModal from '../components/ModelRulesModal';
 import { neighborsFromDoc, hostsFromDoc } from '../components/topologyModel';
 import TcpWorkersControl from '../components/TcpWorkersControl';
@@ -171,6 +174,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const [importing, setImporting] = useState(false);
   const pollRef = useRef(null);
   const importInputRef = useRef(null);
+  const tableInputRef = useRef(null);
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
 
@@ -225,6 +229,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const cmdPoolProfiles = cmdPoolIds.map(cmdProfileById).filter(Boolean);
   const setCmdPrio = (index, value) =>
     setCmdPool((prev) => prev.map((id, i) => (i === index ? value : id)));
+  // One priority slot per command profile at most: more would only repeat a profile
+  const maxCmdPrio = Math.max(2, (cmdProfiles || []).length);
+  const addCmdPrio = () => setCmdPool((prev) => (prev.length >= maxCmdPrio ? prev : [...prev, '']));
+  const removeCmdPrio = (index) =>
+    setCmdPool((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== index)));
 
   const loadCmdProfiles = async () => {
     const data = await getCommandProfiles();
@@ -423,6 +432,14 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     }
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      await downloadLldpTableTemplate();
+    } catch (err) {
+      setErrorMessage(errMsg(err, 'Template download failed'));
+    }
+  };
+
   // Start an empty diagram in the topology editor
   const handleNewDiagram = () => {
     if (report && !window.confirm('Replace the current result with a new empty diagram? Export it first if you need it.')) return;
@@ -515,6 +532,24 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     });
     return out.sort((a, b) => Number(Boolean(a.model)) - Number(Boolean(b.model)));
   }, [report]);
+
+  // Legend row -> Model Rules: an existing rule is edited in the list, a model
+  // without one opens straight into "Teach a new model" on that device's text
+  const handleTeachModel = useCallback(
+    (row) => {
+      if (row?.source === 'rule') {
+        setShowRulesModal(true);
+        return;
+      }
+      const devices = new Set(row?.devices || []);
+      const sample =
+        ruleSamples.find((s) => devices.has(s.device)) ||
+        (row?.model ? ruleSamples.find((s) => s.model === row.model) : null) ||
+        ruleSamples.find((s) => !s.model);
+      setShowRulesModal(sample ? { teach: sample } : true);
+    },
+    [ruleSamples]
+  );
 
   // Devices the topology will show as "Unknown model"
   const unknownDevices = useMemo(
@@ -733,10 +768,33 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                   <span className="lldp-prio-driver">
                     {prof ? `${prof.parser} · ${prof.commands?.lldp_brief || '-'}` : '-'}
                   </span>
+                  {cmdPool.length > 2 && (
+                    <button
+                      type="button"
+                      className="lldp-prio-remove"
+                      onClick={() => removeCmdPrio(i)}
+                      disabled={running}
+                      title="Remove this priority slot"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </label>
               );
             })}
           </div>
+
+          {cmdPool.length < maxCmdPrio && (
+            <button
+              type="button"
+              className="lldp-btn-secondary lldp-btn-mini lldp-prio-add"
+              onClick={addCmdPrio}
+              disabled={running}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add priority (C{cmdPool.length + 1})
+            </button>
+          )}
           <span className="lldp-hint">
             Commands only — the SSH login comes from the credential profile above. C1's commands run first on the open
             session; if the device rejects them (Huawei <code>display</code> on a Cisco), C2's commands are run on the
@@ -815,6 +873,25 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             {reparsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Re-parse
           </button>
+          <span className="lldp-btn-group">
+            <button
+              className="lldp-btn-secondary"
+              onClick={() => tableInputRef.current?.click()}
+              disabled={running || importing}
+              title="Build the topology from an LLDP table in Excel (.xlsx) or CSV: one row per neighbor"
+            >
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
+              Import LLDP Table
+            </button>
+            <button
+              className="lldp-btn-secondary lldp-btn-addon"
+              onClick={handleDownloadTemplate}
+              title="Download an Excel template with the columns Import LLDP Table understands"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Template
+            </button>
+          </span>
           <button
             className="lldp-btn-secondary"
             onClick={() => importInputRef.current?.click()}
@@ -836,10 +913,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           <input
             ref={importInputRef}
             type="file"
-            accept=".drawio,.xml,.svg,.png,.zip,.json"
+            accept=".drawio,.xml,.svg,.png,.zip,.json,.xlsx,.xlsm,.csv"
             hidden
             onChange={handleImportFile}
           />
+          <input ref={tableInputRef} type="file" accept=".xlsx,.xlsm,.csv" hidden onChange={handleImportFile} />
         </div>
 
         {errorMessage && (
@@ -887,11 +965,22 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             <div className="lldp-import-banner">
               <Upload className="h-4 w-4" />
               <span>
-                {report.format === 'editor' ? 'Drawn in the editor' : <>Imported from <code>{report.file_name}</code> ({report.format})</>} ·{' '}
+                {report.format === 'editor'
+                  ? 'Drawn in the editor'
+                  : report.format === 'xlsx' || report.format === 'csv'
+                    ? <>LLDP table <code>{report.file_name}</code> ({report.format === 'xlsx' ? 'Excel' : 'CSV'})</>
+                    : <>Imported from <code>{report.file_name}</code> ({report.format})</>} ·{' '}
                 {report.topology?.nodes?.length || 0} devices · {report.topology?.links?.length || 0} links · {report.total_lldp_rows} LLDP rows
                 {report.edited ? ' · edited' : ''}
               </span>
             </div>
+          )}
+          {report.imported && report.import_warnings?.length > 0 && (
+            <ul className="lldp-import-warnings">
+              {report.import_warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
           )}
           {!report.imported && (
           <div className="lldp-stats">
@@ -1011,15 +1100,20 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             </div>
           )}
 
-          {view === 'topology' && <LldpTopology
-              topology={report.topology}
-              annotations={report.annotations}
-              neighbors={report.neighbors}
-              targets={report.targets}
-              onChange={handleTopologyChange}
-              onImportFile={importLldpTopology}
-              startEditing={report.format === 'editor'}
-            />}
+          {view === 'topology' && (
+            <>
+              <LldpTopology
+                topology={report.topology}
+                annotations={report.annotations}
+                neighbors={report.neighbors}
+                targets={report.targets}
+                onChange={handleTopologyChange}
+                onImportFile={importLldpTopology}
+                startEditing={report.format === 'editor'}
+              />
+              <ModelIconLegend nodes={report.topology?.nodes || []} onTeach={handleTeachModel} />
+            </>
+          )}
 
           {view === 'summary' && (
             <div className="lldp-table-wrap">
