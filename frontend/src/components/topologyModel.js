@@ -115,6 +115,12 @@ export function setConnections(doc, id, rows) {
   return withDegree({ ...doc, links: [...kept, ...added] });
 }
 
+/** Append links as they are (copies made by duplicate / paste), keeping degrees right */
+export function addLinks(doc, links) {
+  if (!links.length) return doc;
+  return withDegree({ ...doc, links: [...doc.links, ...links] });
+}
+
 export function deleteLinksBetween(doc, a, b) {
   return withDegree({
     ...doc,
