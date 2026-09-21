@@ -36,6 +36,8 @@ import {
   LayoutGrid,
   Eye,
   EyeOff,
+  Expand,
+  Shrink,
 } from 'lucide-react';
 import { splitTopology } from './topologyGroups';
 import { groupLinks, computeForceLayout, computeHierarchicalLayout, FORCE_MAX_NODES } from './topologyLayout';
@@ -60,6 +62,7 @@ import {
   updateNode,
   deleteNode,
   setConnections,
+  addLinks,
   deleteLinksBetween,
   upsertById,
   removeById,
@@ -112,14 +115,14 @@ function noteBox(note) {
   return { w: Math.max(...lines.map((l) => l.length)) * size * 0.6, h: lines.length * size * 1.3 };
 }
 
-function fitView(extent, width) {
+function fitView(extent, width, height = HEIGHT) {
   const b = boundsOf(extent);
   const w = b.maxX - b.minX + EXPORT_PAD.x * 2;
   const h = b.maxY - b.minY + EXPORT_PAD.top + EXPORT_PAD.bottom;
-  const scale = Math.min(width / w, HEIGHT / h, 1.5);
+  const scale = Math.min(width / w, height / h, 1.5);
   const cx = (b.minX + b.maxX) / 2;
   const cy = (b.minY - EXPORT_PAD.top + b.maxY + EXPORT_PAD.bottom) / 2;
-  return { scale, x: width / 2 - cx * scale, y: HEIGHT / 2 - cy * scale };
+  return { scale, x: width / 2 - cx * scale, y: height / 2 - cy * scale };
 }
 
 /** Flow segments between consecutive hops, shifted sideways so parallel flows stay visible */
@@ -214,6 +217,11 @@ export default function LldpTopology({
   const dragRef = useRef(null);
   const lastClickRef = useRef(null);
   const [width, setWidth] = useState(1000);
+  // Full screen: the editor covers the whole window and the canvas takes every pixel left
+  const rootRef = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [canvasH, setCanvasH] = useState(HEIGHT);
+  const height = fullscreen ? canvasH : HEIGHT;
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [selected, setSelected] = useState(null);
   // Every device selected together; `selected` is the single one the panel describes
@@ -225,7 +233,7 @@ export default function LldpTopology({
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [focusId, setFocusId] = useState(null);
-  const clipboardRef = useRef([]);
+  const clipboardRef = useRef({ items: [], links: [] });
   const searchRef = useRef(null);
   const [selItem, setSelItem] = useState(null);
   const [showPorts, setShowPorts] = useState(false);
@@ -370,7 +378,7 @@ export default function LldpTopology({
   const fitTo = (pos) => {
     const e = { ...extent };
     nodes.forEach((n) => pos[n.id] && (e[n.id] = pos[n.id]));
-    setView(fitView(e, wrapRef.current?.clientWidth || width));
+    setView(fitView(e, wrapRef.current?.clientWidth || width, height));
   };
 
   // New report or another picture: lay out when the devices have no positions yet, then fit
@@ -391,7 +399,7 @@ export default function LldpTopology({
     setPositions((prev) => {
       const next = { ...prev };
       const cx = (width / 2 - view.x) / view.scale;
-      const cy = (HEIGHT / 2 - view.y) / view.scale;
+      const cy = (height / 2 - view.y) / view.scale;
       nodes.forEach((n, i) => {
         if (next[n.id]) return;
         const peers = [...(adjacency[n.id] || [])].map((id) => next[id]).filter(Boolean);
@@ -478,7 +486,10 @@ export default function LldpTopology({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver(([entry]) => setWidth(Math.max(320, Math.floor(entry.contentRect.width))));
+    const ro = new ResizeObserver(([entry]) => {
+      setWidth(Math.max(320, Math.floor(entry.contentRect.width)));
+      setCanvasH(Math.max(320, Math.floor(entry.contentRect.height)));
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -500,6 +511,45 @@ export default function LldpTopology({
     svg.addEventListener('wheel', onWheel, { passive: false });
     return () => svg.removeEventListener('wheel', onWheel);
   }, []);
+
+  // ------------------------------------------------------------ full screen
+  const toggleFullscreen = () => {
+    if (fullscreen) {
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+      setFullscreen(false);
+      return;
+    }
+    setFullscreen(true);
+    // The CSS overlay already fills the window; the browser's full screen also hides its own bars
+    rootRef.current?.requestFullscreen?.().catch(() => {});
+  };
+
+  useEffect(() => {
+    const onChange = () => {
+      if (!document.fullscreenElement) setFullscreen(false);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // No page scrolling behind the overlay
+  useEffect(() => {
+    if (!fullscreen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [fullscreen]);
+
+  // Keep what was in the middle of the canvas in the middle when its size changes
+  const sizeRef = useRef({ width, height });
+  useEffect(() => {
+    const prev = sizeRef.current;
+    sizeRef.current = { width, height };
+    if (prev.width === width && prev.height === height) return;
+    setView((v) => ({ ...v, x: v.x + (width - prev.width) / 2, y: v.y + (height - prev.height) / 2 }));
+  }, [width, height]);
 
   // ------------------------------------------------------------ pointer helpers
   const activeTool = editing ? tool : 'select';
@@ -911,18 +961,35 @@ export default function LldpTopology({
     commit(doc, next, false);
   };
 
-  /** Copies of the given devices, offset so they do not sit on the originals */
-  const cloneNodes = (items, offset = 40) => {
+  /** Links whose both ends are among these devices: safe to copy, no port is shared with anyone else */
+  const linksWithin = (ids) => {
+    const set = new Set(ids);
+    return doc.links.filter((l) => set.has(l.source) && set.has(l.target)).map((l) => ({ ...l }));
+  };
+
+  /**
+   * Copies of the given devices, offset so they do not sit on the originals.
+   * Links inside the group come along on the same ports; links to devices outside
+   * it do not, since the outside device's port is already taken by the original.
+   */
+  const cloneNodes = ({ items, links = [] }, offset = 40) => {
     if (!items.length) return;
     let next = doc;
     const pos = { ...positions };
     const created = [];
+    const renamed = {};
     items.forEach(({ node, pos: p }) => {
       const hostname = uniqueHostname(next, node.hostname);
       next = addNode(next, { hostname, ip: '', model: node.model, role: node.role });
       pos[hostname] = { x: (p?.x || 0) + offset, y: (p?.y || 0) + offset };
+      renamed[node.id] = hostname;
       created.push(hostname);
     });
+    const copies = links
+      .filter((l) => renamed[l.source] && renamed[l.target])
+      // Drawn, not learned: a copy was never seen by LLDP from either side
+      .map((l) => ({ ...l, source: renamed[l.source], target: renamed[l.target], confirmed: false, manual: true }));
+    next = addLinks(next, copies);
     setPinned((prev) => [...prev, ...created]);
     commit(next, pos, true);
     selectNodes(created);
@@ -952,15 +1019,23 @@ export default function LldpTopology({
   const selectedIds = () => (multi.length ? multi : selected ? [selected] : []);
 
   const duplicateSelection = () => {
-    const ids = selectedIds();
-    cloneNodes(ids.map((id) => ({ node: nodeById[id], pos: positions[id] })).filter((x) => x.node));
+    const ids = selectedIds().filter((id) => nodeById[id]);
+    cloneNodes({ items: ids.map((id) => ({ node: nodeById[id], pos: positions[id] })), links: linksWithin(ids) });
   };
 
+  // The group's links are taken now: by paste time the originals may have changed or gone
   const copySelection = () => {
-    const ids = selectedIds();
-    clipboardRef.current = ids.map((id) => ({ node: { ...nodeById[id] }, pos: { ...(positions[id] || { x: 0, y: 0 }) } })).filter((x) => x.node.id);
-    if (clipboardRef.current.length) {
-      setExportMsg({ type: 'info', text: `${clipboardRef.current.length} device(s) copied - Ctrl+V pastes a copy` });
+    const ids = selectedIds().filter((id) => nodeById[id]);
+    clipboardRef.current = {
+      items: ids.map((id) => ({ node: { ...nodeById[id] }, pos: { ...(positions[id] || { x: 0, y: 0 }) } })),
+      links: linksWithin(ids),
+    };
+    if (ids.length) {
+      const n = clipboardRef.current.links.length;
+      setExportMsg({
+        type: 'info',
+        text: `${ids.length} device(s)${n ? ` and ${n} link(s) between them` : ''} copied - Ctrl+V pastes a copy`,
+      });
     }
   };
 
@@ -972,7 +1047,7 @@ export default function LldpTopology({
       const scale = Math.min(4, Math.max(0.02, v.scale * factor));
       const ratio = scale / v.scale;
       const cx = width / 2;
-      const cy = HEIGHT / 2;
+      const cy = height / 2;
       return { scale, x: cx - (cx - v.x) * ratio, y: cy - (cy - v.y) * ratio };
     });
 
@@ -980,7 +1055,7 @@ export default function LldpTopology({
     setView((v) => {
       const ratio = 1 / v.scale;
       const cx = width / 2;
-      const cy = HEIGHT / 2;
+      const cy = height / 2;
       return { scale: 1, x: cx - (cx - v.x) * ratio, y: cy - (cy - v.y) * ratio };
     });
 
@@ -991,7 +1066,7 @@ export default function LldpTopology({
       fitTo(positions);
       return;
     }
-    setView(fitView(Object.fromEntries(ids.map((id) => [id, positions[id]])), wrapRef.current?.clientWidth || width));
+    setView(fitView(Object.fromEntries(ids.map((id) => [id, positions[id]])), wrapRef.current?.clientWidth || width, height));
   };
 
   const searchHits = useMemo(() => {
@@ -1025,7 +1100,7 @@ export default function LldpTopology({
     if (!p) return;
     setView((v) => {
       const scale = Math.max(v.scale, 1);
-      return { scale, x: width / 2 - p.x * scale, y: HEIGHT / 2 - p.y * scale };
+      return { scale, x: width / 2 - p.x * scale, y: height / 2 - p.y * scale };
     });
     setFocusId(null);
   }, [focusId, positions, width]);
@@ -1094,6 +1169,13 @@ export default function LldpTopology({
         setMarquee(null);
         setSearchOpen(false);
         clearSelection();
+        // The browser leaves its own full screen on Esc; this covers the CSS-only fallback
+        if (fullscreen && !document.fullscreenElement) setFullscreen(false);
+        return;
+      }
+      if (key === 'f') {
+        e.preventDefault();
+        toggleFullscreen();
         return;
       }
       if (e.key === 'Enter' && flowDraft) {
@@ -1142,6 +1224,14 @@ export default function LldpTopology({
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         toggleSearch();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        toggleFullscreen();
+      } else if (e.key === 'Escape' && fullscreen && !document.fullscreenElement) {
+        setFullscreen(false);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -1269,7 +1359,7 @@ export default function LldpTopology({
   const draftPath = flowDraft ? flowDraft.hops.map((h) => positions[h]).filter(Boolean) : [];
 
   return (
-    <div className="lldp-topo">
+    <div className={`lldp-topo${fullscreen ? ' is-fullscreen' : ''}`} ref={rootRef}>
       {groups.length > 1 && (
         <div className="lldp-topo-groups">
           <span className="lldp-topo-groups-label">Pictures ({groups.length})</span>
@@ -1365,6 +1455,14 @@ export default function LldpTopology({
               <span>Flows</span>
             </label>
           )}
+          <button
+            className={`lldp-btn-sm ${fullscreen ? 'lldp-btn-primary' : 'lldp-btn-secondary'}`}
+            onClick={toggleFullscreen}
+            title={fullscreen ? 'Leave full screen (F or Esc)' : 'Full screen (F)'}
+          >
+            {fullscreen ? <Shrink className="h-3.5 w-3.5" /> : <Expand className="h-3.5 w-3.5" />}
+            {fullscreen ? 'Exit full screen' : 'Full screen'}
+          </button>
           <button className="lldp-btn-secondary lldp-btn-sm" onClick={() => fitTo(positions)} disabled={!hasNodes}>
             <Maximize2 className="h-3.5 w-3.5" />
             Fit
@@ -1592,6 +1690,7 @@ export default function LldpTopology({
                     'Ctrl+A: select all',
                     'Ctrl+D: duplicate, Ctrl+C / Ctrl+V: copy / paste',
                     'Ctrl+F: find a device',
+                    'F: full screen',
                     'Del: delete the selection',
                     'Pink guide: snaps to a device in line',
                   ].join('\n')}
@@ -1625,13 +1724,13 @@ export default function LldpTopology({
         <svg
           ref={svgRef}
           width={width}
-          height={HEIGHT}
+          height={height}
           fontFamily="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
           onPointerDown={onBackgroundPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
         >
-          <rect data-bg="" x={0} y={0} width={width} height={HEIGHT} fill="#020617" />
+          <rect data-bg="" x={0} y={0} width={width} height={height} fill="#020617" />
           <g data-root="" transform={`translate(${view.x},${view.y}) scale(${view.scale})`}>
             {zones.map((z) => {
               const sel = isSel('zone', z.id);
@@ -1863,7 +1962,7 @@ export default function LldpTopology({
                     x1={guides.x}
                     y1={(-view.y - 2000) / view.scale}
                     x2={guides.x}
-                    y2={(HEIGHT - view.y + 2000) / view.scale}
+                    y2={(height - view.y + 2000) / view.scale}
                     stroke="#f472b6"
                     strokeWidth={1 / view.scale}
                     strokeDasharray={`${6 / view.scale} ${4 / view.scale}`}
