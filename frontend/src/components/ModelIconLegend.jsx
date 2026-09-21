@@ -23,7 +23,8 @@ export default function ModelIconLegend({ nodes = [], onTeach }) {
         key,
         model,
         role,
-        source: n.role_source || (model ? 'builtin' : 'none'),
+        // Devices added in the editor carry the type picked in its dialog
+        source: n.role_source || (n.manual ? 'diagram' : model ? 'builtin' : 'none'),
         rule: n.role_rule || '',
         devices: [],
       };
@@ -67,9 +68,15 @@ export default function ModelIconLegend({ nodes = [], onTeach }) {
                 {r.devices.length > 3 ? ' ...' : ''}
               </span>
               <span className="lldp-legend-src">
-                {r.source === 'rule' ? `rule: ${r.rule}` : r.source === 'builtin' ? 'built-in guess' : 'no model read'}
+                {r.source === 'rule'
+                  ? `rule: ${r.rule}`
+                  : r.source === 'diagram'
+                    ? 'set in the diagram'
+                    : r.source === 'builtin'
+                      ? 'built-in guess'
+                      : 'no model read'}
               </span>
-              {onTeach && (
+              {onTeach && r.source !== 'diagram' && (
                 <button
                   className="lldp-btn-secondary lldp-btn-mini"
                   onClick={() => onTeach(r)}

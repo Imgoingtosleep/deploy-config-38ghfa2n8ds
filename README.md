@@ -9,11 +9,23 @@
 [![Nornir](https://img.shields.io/badge/Nornir-3.4+-orange?style=flat)](https://nornir.readthedocs.io/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
 
-**เว็บแอปสำหรับทีม Network/NOC ใช้ Health Check, Troubleshoot, Deploy Config และค้นหา Topology ด้วย LLDP บน Switch / Router หลายยี่ห้อ ผ่าน SSH/Telnet พร้อมกันได้หลักหมื่นเครื่อง**
+**เว็บแอปสำหรับทีม Network/NOC ที่ไล่หาอุปกรณ์ด้วย LLDP แล้วสร้างแผนผังเครือข่ายจริงให้อัตโนมัติ พร้อม Topology Editor สำหรับแก้ต่อเป็นเอกสาร — และมี Health Check, Troubleshoot, Deploy Config บน Switch / Router หลายยี่ห้อ ผ่าน SSH/Telnet พร้อมกันได้หลักหมื่นเครื่อง**
 
-ปัญหาที่แก้: แทนที่จะต้อง SSH เข้าไปทีละเครื่อง พิมพ์คำสั่งคนละแบบตามยี่ห้อ แล้วมานั่งรวม Log / วาด Topology เอง ระบบนี้รับรายชื่ออุปกรณ์ (หรือ Subnet) รันคำสั่งขนานกันด้วย Nornir แปลคำสั่งข้ามยี่ห้อให้ เก็บผลเป็นรายงาน ZIP / Excel และวาดแผนผังเครือข่ายจริงจาก LLDP ออกมาเป็น SVG / PNG / draw.io ได้ทันที
+ปัญหาที่แก้: แทนที่จะต้อง SSH เข้าไปทีละเครื่อง พิมพ์คำสั่งคนละแบบตามยี่ห้อ แล้วมานั่งรวม Log / วาด Topology เองใน Visio ระบบนี้รับรายชื่ออุปกรณ์ (หรือ Subnet) รันคำสั่งขนานกันด้วย Nornir แปลคำสั่งข้ามยี่ห้อให้ เก็บผลเป็นรายงาน ZIP / Excel และ**วาดแผนผังเครือข่ายจริงจาก LLDP** ที่แก้ต่อได้ในเว็บ แล้ว export เป็น SVG / PNG / draw.io
 
-![LLDP Topology](docs/screenshots/05-lldp-topology.png)
+![Topology Editor](docs/screenshots/06-topology-editor.png)
+
+### จุดเด่น: จาก LLDP สู่แผนผังเครือข่ายที่ใช้เป็นเอกสารได้
+
+| | |
+| :--- | :--- |
+| **สร้างผังได้ 4 ทาง** | สแกน LLDP จาก seed / subnet, import ตาราง LLDP จาก Excel / CSV, เปิดไฟล์ draw.io / SVG / PNG / JSON ที่เคย export ไว้ หรือวาดเองจากผังเปล่า |
+| **ค้นหาเองแบบ recursive** | SSH ต่อไปยังเพื่อนบ้านจาก LLDP management IP ไม่ SSH ซ้ำตัวที่อยู่ใน Fleet หรือเคยเข้าแล้ว และลอง login ตามลำดับ Command Profile (Huawei → Cisco) เมื่อยังไม่รู้ยี่ห้อ |
+| **Topology Editor เต็มรูปแบบ** | เพิ่มอุปกรณ์, ลาก Connect พร้อมเลือก interface, วาด Traffic flow, Zone, Note, เลือกหลายตัว, จัดแนว/กระจายระยะ, เส้นไกด์ตอนลาก, ค้นหา, ทำสำเนา, ซูม, โหมดเต็มจอ, Undo/Redo |
+| **ไอคอนตามรุ่นอุปกรณ์** | อ่านรุ่นจาก `display/show version` และ LLDP แล้วเลือกไอคอน (router, switch, firewall, wireless …) รุ่นที่ระบบไม่รู้จัก **สอนได้เองจากหน้าเว็บ** (Model Rules) ไม่ต้องแก้โค้ด |
+| **Round-trip ไม่เสียงาน** | ไฟล์ SVG / PNG / draw.io ที่ export ฝังข้อมูลผังไว้ เปิดกลับมาแก้ต่อได้ครบทั้งตำแหน่ง, flow, zone, note |
+
+> ลองเล่นได้ทันทีโดยไม่ต้องมีอุปกรณ์จริง: หน้า **LLDP Discovery → Import Topology** แล้วเลือก [`docs/samples/campus_topology.json`](docs/samples/campus_topology.json) (ผัง campus ตัวอย่างในภาพด้านบน)
 
 ---
 
@@ -153,13 +165,74 @@ flowchart LR
     C1 -->|rejected| C2["Command profile C2<br/>Cisco: show lldp ... (same session)"]
     C1 --> R["Parse neighbors<br/>Local/Remote Device, Model, Port, IP"]
     C2 --> R
-    R -->|recursive| S
+    R --> Q["Recursive: รวม management IP ทั้ง wave<br/>ตัด IP / ชื่อที่อยู่ใน Fleet หรือเคย SSH แล้ว"]
+    Q -->|IP ใหม่| D["SSH เพื่อนบ้าน: ลอง driver ตามลำดับ<br/>Command Profile (huawei → cisco_ios)"]
+    D --> C1
     R --> O["Topology + Excel + ZIP logs"]
+```
+
+### 1.5 Flow ของ Topology: สร้าง → แก้ → export → เปิดกลับมาแก้ต่อ
+
+ทุกทางเข้าจะกลายเป็น document เดียวกัน (devices, links + interface, flows, zones, notes) ที่ Topology Editor แก้ได้ และทุกไฟล์ที่ export ฝัง document นี้ไว้ จึงเปิดกลับมาแก้ต่อได้โดยไม่เสียอะไร
+
+```mermaid
+flowchart LR
+    subgraph IN["ทางเข้า"]
+        SCAN["LLDP scan<br/>Seed / Subnet / Recursive"]
+        XLS["Import LLDP Table<br/>.xlsx / .csv"]
+        FILE["Import Topology<br/>.drawio / .svg / .png / .zip / .json"]
+        NEW["New Diagram<br/>(ผังเปล่า)"]
+    end
+    SCAN --> MODEL
+    XLS --> MODEL
+    FILE --> MODEL
+    NEW --> DOC
+    MODEL["อ่านรุ่น + เลือกไอคอน<br/>Model Rules → built-in regex"] --> DOC[("Topology document<br/>devices · links · flows · zones · notes")]
+    DOC --> PIC["แบ่งภาพตาม Subnet<br/>(อุปกรณ์ที่ต่อกันอยู่ภาพเดียวกัน)"]
+    PIC --> ED["Topology Editor"]
+    ED --> DOC
+    ED --> OUT["Export<br/>SVG / PNG / draw.io<br/>(ฝังข้อมูลผังไว้ในไฟล์)"]
+    ED --> TBL["LLDP table + Excel<br/>(แก้ผัง = แก้ตาราง)"]
+    OUT -.->|round-trip| FILE
 ```
 
 ---
 
 ## 2. Key Features
+
+### LLDP Discovery → Topology (จุดเด่น)
+
+**ค้นหาอุปกรณ์**
+- **Seed Devices** หรือ **Subnet Scan** (CIDR / range / IP เดี่ยว + exclude) รันเป็น background job, TCP pre-scan port 22 ก่อน SSH เพื่อข้าม IP ที่ไม่มีเครื่อง
+- **Command Profile Priority** (C1, C2, C3 … เพิ่มได้) — ลองคำสั่งทีละ profile บน SSH session เดียว เช่น Huawei `display` ไม่ผ่านก็ใช้ Cisco `show` ต่อโดยไม่ login ซ้ำ สร้าง profile ของยี่ห้ออื่นเองได้จากหน้าเว็บ
+- **Recursive discovery** ตาม LLDP management IP (max depth 1–10)
+  - รอให้ครบทั้ง wave แล้วรวม IP ก่อน SSH — ตัดตัวที่อยู่ใน Fleet (เทียบทั้ง IP และชื่อ, ไม่สนโดเมน) และตัวที่เคย SSH แล้ว ไม่วนกลับ
+  - เพื่อนบ้านที่ยังไม่รู้ยี่ห้อ ลอง login ด้วย driver ตามลำดับ Command Profile (`huawei` → `cisco_ios`) แทนการใช้ driver ของตัวต้นทาง
+- Scan log เขียนลงดิสก์ทันทีต่อ host (`job.log`, `scan_result.csv`, `lldp_inventory.csv`, `hosts/*.log`) — ปิดเบราว์เซอร์ก็ไม่หาย
+- ผลลัพธ์: **LLDP Inventory**, **Execution Summary**, **Topology** และ export **Excel** (`LLDP_Inventory`, `Execution_Summary`, `Raw_Logs`)
+
+**สร้างผังได้ 4 ทาง** — ผลสแกน LLDP, **Import LLDP Table** (Excel / CSV ที่มีคอลัมน์ Local / Remote Device + Port พร้อมปุ่มดาวน์โหลด Template), **Import Topology** (`.drawio / .svg / .png / .zip / .json`) หรือ **New Diagram** วาดเองจากผังเปล่า
+
+**Topology Editor**
+
+| กลุ่ม | เครื่องมือ |
+| :--- | :--- |
+| วาด | Add device, **Connect** (ลากจากอุปกรณ์ไปอุปกรณ์แล้วเลือก interface ทั้งสองฝั่ง), **Traffic flow** (เส้นทางข้อมูลแบบเคลื่อนไหว หลายเส้นได้), **Zone** (Site / DMZ / VLAN / Rack), **Note** |
+| แก้ | ดับเบิลคลิกอุปกรณ์เพื่อแก้ชื่อ / IP / รุ่น / ชนิด / interface ทุกเส้น, Delete, Undo / Redo |
+| เลือกและจัดวาง | เลือกหลายตัว (Shift+ลากกรอบ, Shift+คลิก, Ctrl+A), ลากทั้งกลุ่ม, **Align** ซ้าย / กลาง / ขวา / บน / ล่าง, **Distribute** ระยะเท่ากัน, **จัดผังใหม่เฉพาะที่เลือก**, **เส้นไกด์** ตอนลากเมื่อตรงแนวกับตัวอื่น, Snap to grid |
+| ทำซ้ำ | **Ctrl+D** ทำสำเนา, **Ctrl+C / Ctrl+V** — ลิงก์ที่ต่อกันภายในกลุ่มที่เลือกก๊อปมาด้วย |
+| ดูผังใหญ่ | **Ctrl+F** ค้นหาอุปกรณ์ (ข้ามภาพได้), ปุ่มซูม / Fit selection, **โหมดเต็มจอ (F)**, ซ่อนอุปกรณ์บางชนิดจาก legend (ผลไปถึงไฟล์ที่ export ด้วย) |
+| Layout | Hierarchical, Force, Saved positions และ **แบ่งภาพตาม Subnet** (อุปกรณ์ต่าง subnet ที่ต่อกันอยู่ภาพเดียวกัน) |
+
+**ไอคอนตามรุ่นอุปกรณ์**
+- อ่านรุ่นจากผล `display / show version` และ LLDP System description (Huawei `CE6881`, `S5735`, `AR6120`, Cisco `C2960X`, `C9300`, `ISR4331` …) ย่อ FQDN เป็น hostname
+- 8 ชนิดอุปกรณ์: Router, Switch, Firewall, Server, Cloud / ISP, PC, Wireless AP, Unknown
+- **Model Rules / Teach model** — รุ่นที่ระบบไม่รู้จัก (FortiGate, Aruba, Ruijie …) สอนได้จากหน้าเว็บ: เลือกข้อความตัวอย่าง ลากคลุมชื่อรุ่น เลือกไอคอน ระบบสร้าง regex ให้ แล้ว **Re-parse** ผลเดิมโดยไม่ต้อง SSH ใหม่
+- **Model → Icon** แผงใต้ภาพบอกว่ารุ่นไหนใช้ไอคอนอะไร และมาจากไหน (กฎที่สอน / built-in / ตั้งในผัง)
+
+**Export / Import**
+- Export **SVG / PNG / draw.io** เฉพาะภาพที่เปิดอยู่ พร้อมชื่อ interface ปลายลิงก์ (เลือกได้) ทุกไฟล์ฝังข้อมูลผังไว้ เปิดกลับมาแก้ต่อได้ครบ
+- แก้ผังแล้วตาราง LLDP และ Excel เปลี่ยนตาม
 
 ### Fleet & Inventory
 - **Fleet Device Inventory** ใช้ร่วมกันทุกหน้า: เพิ่ม/ลบ/ค้นหา host, ตั้ง driver ทีละเครื่องหรือทั้งหมด
@@ -183,17 +256,6 @@ flowchart LR
 - Script Editor + Verified Template Snippets (Huawei / Cisco / Aruba / Juniper) + Interactive GUI Config Builder
 - **Pre-check → Backup running-config → Push → Save → Post-check → Rollback commands** ในงานเดียว
 - Backup config ทั้ง fleet, ดูผลรายเครื่องและ History
-
-### LLDP Discovery & Topology (ใหม่)
-- **Seed Devices** หรือ **Subnet Scan** (CIDR / range / IP เดี่ยว + exclude) รันเป็น background job
-- TCP pre-scan port 22 ก่อน SSH เพื่อข้าม IP ที่ไม่มีเครื่อง, **Recursive discovery** ตาม LLDP management IP (max depth 1–10)
-- **Command Profiles** (Huawei VRP → Cisco IOS) ลองคำสั่งทีละ profile บน SSH session เดียว ไม่ต้อง login ซ้ำ
-- ดึง Model (Huawei `CE6881`, `S5735`, Cisco `C2960X`, `C9300` ...) และย่อ FQDN เป็น hostname
-- Scan log เขียนลงดิสก์ทันทีต่อ host (`job.log`, `scan_result.csv`, `lldp_inventory.csv`, `hosts/*.log`) — ปิดเบราว์เซอร์ก็ไม่หาย
-- ผลลัพธ์: **LLDP Inventory**, **Execution Summary**, **Topology** และ export **Excel** (`LLDP_Inventory`, `Execution_Summary`, `Raw_Logs`)
-- **Topology แบ่งเป็นภาพตาม Subnet** (อุปกรณ์ต่าง subnet ที่เชื่อมกันจะรวมภาพเดียว)
-- **Topology Editor**: Select, Add device, Connect, Traffic flow, Zone, Note, Delete, Undo/Redo, Snap, แก้ interface ต่ออุปกรณ์
-- Export **SVG / PNG / draw.io** (ฝัง metadata) และ **Import กลับ** จาก `.drawio / .svg / .png / .zip / .json` เพื่อแก้ต่อได้
 
 ### Async Jobs & Reports
 - ส่งงาน fleet ได้ `job_id` ทันที, ติดตามผ่าน **SSE**: %, completed/success/failed, dev/s, ETA
@@ -328,11 +390,48 @@ npm run dev                        # http://localhost:4000
 
 ### 5.5 LLDP Discovery
 1. เลือกโหมด **Seed Devices** (ใช้ fleet ด้านบน) หรือ **Subnet Scan** (ใส่ `10.10.0.0/24`, `10.10.1.10-50`)
-2. เรียง **Command Profile Priority** (C1 Huawei, C2 Cisco)
+2. เรียง **Command Profile Priority** (C1 Huawei, C2 Cisco) กด **Add priority** เพิ่มลำดับ หรือ **Manage** เพื่อสร้าง profile ของยี่ห้ออื่น
 3. เปิด TCP Pre-Check / Recursive ตามต้องการ → Start
-4. ดูแท็บ **LLDP Inventory**, **Execution Summary**, **Topology**
+   - Recursive ใช้ Credential Profile เดียวกับอุปกรณ์ต้นทาง ถ้าเพื่อนบ้านใช้บัญชีอื่น ให้เพิ่มเป็นอีก priority ในโปรไฟล์
+4. ดูแท็บ **LLDP Inventory**, **Execution Summary** (กดขยายแถวเพื่อดู log การ SSH และ raw output), **Topology**
 5. Export Excel / ZIP logs หรือ Topology เป็น SVG / PNG / draw.io
-6. กด **Edit** เพื่อวาดเพิ่ม (traffic flow, zone, note) หรือ **Import Topology** เพื่อเปิดไฟล์ที่ export ไว้มาแก้ต่อ
+
+ไม่มีอุปกรณ์ให้สแกน? ใช้ **Import LLDP Table** (กด **Template** เพื่อโหลดไฟล์ Excel ตัวอย่าง), **Import Topology** หรือ **New Diagram** ได้เลย
+
+**รุ่นขึ้นเป็น Unknown?** กด **Teach model** บนแถบแจ้งเตือน (หรือ **Model Rules** ข้าง Command Profile Priority)
+1. เลือกข้อความตัวอย่างจากผลสแกน (ผล version หรือ LLDP System description)
+2. ลากเมาส์คลุมชื่อรุ่น เช่น `FortiGate-100F` — ระบบสร้าง regex ที่ครอบคลุมทั้งตระกูล (`FortiGate-` + ตัวเลข) ให้เอง
+3. เลือกไอคอน → **Save & apply to result** ผลเดิมจะถูกอ่านใหม่ทันทีโดยไม่ต้อง SSH
+
+### 5.6 Topology Editor
+
+เปิดแท็บ **Topology** → กด **Edit** (กด **Full screen** หรือ `F` เพื่อใช้ทั้งจอ)
+
+| เครื่องมือ | คีย์ | วิธีใช้ |
+| :--- | :---: | :--- |
+| Select / move | `V` | ลากย้าย, ดับเบิลคลิกอุปกรณ์เพื่อแก้ข้อมูลและ interface |
+| Add device | `N` | คลิกพื้นที่ว่าง แล้วกรอกชื่อ / IP / รุ่น / ชนิด |
+| Connect | `C` | ลากจากอุปกรณ์หนึ่งไปอีกตัว แล้วเลือก interface ทั้งสองฝั่ง |
+| Traffic flow | `T` | คลิกอุปกรณ์ตามเส้นทาง, `Enter` หรือดับเบิลคลิกตัวสุดท้ายเพื่อจบ, `Backspace` ถอยหนึ่ง hop |
+| Zone | `Z` | ลากกรอบ, ลากมุมขวาล่างเพื่อปรับขนาด |
+| Note | `A` | คลิกตำแหน่งแล้วพิมพ์ข้อความ (หลายบรรทัดได้) |
+| Delete | `X` | คลิกอุปกรณ์ / ลิงก์ / flow / zone / note ที่จะลบ |
+
+| คีย์ลัด / ท่า | ผล |
+| :--- | :--- |
+| `Shift` + ลากบนพื้นที่ว่าง | เลือกทุกอุปกรณ์ในกรอบ |
+| `Shift` + คลิก, `Ctrl+A` | เพิ่ม / เอาออกทีละตัว, เลือกทั้งภาพ |
+| ลากตัวใดตัวหนึ่งในกลุ่ม | ย้ายทั้งกลุ่ม |
+| แถบเครื่องมือด้านล่าง (เลือก ≥ 2) | Align 6 แบบ, Distribute แนวนอน / แนวตั้ง, จัดผังใหม่เฉพาะที่เลือก, Duplicate, Copy, Delete |
+| `Ctrl+D`, `Ctrl+C` / `Ctrl+V` | ทำสำเนา / คัดลอก-วาง (ลิงก์ภายในกลุ่มมาด้วย, IP ไม่ถูกก๊อป) |
+| `Ctrl+F` | เปิด / ปิดช่องค้นหา (ชื่อ, IP, รุ่น) — กดผลลัพธ์เพื่อเลื่อนไปหา |
+| `F` | เข้า / ออกโหมดเต็มจอ |
+| `Ctrl+Z` / `Ctrl+Y`, `Del`, `Esc` | Undo / Redo, ลบสิ่งที่เลือก, ยกเลิก |
+| คลิกชิปชนิดอุปกรณ์ใน legend | ซ่อน / แสดงชนิดนั้น (ไฟล์ที่ export ก็ซ่อนตาม) |
+
+- ลากอุปกรณ์แล้วมี **เส้นไกด์สีชมพู** เมื่อตรงแนวกับตัวอื่น — ตำแหน่งจะ snap เข้าแนวให้
+- วางไฟล์ `.drawio / .svg / .png / .json` ลงบนผังเพื่อรวมเข้ากับผังที่เปิดอยู่ (ชื่ออุปกรณ์ซ้ำ = อุปกรณ์เดียวกัน)
+- ลิงก์ที่วาดเองเป็น **เส้นสีเขียวอมฟ้า**, เส้นประ = LLDP เห็นจากฝั่งเดียว
 
 ---
 
@@ -355,7 +454,17 @@ npm run dev                        # http://localhost:4000
 ### 6.5 LLDP Topology — วาดจาก LLDP (Huawei + Cisco ผสม)
 ![LLDP Topology](docs/screenshots/05-lldp-topology.png)
 
-### 6.6 Terminal: Fleet Simulation Test (1,000 / 10,000 / Cancel)
+### 6.6 Topology Editor — โหมดเต็มจอ, Zone, Traffic flow, Note และเลือกหลายตัว
+ผัง campus ตัวอย่าง ([`docs/samples/campus_topology.json`](docs/samples/campus_topology.json)): firewall, core คู่, Huawei + Cisco, AP และ server แบ่ง zone ตามอาคาร มี traffic flow 2 เส้น เลือก access switch 3 ตัวอยู่ แถบด้านล่างคือเครื่องมือ align / distribute / duplicate
+![Topology Editor](docs/screenshots/06-topology-editor.png)
+
+### 6.7 ค้นหาอุปกรณ์ในผัง (Ctrl+F)
+![Find device](docs/screenshots/07-topology-find.png)
+
+### 6.8 Model → Icon — รุ่นไหนใช้ไอคอนอะไร และมาจากไหน
+![Model to Icon](docs/screenshots/08-model-icon-legend.png)
+
+### 6.9 Terminal: Fleet Simulation Test (1,000 / 10,000 / Cancel)
 
 ```text
 $ docker exec net-auto-backend python test_fleet_simulation.py
@@ -397,7 +506,7 @@ Completed Devices Before Halt: 30 / 5,000
 
 > การทดสอบนี้ mock การเชื่อมต่อ SSH เพื่อวัด job engine (chunking, SSE, pagination, cancel) ไม่ได้ต่ออุปกรณ์จริง
 
-### 6.7 Terminal: เรียก API โดยตรง
+### 6.10 Terminal: เรียก API โดยตรง
 
 ```bash
 # แปลคำสั่ง Huawei เป็นทุกยี่ห้อ
@@ -420,7 +529,7 @@ $ curl -s localhost:4050/api/v1/system/nornir-workers
 {"num_workers":10,"min_workers":1,"max_workers":100,"default_workers":10}
 ```
 
-### 6.8 ไฟล์ผลลัพธ์
+### 6.11 ไฟล์ผลลัพธ์
 
 **Fleet job ZIP** (`GET /jobs/{id}/export-zip`)
 ```text
@@ -452,6 +561,7 @@ deploy-config/
 ├── generate_devices.py          # สร้าง CSV อุปกรณ์จำลอง
 ├── devices_10000.csv            # ชุดทดสอบ 10,000 เครื่อง
 ├── docs/screenshots/            # ภาพประกอบ README
+├── docs/samples/campus_topology.json   # ผังตัวอย่างสำหรับ Import Topology
 │
 ├── backend/
 │   ├── Dockerfile               # python:3.10-slim + ping/traceroute
@@ -463,6 +573,7 @@ deploy-config/
 │       ├── data/                # JSON storage
 │       │   ├── credential_profiles.json
 │       │   ├── command_profiles.json   # LLDP command profiles (Huawei, Cisco)
+│       │   ├── model_rules.json        # กฎอ่านรุ่น / ไอคอนที่สอนจากหน้าเว็บ
 │       │   ├── playbooks.json
 │       │   └── templates.json
 │       ├── schemas/             # Pydantic models
@@ -472,8 +583,10 @@ deploy-config/
 │       │   ├── command_translator.py
 │       │   ├── inventory_parser.py
 │       │   ├── job_service.py
-│       │   ├── lldp_service.py          # collect + parse LLDP, Excel
+│       │   ├── lldp_service.py          # collect + parse LLDP, recursive + driver sweep, Excel
 │       │   ├── lldp_scan_service.py     # subnet scan job + disk logs
+│       │   ├── lldp_table_import.py     # Import LLDP Table (.xlsx / .csv)
+│       │   ├── model_rule_service.py    # Model Rules: regex รุ่น + ชนิดอุปกรณ์
 │       │   ├── netmiko_service.py
 │       │   ├── nornir_service.py
 │       │   ├── parser_service.py
@@ -484,7 +597,7 @@ deploy-config/
 │       │   └── topology_import_service.py
 │       └── api/endpoints/
 │           ├── command_profiles.py  deploy.py  devices.py  healthcheck.py
-│           ├── jobs.py  lldp.py  playbooks.py  profiles.py
+│           ├── jobs.py  lldp.py  model_rules.py  playbooks.py  profiles.py
 │           └── system.py  templates.py  troubleshoot.py
 │
 └── frontend/
@@ -496,11 +609,16 @@ deploy-config/
         ├── components/
         │   ├── Navbar.jsx  DeviceForm.jsx  TerminalOutput.jsx  AsyncJobModal.jsx
         │   ├── NornirWorkersControl.jsx  TcpWorkersControl.jsx
-        │   ├── LldpTopology.jsx      # topology view + editor
-        │   ├── TopologyDialogs.jsx   # device / interface dialogs
-        │   ├── topologyModel.js  topologyLayout.js  topologyGroups.js
+        │   ├── LldpTopology.jsx      # topology view + editor (tools, multi-select, find, full screen)
+        │   ├── TopologyDialogs.jsx   # device / interface / flow / zone / note dialogs
+        │   ├── topologyModel.js      # topology document: devices, links, flows, zones, notes
+        │   ├── topologyLayout.js     # hierarchical / force layout
+        │   ├── topologyGroups.js     # แบ่งภาพตาม subnet
         │   ├── topologyIcons.jsx     # router, switch, firewall, server, cloud, pc, wireless
-        │   └── topologyExport.js     # SVG / PNG / draw.io export
+        │   ├── topologyExport.js     # SVG / PNG / draw.io export (ฝังข้อมูลผัง)
+        │   ├── ModelRulesModal.jsx   # Teach model wizard
+        │   ├── modelRuleBuilders.js  # สร้าง regex จากข้อความที่เลือก
+        │   └── ModelIconLegend.jsx   # แผง Model → Icon
         └── pages/
             ├── HealthCheckPage.jsx  TroubleshootPage.jsx
             ├── DeployConfigPage.jsx  LldpDiscoveryPage.jsx
@@ -565,11 +683,16 @@ Base URL: `http://localhost:4050/api/v1` — ดูรายละเอีย�
 | GET | `/scan-subnet/{job_id}` | สถานะ (+ `include_report`, `log_lines`) |
 | POST | `/scan-subnet/{job_id}/cancel` | ยกเลิก |
 | GET | `/scan-subnet/{job_id}/export-zip` | ZIP ของ log directory |
-| POST | `/import-topology` | import `.drawio/.svg/.png/.zip/.json` (≤ 50 MB) |
+| POST | `/import-topology` | import `.drawio/.svg/.png/.zip/.json` หรือตาราง LLDP `.xlsx/.csv` (≤ 50 MB) |
+| GET | `/import-template` | ไฟล์ Excel ตัวอย่างสำหรับ Import LLDP Table |
+| POST | `/reparse` | อ่านรุ่น / ชนิดอุปกรณ์ของผลเดิมใหม่ด้วย Model Rules ปัจจุบัน (ไม่ SSH) |
 | POST | `/export-excel` | สร้าง `lldp_detailed_report_*.xlsx` |
 
 ### LLDP Command Profiles — `/command-profiles`
 `GET ""`, `GET /{id}`, `POST ""`, `PUT /{id}`, `DELETE /{id}`, `POST /reorder`
+
+### Model Rules — `/model-rules`
+`GET ""`, `POST ""`, `PUT /{id}`, `DELETE /{id}`, `POST /reorder`, `POST /test` (ลองกฎกับข้อความตัวอย่างก่อนบันทึก)
 
 ### Playbooks / Templates / System
 | Method | Path | คำอธิบาย |
