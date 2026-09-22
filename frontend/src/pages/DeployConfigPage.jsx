@@ -34,10 +34,21 @@ import {
   HardDrive,
   RefreshCw,
   Plus,
+  Pencil,
+  Trash2,
+  Save,
+  CopyPlus,
+  Braces,
 } from 'lucide-react';
 import {
   submitDeployJob,
   submitBackupJob,
+  getConfigTemplates,
+  createConfigTemplate,
+  updateConfigTemplate,
+  deleteConfigTemplate,
+  getHiddenBuiltinTemplates,
+  hideBuiltinTemplate,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
@@ -229,6 +240,33 @@ const VENDOR_TEMPLATES = {
   ],
 };
 
+const VENDOR_LABELS = {
+  huawei: 'Huawei VRP',
+  cisco_ios: 'Cisco IOS / XE',
+  aruba_os: 'Aruba CX',
+  juniper_junos: 'Juniper JunOS',
+};
+
+// {{NAME}} in a template = a value asked for when the template is inserted
+const TEMPLATE_VAR_RE = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+const templateVariables = (config) => {
+  const names = [];
+  for (const m of config.matchAll(TEMPLATE_VAR_RE)) {
+    if (!names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+};
+
+// Empty values keep their {{NAME}} so they can still be filled with Replace Var later
+const fillTemplateVariables = (config, values) =>
+  config.replace(TEMPLATE_VAR_RE, (whole, name) => {
+    const v = values[name];
+    return v !== undefined && v !== '' ? v : whole;
+  });
+
+const EMPTY_TEMPLATE_DRAFT = { id: null, name: '', vendor: 'huawei', category: '', description: '', config: '' };
+
 // Dangerous command detection rules for safety linting
 const CRITICAL_KEYWORDS = [
   'reload',
@@ -259,6 +297,15 @@ export default function DeployConfigPage({
   const [activeVendor, setActiveVendor] = useState('huawei');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [templateSearch, setTemplateSearch] = useState('');
+  const [templateSource, setTemplateSource] = useState('all'); // 'all', 'custom', 'builtin'
+
+  // User-made templates (backend /config-templates)
+  const [customTemplates, setCustomTemplates] = useState([]);
+  const [hiddenBuiltins, setHiddenBuiltins] = useState([]); // '<vendor>:<title>' of deleted built-ins
+  const [templateDraft, setTemplateDraft] = useState(null); // EMPTY_TEMPLATE_DRAFT shape while the editor modal is open
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateDraftError, setTemplateDraftError] = useState('');
+  const [pendingInsert, setPendingInsert] = useState(null); // { tpl, replace, values } while asking for {{variables}}
 
   // Deploy Options
   const [saveConfig, setSaveConfig] = useState(true);
@@ -375,25 +422,126 @@ export default function DeployConfigPage({
     return { criticals, warnings, hasHighRisk: criticals.length > 0 };
   })();
 
-  // Filter templates
-  const currentTemplates = VENDOR_TEMPLATES[activeVendor] || VENDOR_TEMPLATES['huawei'];
+  useEffect(() => {
+    getConfigTemplates()
+      .then(setCustomTemplates)
+      .catch((err) => console.error('Failed to load config templates', err));
+    getHiddenBuiltinTemplates()
+      .then(setHiddenBuiltins)
+      .catch((err) => console.error('Failed to load deleted built-in templates', err));
+  }, []);
+
+  // Filter templates: user-made ones first, then the built-in catalog
+  const vendorCustomTemplates = customTemplates
+    .filter((t) => t.vendor === activeVendor)
+    .map((t) => ({ ...t, title: t.name, desc: t.description, custom: true }));
+  const builtinTemplates = (VENDOR_TEMPLATES[activeVendor] || VENDOR_TEMPLATES['huawei'])
+    .map((t) => ({ ...t, builtinKey: `${activeVendor}:${t.title}` }))
+    .filter((t) => !hiddenBuiltins.includes(t.builtinKey));
+  const currentTemplates = [
+    ...(templateSource !== 'builtin' ? vendorCustomTemplates : []),
+    ...(templateSource !== 'custom' ? builtinTemplates : []),
+  ];
   const templateCategories = ['All', ...new Set(currentTemplates.map((t) => t.category))];
+  const categoryFilter = templateCategories.includes(selectedCategory) ? selectedCategory : 'All';
   const filteredTemplates = currentTemplates.filter((t) => {
-    const matchCat = selectedCategory === 'All' || t.category === selectedCategory;
+    const matchCat = categoryFilter === 'All' || t.category === categoryFilter;
+    const q = templateSearch.toLowerCase();
     const matchSearch =
-      templateSearch === '' ||
-      t.title.toLowerCase().includes(templateSearch.toLowerCase()) ||
-      t.desc.toLowerCase().includes(templateSearch.toLowerCase()) ||
-      t.config.toLowerCase().includes(templateSearch.toLowerCase());
+      q === '' ||
+      t.title.toLowerCase().includes(q) ||
+      (t.desc || '').toLowerCase().includes(q) ||
+      t.config.toLowerCase().includes(q);
     return matchCat && matchSearch;
   });
+  const allCategories = [
+    ...new Set([
+      ...customTemplates.map((t) => t.category),
+      ...Object.values(VENDOR_TEMPLATES).flat().map((t) => t.category),
+    ]),
+  ].filter(Boolean);
 
-  // Handle template insertion
-  const handleInsertTemplate = (templateConfig, replace = false) => {
+  const writeToEditor = (text, replace) => {
     if (replace || configText.trim() === '') {
-      setConfigText(templateConfig);
+      setConfigText(text);
     } else {
-      setConfigText((prev) => `${prev.trim()}\n\n${templateConfig}`);
+      setConfigText((prev) => `${prev.trim()}\n\n${text}`);
+    }
+  };
+
+  // Handle template insertion: templates with {{variables}} ask for values first
+  const handleInsertTemplate = (tpl, replace = false) => {
+    const vars = templateVariables(tpl.config);
+    if (vars.length === 0) {
+      writeToEditor(tpl.config, replace);
+      return;
+    }
+    setPendingInsert({ tpl, replace, vars, values: Object.fromEntries(vars.map((v) => [v, ''])) });
+  };
+
+  const handleConfirmInsert = (keepPlaceholders = false) => {
+    if (!pendingInsert) return;
+    const text = keepPlaceholders
+      ? pendingInsert.tpl.config
+      : fillTemplateVariables(pendingInsert.tpl.config, pendingInsert.values);
+    writeToEditor(text, pendingInsert.replace);
+    setPendingInsert(null);
+  };
+
+  const openTemplateEditor = (draft) => {
+    setTemplateDraftError('');
+    setTemplateDraft({ ...EMPTY_TEMPLATE_DRAFT, vendor: activeVendor, ...draft });
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!templateDraft) return;
+    const { id, name, vendor, category, description, config } = templateDraft;
+    if (!name.trim()) {
+      setTemplateDraftError('Template name is required.');
+      return;
+    }
+    if (!config.trim()) {
+      setTemplateDraftError('Template config is empty.');
+      return;
+    }
+    setTemplateSaving(true);
+    setTemplateDraftError('');
+    try {
+      const payload = { name, vendor, category, description, config };
+      if (id) {
+        const saved = await updateConfigTemplate(id, payload);
+        setCustomTemplates((prev) => prev.map((t) => (t.id === id ? saved : t)));
+      } else {
+        const saved = await createConfigTemplate(payload);
+        setCustomTemplates((prev) => [saved, ...prev]);
+      }
+      // Show the saved template where the user will look for it
+      setActiveVendor(vendor);
+      setTemplateSource((s) => (s === 'builtin' ? 'all' : s));
+      setTemplateDraft(null);
+      setSuccessMessage(`Template "${name.trim()}" saved.`);
+    } catch (err) {
+      setTemplateDraftError(err.response?.data?.detail || err.message || 'Failed to save template');
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl) => {
+    if (tpl.custom) {
+      if (!window.confirm(`Delete template "${tpl.title}"?`)) return;
+    } else if (!window.confirm(`Delete default template "${tpl.title}"?\nThis cannot be undone.`)) {
+      return;
+    }
+    try {
+      if (tpl.custom) {
+        await deleteConfigTemplate(tpl.id);
+        setCustomTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
+      } else {
+        setHiddenBuiltins(await hideBuiltinTemplate(tpl.builtinKey));
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to delete template');
     }
   };
 
@@ -784,6 +932,17 @@ export default function DeployConfigPage({
 
                   <button
                     type="button"
+                    onClick={() => openTemplateEditor({ config: configText.trim() })}
+                    disabled={validCommands.length === 0}
+                    className="btn-editor-tool"
+                    title="Save the current script as a reusable template"
+                  >
+                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Save as Template</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setShowVariableModal(true)}
                     disabled={validCommands.length === 0}
                     className="btn-editor-tool"
@@ -1007,8 +1166,17 @@ export default function DeployConfigPage({
               <div className="card-header-flex">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-indigo-400" />
-                  <h3 className="card-title">Verified Template Snippets</h3>
+                  <h3 className="card-title">Config Templates</h3>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => openTemplateEditor({})}
+                  className="btn-template-new"
+                  title="Create a new config template"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New Template</span>
+                </button>
               </div>
 
               {/* Vendor Switcher */}
@@ -1061,13 +1229,30 @@ export default function DeployConfigPage({
                   )}
                 </div>
 
+                <div className="template-source-tabs">
+                  {[
+                    ['all', 'All'],
+                    ['custom', `My Templates (${vendorCustomTemplates.length})`],
+                    ['builtin', 'Built-in'],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setTemplateSource(key)}
+                      className={`template-source-btn ${templateSource === key ? 'active' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="category-pills">
                   {templateCategories.map((cat) => (
                     <button
                       key={cat}
                       type="button"
                       onClick={() => setSelectedCategory(cat)}
-                      className={`cat-pill ${selectedCategory === cat ? 'active' : ''}`}
+                      className={`cat-pill ${categoryFilter === cat ? 'active' : ''}`}
                     >
                       {cat}
                     </button>
@@ -1079,21 +1264,91 @@ export default function DeployConfigPage({
               <div className="templates-scroll-list">
                 {filteredTemplates.length === 0 ? (
                   <div className="no-templates">
-                    <p className="text-xs text-slate-500">No template snippets found matching your search.</p>
+                    {templateSource === 'custom' && !templateSearch ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-xs text-slate-500">
+                          No {VENDOR_LABELS[activeVendor]} templates yet. Create one, or save the script in the editor as a template.
+                        </p>
+                        <button type="button" onClick={() => openTemplateEditor({})} className="btn-template-new">
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>New Template</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">No template snippets found matching your search.</p>
+                    )}
                   </div>
                 ) : (
                   filteredTemplates.map((tpl, idx) => (
-                    <div key={idx} className="template-snippet-item">
+                    <div key={tpl.id || `builtin-${idx}`} className={`template-snippet-item ${tpl.custom ? 'custom' : ''}`}>
                       <div className="snippet-header">
-                        <div>
-                          <span className="snippet-category">{tpl.category}</span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="snippet-category">{tpl.category}</span>
+                            {tpl.custom && <span className="snippet-custom-badge">My Template</span>}
+                          </div>
                           <h4 className="snippet-title">{tpl.title}</h4>
-                          <p className="snippet-desc">{tpl.desc}</p>
+                          {tpl.desc && <p className="snippet-desc">{tpl.desc}</p>}
+                          {templateVariables(tpl.config).length > 0 && (
+                            <div className="snippet-vars">
+                              <Braces className="h-3 w-3" />
+                              {templateVariables(tpl.config).map((v) => (
+                                <span key={v} className="snippet-var-chip font-mono">{v}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="snippet-actions">
+                          {tpl.custom ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => openTemplateEditor(tpl)}
+                                className="btn-snippet-icon"
+                                title="Edit template"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTemplate(tpl)}
+                                className="btn-snippet-icon danger"
+                                title="Delete template"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openTemplateEditor({
+                                  name: `${tpl.title} (copy)`,
+                                  vendor: activeVendor,
+                                  category: tpl.category,
+                                  description: tpl.desc,
+                                  config: tpl.config,
+                                })
+                              }
+                              className="btn-snippet-icon"
+                              title="Save a copy to My Templates to customize it"
+                            >
+                              <CopyPlus className="h-3 w-3" />
+                            </button>
+                          )}
+                          {!tpl.custom && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTemplate(tpl)}
+                              className="btn-snippet-icon danger"
+                              title="Delete default template"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => handleInsertTemplate(tpl.config, false)}
+                            onClick={() => handleInsertTemplate(tpl, false)}
                             className="btn-snippet-append"
                             title="Append to bottom of editor"
                           >
@@ -1102,7 +1357,7 @@ export default function DeployConfigPage({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleInsertTemplate(tpl.config, true)}
+                            onClick={() => handleInsertTemplate(tpl, true)}
                             className="btn-snippet-replace"
                             title="Replace editor content"
                           >
@@ -2067,6 +2322,174 @@ export default function DeployConfigPage({
       )}
 
       {/* VARIABLE REPLACER MODAL */}
+      {templateDraft && (
+        <div className="modal-backdrop">
+          <div className="template-modal-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-indigo-400" />
+                <h3 className="confirm-modal-title">{templateDraft.id ? 'Edit Config Template' : 'New Config Template'}</h3>
+              </div>
+              <button onClick={() => setTemplateDraft(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+
+            <div className="template-modal-body">
+              <div className="template-form-grid">
+                <div className="template-form-wide">
+                  <label className="form-label">Template Name *</label>
+                  <input
+                    type="text"
+                    value={templateDraft.name}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, name: e.target.value }))}
+                    placeholder="e.g. Branch switch baseline"
+                    className="form-input"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Vendor *</label>
+                  <select
+                    value={templateDraft.vendor}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, vendor: e.target.value }))}
+                    className="form-input"
+                  >
+                    {Object.entries(VENDOR_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Category</label>
+                  <input
+                    type="text"
+                    list="config-template-categories"
+                    value={templateDraft.category}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, category: e.target.value }))}
+                    placeholder="My Templates"
+                    className="form-input"
+                  />
+                  <datalist id="config-template-categories">
+                    {allCategories.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="template-form-wide">
+                  <label className="form-label">Description</label>
+                  <input
+                    type="text"
+                    value={templateDraft.description}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, description: e.target.value }))}
+                    placeholder="What this template configures"
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="form-label">Config *</label>
+                <textarea
+                  value={templateDraft.config}
+                  onChange={(e) => setTemplateDraft((d) => ({ ...d, config: e.target.value }))}
+                  placeholder={`vlan {{VLAN_ID}}\n description {{VLAN_NAME}}`}
+                  className="template-config-textarea font-mono"
+                  spellCheck="false"
+                  rows={12}
+                />
+                <p className="template-hint">
+                  Use <code>{'{{NAME}}'}</code> for values that change per use (e.g. <code>{'{{VLAN_ID}}'}</code>). You will be asked for them when inserting the template.
+                </p>
+                {templateVariables(templateDraft.config).length > 0 && (
+                  <div className="snippet-vars mt-2">
+                    <Braces className="h-3 w-3" />
+                    <span className="text-[11px] text-slate-400">Variables:</span>
+                    {templateVariables(templateDraft.config).map((v) => (
+                      <span key={v} className="snippet-var-chip font-mono">{v}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {templateDraftError && (
+                <div className="alert-box error">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span className="flex-1">{templateDraftError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => setTemplateDraft(null)} className="btn-secondary">
+                Cancel
+              </button>
+              <button type="button" onClick={handleSaveTemplate} disabled={templateSaving} className="btn-primary">
+                {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                <span>{templateDraft.id ? 'Save Changes' : 'Save Template'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingInsert && (
+        <div className="modal-backdrop">
+          <div className="variable-modal-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <Braces className="h-4 w-4 text-amber-400" />
+                <h3 className="confirm-modal-title">Fill Template Variables — {pendingInsert.tpl.title}</h3>
+              </div>
+              <button onClick={() => setPendingInsert(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+
+            <form
+              className="p-4 flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmInsert(false);
+              }}
+            >
+              {pendingInsert.vars.map((v, i) => (
+                <div key={v}>
+                  <label className="form-label font-mono">{v}</label>
+                  <input
+                    type="text"
+                    value={pendingInsert.values[v]}
+                    onChange={(e) =>
+                      setPendingInsert((p) => ({ ...p, values: { ...p.values, [v]: e.target.value } }))
+                    }
+                    placeholder={`{{${v}}}`}
+                    className="form-input font-mono"
+                    autoFocus={i === 0}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="form-label">Preview</label>
+                <pre className="snippet-code font-mono template-preview">
+                  {fillTemplateVariables(pendingInsert.tpl.config, pendingInsert.values)}
+                </pre>
+              </div>
+              <p className="text-[11px] text-slate-500">Empty fields keep their {'{{NAME}}'} placeholder.</p>
+              <button type="submit" hidden />
+            </form>
+
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => handleConfirmInsert(true)} className="btn-secondary">
+                Insert with Placeholders
+              </button>
+              <button type="button" onClick={() => handleConfirmInsert(false)} className="btn-primary">
+                {pendingInsert.replace ? 'Replace Editor' : 'Append to Editor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showVariableModal && (
         <div className="modal-backdrop">
           <div className="variable-modal-box">

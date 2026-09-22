@@ -577,3 +577,35 @@ export default apiClient;
 
 
 
+
+// User-made Deploy Config templates (config text may hold {{VARIABLE}} placeholders)
+export const getConfigTemplates = async () => {
+  const response = await apiClient.get('/config-templates');
+  return response.data;
+};
+
+export const createConfigTemplate = async (template) => {
+  const response = await apiClient.post('/config-templates', template);
+  return response.data;
+};
+
+export const updateConfigTemplate = async (id, template) => {
+  const response = await apiClient.put(`/config-templates/${id}`, template);
+  return response.data;
+};
+
+export const deleteConfigTemplate = async (id) => {
+  const response = await apiClient.delete(`/config-templates/${id}`);
+  return response.data;
+};
+
+// Built-in Deploy Config templates the user deleted (keys '<vendor>:<title>')
+export const getHiddenBuiltinTemplates = async () => {
+  const response = await apiClient.get('/config-templates/builtins/hidden');
+  return response.data;
+};
+
+export const hideBuiltinTemplate = async (key) => {
+  const response = await apiClient.post('/config-templates/builtins/hide', { key });
+  return response.data;
+};

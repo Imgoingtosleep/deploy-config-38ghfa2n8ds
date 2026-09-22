@@ -254,6 +254,7 @@ flowchart LR
 
 ### Deploy Config
 - Script Editor + Verified Template Snippets (Huawei / Cisco / Aruba / Juniper) + Interactive GUI Config Builder
+- **สร้าง Config Template เอง** (แยกตามยี่ห้อ/หมวด) พร้อมตัวแปร `{{VLAN_ID}}` ที่ระบบถามค่าตอนใส่ลง editor — เก็บที่ backend ใช้ร่วมกันทุกเครื่อง
 - **Pre-check → Backup running-config → Push → Save → Post-check → Rollback commands** ในงานเดียว
 - Backup config ทั้ง fleet, ดูผลรายเครื่องและ History
 
@@ -384,7 +385,10 @@ npm run dev                        # http://localhost:4000
 ด้านล่างมี Ping / Traceroute และค้นหา Syslog
 
 ### 5.4 Deploy Config
-1. เขียนคำสั่งใน **Configuration Commands Script** หรือเลือกจาก Template Snippets
+1. เขียนคำสั่งใน **Configuration Commands Script** หรือเลือกจาก Config Templates
+   - สร้าง template เอง: **New Template** หรือ **Save as Template** (เก็บ script ใน editor) หรือปุ่มสำเนาบน template สำเร็จรูปเพื่อนำไปแก้ต่อ
+   - ลบ template สำเร็จรูปที่ไม่ใช้ได้ด้วยปุ่มถังขยะ (ลบแยกตามยี่ห้อ) — ลบแล้วเอากลับมาไม่ได้
+   - ใส่ `{{NAME}}` ตรงค่าที่เปลี่ยนทุกครั้ง เช่น `vlan {{VLAN_ID}}` — กด Append / Replace แล้วจะมีช่องให้กรอกค่าพร้อม preview (ช่องที่เว้นว่างจะคง `{{NAME}}` ไว้)
 2. เปิด Pre-check / Post-check / Backup / Save ตามต้องการ
 3. Deploy → ดูผลใน **Deployment Results & Analytics** (มี rollback commands ให้) และ **History**
 
@@ -693,6 +697,10 @@ Base URL: `http://localhost:4050/api/v1` — ดูรายละเอีย�
 
 ### Model Rules — `/model-rules`
 `GET ""`, `POST ""`, `PUT /{id}`, `DELETE /{id}`, `POST /reorder`, `POST /test` (ลองกฎกับข้อความตัวอย่างก่อนบันทึก)
+
+### Deploy Config Templates — `/config-templates`
+`GET ""` (`?vendor=`), `POST ""`, `PUT /{id}`, `DELETE /{id}` — เก็บใน `backend/app/data/config_templates.json`
+`GET /builtins/hidden`, `POST /builtins/hide` (`{key: "huawei:Static Default Route"}`) — template สำเร็จรูปที่ลบจะถูกซ่อนถาวร (บันทึกใน `config_templates_hidden.json`)
 
 ### Playbooks / Templates / System
 | Method | Path | คำอธิบาย |
