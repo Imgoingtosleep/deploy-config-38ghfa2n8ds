@@ -390,6 +390,7 @@ npm run dev                        # http://localhost:4000
    - ลบ template สำเร็จรูปที่ไม่ใช้ได้ด้วยปุ่มถังขยะ (ลบแยกตามยี่ห้อ) — ลบแล้วเอากลับมาไม่ได้
    - ใส่ `{{NAME}}` ตรงค่าที่เปลี่ยนทุกครั้ง เช่น `vlan {{VLAN_ID}}` — กด Append / Replace แล้วจะมีช่องให้กรอกค่าพร้อม preview (ช่องที่เว้นว่างจะคง `{{NAME}}` ไว้)
 2. เปิด Pre-check / Post-check / Backup / Save ตามต้องการ
+   - **Save to Startup** ต่อคำสั่ง save เป็นคำสั่งสุดท้าย (Huawei `save` แล้วตอบ `y`, Cisco / Aruba `write memory`, Juniper `commit`) และเช็คข้อความตอบกลับว่าบันทึกสำเร็จจริง — ถ้าไม่เจอ เครื่องนั้นจะขึ้น Failed "Config pushed but NOT saved"
 3. Deploy → ดูผลใน **Deployment Results & Analytics** (มี rollback commands ให้) และ **History**
 
 ### 5.5 LLDP Discovery

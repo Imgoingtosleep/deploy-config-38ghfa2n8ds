@@ -39,6 +39,7 @@ import {
   Save,
   CopyPlus,
   Braces,
+  Lock,
 } from 'lucide-react';
 import {
   submitDeployJob,
@@ -265,6 +266,18 @@ const fillTemplateVariables = (config, values) =>
     return v !== undefined && v !== '' ? v : whole;
   });
 
+// Same as backend services/save_config.py save_command(): run as the last command,
+// every confirmation it asks is answered with y / yes
+const saveCommandFor = (deviceType = '') => {
+  const t = deviceType.toLowerCase();
+  if (t.includes('huawei')) return 'save';
+  if (t.includes('juniper') || t.includes('junos')) return 'commit';
+  if (t.includes('cisco') || t.includes('aruba')) return 'write memory';
+  return 'save (driver default)';
+};
+
+const SAVE_COMMAND_VENDOR = { save: 'Huawei', 'write memory': 'Cisco / Aruba', commit: 'Juniper', 'save (driver default)': 'other' };
+
 const EMPTY_TEMPLATE_DRAFT = { id: null, name: '', vendor: 'huawei', category: '', description: '', config: '' };
 
 // Dangerous command detection rules for safety linting
@@ -326,6 +339,9 @@ export default function DeployConfigPage({
   const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id: string, title: string }
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
+  // The save command(s) appended as the last command when "Save to Startup" is on (one per vendor in the fleet)
+  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios')))];
+  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor)]) : [];
 
   // UI Navigation & View Modes
   const [activeTab, setActiveTab] = useState('editor'); // 'editor', 'builder', 'results', 'history'
@@ -1008,6 +1024,19 @@ export default function DeployConfigPage({
                 />
               </div>
 
+              {finalSaveCommands.length > 0 && validCommands.length > 0 && (
+                <div className="save-final-row">
+                  <Lock className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>Last command (added by Save to Startup):</span>
+                  {finalSaveCommands.map((c) => (
+                    <code key={c} className="font-mono">
+                      {c}
+                      {c === 'save' && <span className="save-final-confirm">→ Y</span>}
+                    </code>
+                  ))}
+                </div>
+              )}
+
               {/* Safety & Risk Lint Warning Box */}
               {riskAnalysis.hasHighRisk && (
                 <div className="risk-banner critical">
@@ -1053,7 +1082,10 @@ export default function DeployConfigPage({
                     />
                     <div>
                       <span className="option-name">Save to Startup-Config / NVRAM</span>
-                      <p className="option-hint">Executes 'write memory' or 'save' after deployment</p>
+                      <p className="option-hint">
+                        Adds {(saveCommands.length ? saveCommands : [saveCommandFor(activeVendor)]).map((c) => `'${c}'`).join(' / ')} as the last command,
+                        (Huawei 'save' is confirmed with Y), and fails the device if it does not report the save
+                      </p>
                     </div>
                   </label>
 
@@ -1129,7 +1161,7 @@ export default function DeployConfigPage({
                     <span>
                       {validCommands.length === 0
                         ? 'Add commands above to proceed'
-                        : `Ready to push ${validCommands.length} command(s) across ${validFleet.length} device(s)`}
+                        : `Ready to push ${validCommands.length} command(s)${finalSaveCommands.length ? ' + save' : ''} across ${validFleet.length} device(s)`}
                     </span>
                   </div>
 
@@ -2267,7 +2299,7 @@ export default function DeployConfigPage({
                 <div className="confirm-stat-card">
                   <span className="confirm-stat-label">NVRAM Save</span>
                   <span className="confirm-stat-val font-mono">
-                    {saveConfig ? 'Enabled (write mem)' : 'Disabled'}
+                    {saveConfig ? `${finalSaveCommands.join(' / ')} + Y` : 'Disabled'}
                   </span>
                 </div>
               </div>
@@ -2286,7 +2318,7 @@ export default function DeployConfigPage({
               <div className="confirm-cmd-preview">
                 <div className="text-xs font-semibold text-slate-400 mb-1.5 flex justify-between">
                   <span>Commands to be executed sequentially:</span>
-                  <span>{validCommands.length} items</span>
+                  <span>{validCommands.length + (finalSaveCommands.length ? 1 : 0)} items</span>
                 </div>
                 <div className="confirm-cmd-list font-mono">
                   {validCommands.map((cmd, i) => (
@@ -2295,6 +2327,19 @@ export default function DeployConfigPage({
                       <span className="text-emerald-300">{maskSensitiveCli(cmd)}</span>
                     </div>
                   ))}
+                  {finalSaveCommands.length > 0 && (
+                    <div className="confirm-cmd-row confirm-cmd-save">
+                      <span className="text-slate-500 w-6">{validCommands.length + 1}.</span>
+                      <span className="text-amber-300">
+                        {finalSaveCommands
+                          .map((c) => (finalSaveCommands.length > 1 ? `${c} (${SAVE_COMMAND_VENDOR[c]})` : c))
+                          .join('  |  ')}
+                      </span>
+                      {finalSaveCommands.includes('save') && (
+                        <span className="save-final-confirm">Huawei confirm → Y</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

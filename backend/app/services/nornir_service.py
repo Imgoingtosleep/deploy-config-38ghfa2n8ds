@@ -16,7 +16,8 @@ from nornir import InitNornir
 from nornir.core.inventory import Host, Hosts, Inventory, Defaults, ConnectionOptions
 from nornir.core.plugins.inventory import InventoryPluginRegister
 from nornir.core.task import Task
-from nornir_netmiko.tasks import netmiko_send_command, netmiko_send_config, netmiko_save_config
+from nornir_netmiko.tasks import netmiko_send_command, netmiko_send_config
+from app.services.save_config import save_command, save_kwargs, save_with_nornir
 
 from app.schemas.device import DeviceCredentials
 from app.schemas.command import (
@@ -523,18 +524,20 @@ class NornirService:
             deploy_output = cfg_res.result or ""
             step_logs[-1]["status"] = "success"
 
-            # 4. Save to Startup / NVRAM
+            # 4. Save to Startup / NVRAM: the last config command, confirmed with y / yes
             save_output = None
+            save_error = None
             if save_config:
-                step_logs.append({"step": "save", "title": "Saving Config to NVRAM", "status": "running"})
-                try:
-                    s_res = task.run(task=netmiko_save_config)
-                    save_output = s_res.result
+                save_cmd = save_command(dev_type)
+                step_logs.append({"step": "save", "title": f"Saving Config to Startup ({save_cmd}{', confirm Y' if save_kwargs(dev_type).get('confirm') else ''})", "status": "running"})
+                saved = save_with_nornir(task, dev_type)
+                save_output = saved["output"] or saved["error"]
+                if saved["success"]:
                     step_logs[-1]["status"] = "success"
-                except Exception as se:
-                    save_output = f"Save failed: {str(se)}"
+                else:
+                    save_error = saved["error"]
                     step_logs[-1]["status"] = "failed"
-                    step_logs[-1]["error"] = str(se)
+                    step_logs[-1]["error"] = save_error
 
             # 5. Post-Checks
             for cmd in (post_check_commands or []):
@@ -599,6 +602,8 @@ class NornirService:
                 "step_logs": step_logs,
                 "execution_time_seconds": t_elapsed,
                 "authenticated_username": task.host.username,
+                "save_error": save_error,
+                "commands_deployed": clean_commands + ([save_cmd] if save_config else []),
             }
 
         agg_result = nr.run(task=_nornir_deploy_task)
@@ -639,10 +644,14 @@ class NornirService:
                     sysname_device=sysname,
                     command=f"Nornir Config Deployment ({len(clean_commands)} lines)",
                     output=deploy_out,
-                    success=True,
-                    error=None,
+                    # Config that was pushed but not saved is lost on reboot: count it as failed
+                    success=not task_data.get("save_error"),
+                    error=(
+                        f"Config pushed but NOT saved to startup: {task_data['save_error']}"
+                        if task_data.get("save_error") else None
+                    ),
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
-                    commands_deployed=clean_commands,
+                    commands_deployed=task_data.get("commands_deployed", clean_commands),
                     save_output=task_data.get("save_output"),
                     backup_config=task_data.get("backup_output"),
                     pre_check_results=task_data.get("pre_check_results", []),

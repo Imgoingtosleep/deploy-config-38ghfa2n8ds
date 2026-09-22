@@ -16,6 +16,7 @@ from netmiko.exceptions import (
 )
 from app.schemas.device import DeviceCredentials
 from app.core.config import settings
+from app.services.save_config import save_command, save_kwargs, save_startup_config
 
 class NetmikoService:
     @staticmethod
@@ -804,12 +805,12 @@ class NetmikoService:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, logs):
                 output = net_connect.send_config_set(config_lines)
                 save_output = ""
+                save_error = None
                 if save:
-                    try:
-                        save_output = net_connect.save_config()
-                    except Exception as se:
-                        save_output = f"Config deployed but save failed: {str(se)}"
-                
+                    saved = save_startup_config(net_connect, device.device_type)
+                    save_output = saved["output"] or saved["error"]
+                    save_error = saved["error"]
+
                 full_output = f"{output}\n\n[Save Config Status]:\n{save_output}" if save else output
                 masked_output = cls.clean_cli_output(full_output)
                 elapsed = round(time.time() - start_time, 2)
@@ -817,8 +818,8 @@ class NetmikoService:
                     "host": target_name,
                     "command": f"Config deployment ({len(config_lines)} lines)",
                     "output": masked_output,
-                    "success": True,
-                    "error": None,
+                    "success": not save_error,
+                    "error": f"Config pushed but NOT saved to startup: {save_error}" if save_error else None,
                     "execution_time_seconds": elapsed,
                     "authenticated_credential": winning_cred,
                     "authenticated_username": device.username,
@@ -905,15 +906,18 @@ class NetmikoService:
 
                 # 4. Save to Startup / NVRAM if enabled
                 save_output = ""
+                save_error = None
                 if save:
-                    step_logs.append({"step": "save", "title": "Saving Config to NVRAM (save/write mem)", "status": "running"})
-                    try:
-                        save_output = net_connect.save_config()
+                    save_cmd = save_command(device.device_type)
+                    step_logs.append({"step": "save", "title": f"Saving Config to Startup ({save_cmd}{', confirm Y' if save_kwargs(device.device_type).get('confirm') else ''})", "status": "running"})
+                    saved = save_startup_config(net_connect, device.device_type)
+                    save_output = saved["output"] or saved["error"]
+                    if saved["success"]:
                         step_logs[-1]["status"] = "success"
-                    except Exception as se:
-                        save_output = f"Config deployed but save failed: {str(se)}"
+                    else:
+                        save_error = saved["error"]
                         step_logs[-1]["status"] = "failed"
-                        step_logs[-1]["error"] = str(se)
+                        step_logs[-1]["error"] = save_error
 
                 # 5. Post-check commands
                 for cmd in post_check_commands:
@@ -951,10 +955,10 @@ class NetmikoService:
                     "host": target_name,
                     "command": f"Advanced Config Deployment ({len(config_lines)} commands)",
                     "output": masked_full_output,
-                    "success": True,
-                    "error": None,
+                    "success": not save_error,
+                    "error": f"Config pushed but NOT saved to startup: {save_error}" if save_error else None,
                     "execution_time_seconds": elapsed,
-                    "commands_deployed": config_lines,
+                    "commands_deployed": config_lines + ([save_command(device.device_type)] if save else []),
                     "save_output": save_output if save else None,
                     "backup_config": backup_output,
                     "pre_check_results": pre_results,
