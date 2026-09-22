@@ -1,15 +1,19 @@
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
-pydantic>=2.4.0
-pydantic-settings>=2.0.0
-netmiko>=4.2.0
-paramiko>=3.3.0
-nornir>=3.4.0
-nornir-netmiko>=0.2.0
-nornir-utils>=0.2.0
-jinja2>=3.1.2
-python-multipart>=0.0.6
-requests>=2.31.0
-pyserial>=3.5
-openpyxl>=3.1.5
-
+# Allowed version ranges. The image installs the exact versions in requirements.lock;
+# regenerate that file (see its header) after changing a range here.
+fastapi>=0.104.0,<1
+uvicorn[standard]>=0.24.0,<1
+pydantic>=2.4.0,<3
+pydantic-settings>=2.0.0,<3
+netmiko>=4.2.0,<5
+# paramiko 4+ removed diffie-hellman-group14-sha1 / group1-sha1, which older Huawei VRP
+# and Cisco IOS switches need (see app/services/ssh_compat.py). Do not raise this bound.
+paramiko>=3.5.1,<4
+nornir>=3.4.0,<4
+nornir-netmiko>=0.2.0,<2
+nornir-utils>=0.2.0,<1
+jinja2>=3.1.2,<4
+python-multipart>=0.0.6,<1
+requests>=2.31.0,<3
+pyserial>=3.5,<4
+openpyxl>=3.1.5,<4
+tzdata>=2024.1

@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     LLDP_LOG_DIR: str = os.getenv("LLDP_LOG_DIR", "logs/lldp")
     LLDP_SCAN_MAX_IPS: int = int(os.getenv("LLDP_SCAN_MAX_IPS", 16384))
 
+    # Scheduled config deploy
+    DEPLOY_LOG_DIR: str = os.getenv("DEPLOY_LOG_DIR", "logs/deploy")
+    DEPLOY_SCHEDULE_TICK_SECONDS: int = int(os.getenv("DEPLOY_SCHEDULE_TICK_SECONDS", 15))
+    # With no deadline, a schedule that could not start within this many minutes of run_at is marked missed
+    DEPLOY_SCHEDULE_GRACE_MINUTES: int = int(os.getenv("DEPLOY_SCHEDULE_GRACE_MINUTES", 15))
+
     class Config:
         case_sensitive = True
         extra = "allow"

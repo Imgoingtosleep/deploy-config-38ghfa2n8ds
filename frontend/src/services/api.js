@@ -232,6 +232,60 @@ export const submitDeployJob = async (
   return response.data;
 };
 
+// Scheduled deploy: `schedule` = { runAt, deadline, title } with runAt/deadline as Date objects
+export const scheduleDeployJob = async (
+  devices,
+  configCommands,
+  saveConfig,
+  preCheckCommands,
+  postCheckCommands,
+  backupBeforeDeploy,
+  numWorkers,
+  schedule
+) => {
+  const payload = {
+    devices,
+    config_commands: configCommands,
+    save_config: saveConfig,
+    pre_check_commands: preCheckCommands,
+    post_check_commands: postCheckCommands,
+    backup_before_deploy: backupBeforeDeploy,
+    run_at: schedule.runAt.toISOString(),
+    deadline: schedule.deadline ? schedule.deadline.toISOString() : null,
+    client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    client_offset_minutes: -schedule.runAt.getTimezoneOffset(),
+    title: schedule.title || null,
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/deploy-schedules', payload);
+  return response.data;
+};
+
+export const getDeploySchedules = async () => {
+  const response = await apiClient.get('/deploy-schedules');
+  return response.data;
+};
+
+export const cancelDeploySchedule = async (id) => {
+  const response = await apiClient.post(`/deploy-schedules/${id}/cancel`);
+  return response.data;
+};
+
+export const runDeployScheduleNow = async (id) => {
+  const response = await apiClient.post(`/deploy-schedules/${id}/run-now`);
+  return response.data;
+};
+
+export const deleteDeploySchedule = async (id) => {
+  const response = await apiClient.delete(`/deploy-schedules/${id}`);
+  return response.data;
+};
+
+export const getDeployScheduleLog = async (id) => {
+  const response = await apiClient.get(`/deploy-schedules/${id}/log`, { responseType: 'text' });
+  return response.data;
+};
+
 export const submitBackupJob = async (devices, numWorkers = null) => {
   const payload = { devices };
   if (numWorkers) payload.num_workers = numWorkers;

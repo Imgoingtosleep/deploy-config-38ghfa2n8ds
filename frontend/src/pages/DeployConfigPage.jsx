@@ -40,10 +40,19 @@ import {
   CopyPlus,
   Braces,
   Lock,
+  CalendarClock,
+  Play,
+  Ban,
 } from 'lucide-react';
 import {
   submitDeployJob,
   submitBackupJob,
+  scheduleDeployJob,
+  getDeploySchedules,
+  cancelDeploySchedule,
+  runDeployScheduleNow,
+  deleteDeploySchedule,
+  getDeployScheduleLog,
   getConfigTemplates,
   createConfigTemplate,
   updateConfigTemplate,
@@ -300,6 +309,30 @@ const WARNING_KEYWORDS = [
   'no service password-encryption',
 ];
 
+// <input type="datetime-local"> value in the browser's own timezone
+const toLocalInput = (date) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const nextFullHour = () => {
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  return d;
+};
+
+const formatScheduleTime = (iso) => (iso ? new Date(iso).toLocaleString() : '-');
+
+const SCHEDULE_STATUS_STYLE = {
+  scheduled: 'scheduled',
+  running: 'running',
+  completed: 'success',
+  cancelled: 'muted',
+  missed: 'failed',
+  interrupted: 'failed',
+  failed: 'failed',
+};
+
 export default function DeployConfigPage({
   fleet = [],
   nornirWorkers = 10,
@@ -337,6 +370,14 @@ export default function DeployConfigPage({
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id: string, title: string }
+
+  // Scheduled deploy
+  const [deployMode, setDeployMode] = useState('now'); // 'now' | 'schedule'
+  const [scheduleRunAt, setScheduleRunAt] = useState(() => toLocalInput(nextFullHour()));
+  const [scheduleDeadline, setScheduleDeadline] = useState('');
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [schedules, setSchedules] = useState([]);
+  const [scheduleLog, setScheduleLog] = useState(null); // { id, title, text }
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
   // The save command(s) appended as the last command when "Save to Startup" is on (one per vendor in the fleet)
@@ -598,10 +639,164 @@ export default function DeployConfigPage({
       return;
     }
 
-    // Route to Background Async Job with live progress stream & modal
+    // Route to Background Async Job with live progress stream & modal, or to the scheduler
     setDeploying(false);
-    handleLaunchAsyncFleetDeploy();
+    if (deployMode === 'schedule') {
+      handleScheduleDeploy();
+    } else {
+      handleLaunchAsyncFleetDeploy();
+    }
   };
+
+  const buildPayloadDevices = () =>
+    validFleet.map((d) => ({
+      name: d.name || '',
+      host: d.host.trim(),
+      port: parseInt(d.port, 10) || 22,
+      device_type: d.device_type || 'cisco_ios',
+      username: d.username || '',
+      password: d.password || '',
+      secret: d.secret || '',
+      connection_mode: 'network',
+      profile_id: d.profile_id || null,
+      credential_pool: d.credential_pool || null,
+      fallback_profile_ids: d.fallback_profile_ids || null,
+    }));
+
+  const checkCommandLists = () => ({
+    preCmds: enablePreCheck && preCheckCmd.trim() ? preCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [],
+    postCmds: enablePostCheck && postCheckCmd.trim() ? postCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [],
+  });
+
+  // Scheduled deploy: times are picked in this browser's timezone and sent as UTC
+  const scheduleInputError = (() => {
+    if (deployMode !== 'schedule') return '';
+    const runAt = new Date(scheduleRunAt);
+    if (!scheduleRunAt || Number.isNaN(runAt.getTime())) return 'Pick a start time';
+    if (runAt.getTime() < Date.now() - 60000) return 'Start time is in the past';
+    if (scheduleDeadline) {
+      const deadline = new Date(scheduleDeadline);
+      if (Number.isNaN(deadline.getTime()) || deadline <= runAt) return 'Deadline must be after the start time';
+    }
+    return '';
+  })();
+
+  const loadSchedules = async () => {
+    try {
+      setSchedules(await getDeploySchedules());
+    } catch (err) {
+      console.error('Failed to load scheduled deploys', err);
+    }
+  };
+
+  const handleScheduleDeploy = async () => {
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device IP address in Target Device above.');
+      return;
+    }
+    if (validCommands.length === 0) {
+      setErrorMessage('Please enter configuration commands to deploy.');
+      return;
+    }
+    if (scheduleInputError) {
+      setErrorMessage(scheduleInputError);
+      return;
+    }
+    const { preCmds, postCmds } = checkCommandLists();
+    try {
+      setDeploying(true);
+      const item = await scheduleDeployJob(
+        buildPayloadDevices(),
+        validCommands,
+        saveConfig,
+        preCmds,
+        postCmds,
+        enableBackup,
+        nornirWorkers,
+        {
+          runAt: new Date(scheduleRunAt),
+          deadline: scheduleDeadline ? new Date(scheduleDeadline) : null,
+          title: scheduleTitle.trim(),
+        }
+      );
+      setSuccessMessage(`Scheduled "${item.title}" for ${formatScheduleTime(item.run_at)}`);
+      setScheduleTitle('');
+      await loadSchedules();
+      setActiveTab('scheduled');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setErrorMessage(
+        (Array.isArray(detail) ? detail.map((d) => d.msg).join('; ') : detail) || err.message || 'Failed to schedule deploy'
+      );
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleScheduleAction = async (action, item) => {
+    try {
+      if (action === 'cancel') {
+        if (!window.confirm(`Cancel "${item.title}"?`)) return;
+        await cancelDeploySchedule(item.id);
+      } else if (action === 'run') {
+        if (!window.confirm(`Start "${item.title}" now on ${item.device_count} devices?`)) return;
+        const res = await runDeployScheduleNow(item.id);
+        if (res.job_id) setActiveAsyncJob({ id: res.job_id, title: `Scheduled Deploy: ${res.title}` });
+      } else if (action === 'delete') {
+        await deleteDeploySchedule(item.id);
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Schedule action failed');
+    }
+    loadSchedules();
+  };
+
+  const openScheduleLog = async (item) => {
+    try {
+      const text = await getDeployScheduleLog(item.id);
+      setScheduleLog({ id: item.id, title: item.title, text });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to load log');
+    }
+  };
+
+  const downloadScheduleLog = () => {
+    const blob = new Blob([scheduleLog.text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${scheduleLog.id}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const hasActiveSchedule = schedules.some((s) => s.status === 'scheduled' || s.status === 'running');
+
+  useEffect(() => {
+    loadSchedules();
+  }, []);
+
+  // Refresh while something is waiting or running, or while the tab is open
+  useEffect(() => {
+    if (!hasActiveSchedule && activeTab !== 'scheduled') return undefined;
+    const timer = setInterval(loadSchedules, 10000);
+    return () => clearInterval(timer);
+  }, [hasActiveSchedule, activeTab]);
+
+  // Live log while its schedule is running
+  const logScheduleStatus = scheduleLog && schedules.find((s) => s.id === scheduleLog.id)?.status;
+  useEffect(() => {
+    if (!scheduleLog || (logScheduleStatus !== 'running' && logScheduleStatus !== 'scheduled')) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const text = await getDeployScheduleLog(scheduleLog.id);
+        setScheduleLog((cur) => (cur && cur.id === scheduleLog.id ? { ...cur, text } : cur));
+      } catch (err) {
+        /* keep the last text */
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [scheduleLog?.id, logScheduleStatus]);
 
   // Launch Massive Fleet Background Job (10,000+ Scale with live SSE Progress Stream & Pagination)
   const handleLaunchAsyncFleetDeploy = async () => {
@@ -614,24 +809,11 @@ export default function DeployConfigPage({
       return;
     }
 
-    const preCmds = enablePreCheck && preCheckCmd.trim() ? preCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
-    const postCmds = enablePostCheck && postCheckCmd.trim() ? postCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
+    const { preCmds, postCmds } = checkCommandLists();
 
     try {
       setDeploying(true);
-      const payloadDevices = validFleet.map((d) => ({
-        name: d.name || '',
-        host: d.host.trim(),
-        port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'cisco_ios',
-        username: d.username || '',
-        password: d.password || '',
-        secret: d.secret || '',
-        connection_mode: 'network',
-        profile_id: d.profile_id || null,
-        credential_pool: d.credential_pool || null,
-        fallback_profile_ids: d.fallback_profile_ids || null,
-      }));
+      const payloadDevices = buildPayloadDevices();
 
       const res = await submitDeployJob(
         payloadDevices,
@@ -661,19 +843,7 @@ export default function DeployConfigPage({
     }
     try {
       setBackingUp(true);
-      const payloadDevices = validFleet.map((d) => ({
-        name: d.name || '',
-        host: d.host.trim(),
-        port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'cisco_ios',
-        username: d.username || '',
-        password: d.password || '',
-        secret: d.secret || '',
-        connection_mode: 'network',
-        profile_id: d.profile_id || null,
-        credential_pool: d.credential_pool || null,
-        fallback_profile_ids: d.fallback_profile_ids || null,
-      }));
+      const payloadDevices = buildPayloadDevices();
       const res = await submitBackupJob(payloadDevices, nornirWorkers);
       setShowBackupModal(false);
       setActiveAsyncJob({
@@ -888,6 +1058,19 @@ export default function DeployConfigPage({
           >
             <History className="h-4 w-4 text-sky-400" />
             <span>History ({deployHistory.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('scheduled')}
+            className={`deploy-tab-btn ${activeTab === 'scheduled' ? 'active' : ''}`}
+          >
+            <CalendarClock className="h-4 w-4 text-violet-400" />
+            <span>Scheduled</span>
+            {hasActiveSchedule && (
+              <span className="counter-pill">
+                {schedules.filter((s) => s.status === 'scheduled' || s.status === 'running').length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -2259,6 +2442,158 @@ export default function DeployConfigPage({
         </div>
       )}
 
+      {/* TAB 5: SCHEDULED DEPLOYS */}
+      {activeTab === 'scheduled' && (
+        <div className="deploy-card">
+          <div className="card-header-flex">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-violet-400" />
+              <h3 className="card-title">Scheduled Deployments</h3>
+            </div>
+            <button type="button" onClick={loadSchedules} className="btn-history-view">
+              <RefreshCw className="h-3 w-3 inline mr-1" />
+              Refresh
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 mb-2">
+            Times are shown in this browser&apos;s timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). The
+            backend starts each deploy on its own clock, so this page can be closed.
+          </p>
+
+          {schedules.length === 0 ? (
+            <div className="no-templates py-8">
+              <CalendarClock className="h-8 w-8 text-slate-600 mb-2" />
+              <p className="text-xs text-slate-500">
+                No scheduled deploys. Choose &quot;Schedule&quot; in the deploy confirmation to add one.
+              </p>
+            </div>
+          ) : (
+            <div className="history-table-wrapper">
+              <table className="history-table">
+                <thead>
+                  <tr>
+                    <th>Start At</th>
+                    <th>Title</th>
+                    <th>Devices</th>
+                    <th>Commands</th>
+                    <th>Status</th>
+                    <th>Result</th>
+                    <th className="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {schedules.map((item) => (
+                    <tr key={item.id}>
+                      <td className="font-mono text-xs text-slate-300">
+                        {formatScheduleTime(item.run_at)}
+                        {item.deadline && (
+                          <div className="text-slate-500">until {formatScheduleTime(item.deadline)}</div>
+                        )}
+                      </td>
+                      <td className="text-xs text-white">
+                        {item.title}
+                        {item.stores_passwords && (
+                          <div className="schedule-warn" title="Devices without a Credential Profile keep their password in scheduled_deploys.json until the run">
+                            <Lock className="h-3 w-3 inline mr-1" />
+                            password stored on server
+                          </div>
+                        )}
+                        {item.error && <div className="text-rose-400">{item.error}</div>}
+                      </td>
+                      <td className="font-mono text-xs text-slate-300">{item.device_count}</td>
+                      <td className="font-mono text-xs text-indigo-300">{item.command_count}</td>
+                      <td>
+                        <span
+                          className={`status-pill ${
+                            item.status === 'completed' && item.summary?.failed > 0
+                              ? 'failed'
+                              : SCHEDULE_STATUS_STYLE[item.status] || 'muted'
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="font-mono text-xs text-slate-400">
+                        {item.summary
+                          ? `${item.summary.success} ok / ${item.summary.failed} failed`
+                          : item.started_at
+                            ? `started ${formatScheduleTime(item.started_at)}`
+                            : '-'}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        <button type="button" onClick={() => openScheduleLog(item)} className="btn-history-view mr-2">
+                          <FileText className="h-3 w-3 inline mr-1" />
+                          Log
+                        </button>
+                        {item.job_id && item.status === 'running' && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveAsyncJob({ id: item.job_id, title: `Scheduled Deploy: ${item.title}` })}
+                            className="btn-history-view mr-2"
+                          >
+                            <Eye className="h-3 w-3 inline mr-1" />
+                            Progress
+                          </button>
+                        )}
+                        {item.status === 'scheduled' && (
+                          <button type="button" onClick={() => handleScheduleAction('run', item)} className="btn-history-restore mr-2">
+                            <Play className="h-3 w-3 inline mr-1" />
+                            Run Now
+                          </button>
+                        )}
+                        {(item.status === 'scheduled' || item.status === 'running') && (
+                          <button type="button" onClick={() => handleScheduleAction('cancel', item)} className="btn-schedule-danger">
+                            <Ban className="h-3 w-3 inline mr-1" />
+                            Cancel
+                          </button>
+                        )}
+                        {item.status !== 'scheduled' && item.status !== 'running' && (
+                          <button type="button" onClick={() => handleScheduleAction('delete', item)} className="btn-schedule-danger">
+                            <Trash2 className="h-3 w-3 inline mr-1" />
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SCHEDULE LOG MODAL */}
+      {scheduleLog && (
+        <div className="modal-backdrop">
+          <div className="confirm-modal-box schedule-log-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-violet-400" />
+                <h3 className="confirm-modal-title">Deploy Log: {scheduleLog.title}</h3>
+              </div>
+              <button onClick={() => setScheduleLog(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+            <div className="confirm-modal-body">
+              <div className="schedule-log-legend font-mono">time | device | ip | action | status | detail</div>
+              <pre className="schedule-log-text">{scheduleLog.text || 'No log lines yet.'}</pre>
+            </div>
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => openScheduleLog(scheduleLog)} className="btn-secondary">
+                <RefreshCw className="h-4 w-4" />
+                <span>Refresh</span>
+              </button>
+              <button type="button" onClick={downloadScheduleLog} className="btn-secondary">
+                <Download className="h-4 w-4" />
+                <span>Download .log</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CONFIRMATION MODAL */}
       {showConfirmModal && (
         <div className="modal-backdrop">
@@ -2314,6 +2649,69 @@ export default function DeployConfigPage({
                 </div>
               )}
 
+              {/* Deploy now or at a scheduled time */}
+              <div className="schedule-picker">
+                <div className="schedule-mode-toggle">
+                  <button
+                    type="button"
+                    className={deployMode === 'now' ? 'active' : ''}
+                    onClick={() => setDeployMode('now')}
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Deploy now
+                  </button>
+                  <button
+                    type="button"
+                    className={deployMode === 'schedule' ? 'active' : ''}
+                    onClick={() => setDeployMode('schedule')}
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    Schedule
+                  </button>
+                </div>
+                {deployMode === 'schedule' && (
+                  <div className="schedule-fields">
+                    <div>
+                      <label className="form-label">Start at *</label>
+                      <input
+                        type="datetime-local"
+                        value={scheduleRunAt}
+                        onChange={(e) => setScheduleRunAt(e.target.value)}
+                        className="form-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Do not start after (optional)</label>
+                      <input
+                        type="datetime-local"
+                        value={scheduleDeadline}
+                        onChange={(e) => setScheduleDeadline(e.target.value)}
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="schedule-field-wide">
+                      <label className="form-label">Title (optional)</label>
+                      <input
+                        type="text"
+                        value={scheduleTitle}
+                        onChange={(e) => setScheduleTitle(e.target.value)}
+                        placeholder="e.g. Add VLAN 100 on access switches"
+                        className="form-input"
+                      />
+                    </div>
+                    <p className="schedule-hint schedule-field-wide">
+                      Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}. Without a deadline, a deploy that
+                      cannot start within 15 minutes of the start time (e.g. the backend was down) is marked missed
+                      instead of running late.
+                      {!enableBackup && ' Tip: enable "Backup before deploy" for unattended runs.'}
+                    </p>
+                    {scheduleInputError && (
+                      <p className="text-xs text-rose-400 schedule-field-wide">{scheduleInputError}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Command List Preview */}
               <div className="confirm-cmd-preview">
                 <div className="text-xs font-semibold text-slate-400 mb-1.5 flex justify-between">
@@ -2357,9 +2755,10 @@ export default function DeployConfigPage({
                 type="button"
                 onClick={handleConfirmDeploy}
                 className="btn-deploy-confirm"
+                disabled={deployMode === 'schedule' && !!scheduleInputError}
               >
-                <Send className="h-4 w-4" />
-                <span>Confirm & Push Configuration</span>
+                {deployMode === 'schedule' ? <CalendarClock className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                <span>{deployMode === 'schedule' ? 'Confirm & Schedule Deploy' : 'Confirm & Push Configuration'}</span>
               </button>
             </div>
           </div>
