@@ -65,17 +65,21 @@ def test_connection(device: DeviceCredentials):
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
-from app.services.autodetect_service import AutoDetectService
+from app.services.autodetect_service import AutoDetectService, is_driver
+
+
+def _detect_status(detected_type: str) -> str:
+    """'detected', or the failure itself: unreachable / auth_failed / cant_detect"""
+    if is_driver(detected_type):
+        return "detected"
+    return "cant_detect" if detected_type == "unknown" else detected_type
+
 
 @router.post("/detect-type")
 def detect_single_device_type(device: DeviceCredentials):
     """Auto-detect vendor/driver type for a single network device"""
     detected_type, reason = AutoDetectService.detect_device_type(device, force_refresh=True)
-    status = "unreachable" if detected_type == "unreachable" else (
-        "auth_failed" if detected_type == "auth_failed" else (
-            "unknown" if detected_type == "unknown" else "detected"
-        )
-    )
+    status = _detect_status(detected_type)
     return {
         "host": device.host,
         "device_type": detected_type,
@@ -96,11 +100,7 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
     def _probe_dev(dev: DeviceCredentials, index: int):
         d_type, reason = AutoDetectService.detect_device_type(dev, force_refresh=True)
         dev_id = getattr(dev, "id", None) or f"dev-{index+1}"
-        status = "unreachable" if d_type == "unreachable" else (
-            "auth_failed" if d_type == "auth_failed" else (
-                "unknown" if d_type == "unknown" else "detected"
-            )
-        )
+        status = _detect_status(d_type)
         return {
             "id": dev_id,
             "host": dev.host,

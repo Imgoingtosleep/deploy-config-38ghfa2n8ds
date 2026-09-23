@@ -15,7 +15,14 @@
       "lldp_full": "display lldp neighbor"
     },
     "created_at": "2026-09-16T00:00:00Z",
-    "updated_at": "2026-09-16T00:00:00Z"
+    "updated_at": "2026-09-16T00:00:00Z",
+    "regexes": {
+      "sysname": "",
+      "version": "",
+      "lldp_brief": "",
+      "lldp_detail": "",
+      "lldp_full": ""
+    }
   },
   {
     "id": "cmdprof-cisco",
@@ -33,6 +40,13 @@
       "lldp_full": "show lldp neighbors detail"
     },
     "created_at": "2026-09-16T00:00:00Z",
-    "updated_at": "2026-09-16T00:00:00Z"
+    "updated_at": "2026-09-16T00:00:00Z",
+    "regexes": {
+      "sysname": "",
+      "version": "",
+      "lldp_brief": "",
+      "lldp_detail": "",
+      "lldp_full": ""
+    }
   }
 ]

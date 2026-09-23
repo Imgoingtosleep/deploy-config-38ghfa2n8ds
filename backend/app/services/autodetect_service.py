@@ -9,6 +9,55 @@ from typing import Dict, Any, Optional, Tuple, List
 from app.schemas.device import DeviceCredentials
 from app.core.config import settings
 
+# device_type values that ask for detection instead of naming a driver
+AUTO_TYPES = ("", "autodetect", "auto")
+# What detect_device_type() answers when it cannot name a driver. These are statuses,
+# never drivers: resolve_driver() turns them into a real driver for the connection.
+#   unreachable - nothing answered on the SSH / telnet port
+#   auth_failed - it answered, every credential was rejected
+#   cant_detect - it answered (and usually logged in) but no banner, prompt or
+#                 version command named the vendor
+DETECT_FAILURES = ("unreachable", "auth_failed", "cant_detect", "unknown")  # 'unknown' = old name of cant_detect
+
+# Vendor names printed before / right after login, shared by the SSH and telnet probes
+_LOGIN_BANNER_SIGNATURES = [
+    ("huawei", r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", "Huawei VRP"),
+    ("cisco_nxos", r"Cisco Nexus|NX-OS", "Cisco NX-OS"),
+    ("cisco_ios", r"Cisco IOS Software|IOS-XE|Cisco Systems|User Access Verification", "Cisco IOS"),
+    ("hp_comware", r"H3C Comware|HPE Comware|Comware Software|New H3C Technologies", "H3C Comware"),
+    ("aruba_os", r"ArubaOS|ProCurve", "Aruba OS"),
+    ("juniper_junos", r"JUNOS", "Juniper JunOS"),
+    ("mikrotik_routeros", r"MikroTik|RouterOS", "MikroTik RouterOS"),
+    ("raisecom_roap", r"Raisecom Technology|ROS Software|ISCOM|RAX|Gazelle", "Raisecom ROS"),
+]
+
+# Telnet driver for each SSH driver the detector can return
+_TELNET_DRIVERS = {
+    "huawei": "huawei_telnet",
+    "cisco_ios": "cisco_ios_telnet",
+    "cisco_nxos": "cisco_nxos_telnet",
+    "hp_comware": "hp_comware_telnet",
+    "aruba_os": "aruba_procurve_telnet",
+    "juniper_junos": "juniper_junos_telnet",
+    "raisecom_roap": "raisecom_telnet",
+}
+
+_ALL_LOGINS_REJECTED = "every probe login was rejected"
+
+
+def is_driver(device_type: Optional[str]) -> bool:
+    """True when device_type names a driver, not 'autodetect' or a detection status"""
+    t = (device_type or "").strip().lower()
+    return t not in AUTO_TYPES and t not in DETECT_FAILURES
+
+
+def match_login_banner(text: str) -> Optional[Tuple[str, str]]:
+    """(driver, vendor label) of the first vendor named in a login banner"""
+    for driver, pattern, label in _LOGIN_BANNER_SIGNATURES:
+        if re.search(pattern, text or "", re.I):
+            return driver, label
+    return None
+
 
 def clean_ansi(text: str) -> str:
     """Strip VT100/ANSI escape sequences, OSC title codes, and non-printable control characters."""
@@ -55,25 +104,75 @@ class AutoDetectService:
     _cache_ts: Dict[str, float] = {}
     CACHE_TTL: float = 300.0  # 5 minutes TTL
 
+    @staticmethod
+    def _cache_key(host: str, port: Optional[int]) -> str:
+        # Port is part of the key: SSH on 22 and telnet on 23 (or a console server
+        # mapping several devices behind one IP) are different drivers
+        return f"{host}:{port or 22}"
+
     @classmethod
-    def get_cached_type(cls, host: str) -> Optional[str]:
+    def get_cached_type(cls, host: str, port: Optional[int] = None) -> Optional[str]:
         if not host:
             return None
-        cached = cls._cache.get(host)
+        key = cls._cache_key(host, port)
+        cached = cls._cache.get(key)
         if not cached:
             return None
-        ts = cls._cache_ts.get(host, 0)
+        ts = cls._cache_ts.get(key, 0)
         if time.time() - ts > cls.CACHE_TTL:
-            cls._cache.pop(host, None)
-            cls._cache_ts.pop(host, None)
+            cls._cache.pop(key, None)
+            cls._cache_ts.pop(key, None)
             return None
         return cached
 
     @classmethod
-    def set_cached_type(cls, host: str, device_type: str):
-        if host and device_type and device_type not in ["autodetect", "auto", "unreachable", "auth_failed", "unknown"]:
-            cls._cache[host] = device_type
-            cls._cache_ts[host] = time.time()
+    def set_cached_type(cls, host: str, device_type: str, port: Optional[int] = None):
+        if host and is_driver(device_type):
+            key = cls._cache_key(host, port)
+            cls._cache[key] = device_type
+            cls._cache_ts[key] = time.time()
+
+    @staticmethod
+    def is_telnet(device: DeviceCredentials) -> bool:
+        return device.port == 23 or "telnet" in (device.device_type or "").lower()
+
+    @staticmethod
+    def telnet_driver(driver: str) -> str:
+        from netmiko.ssh_dispatcher import platforms
+        if driver.endswith("_telnet"):
+            return driver
+        tel = _TELNET_DRIVERS.get(driver) or f"{driver}_telnet"
+        return tel if tel in platforms else driver
+
+    @classmethod
+    def fallback_driver(cls, device: DeviceCredentials) -> str:
+        """Driver used when detection cannot name one: DEFAULT_DEVICE_TYPE, telnet variant on telnet"""
+        from netmiko.ssh_dispatcher import platforms
+        base = (settings.DEFAULT_DEVICE_TYPE or "").strip().lower()
+        if base not in platforms:
+            base = "huawei" if "huawei" in base else "cisco_ios"
+        return cls.telnet_driver(base) if cls.is_telnet(device) else base
+
+    @classmethod
+    def resolve_driver(cls, device: DeviceCredentials) -> Tuple[str, str]:
+        """
+        Driver to connect with. Never returns a detection status: a device already set to
+        a driver keeps it, 'autodetect' is detected, and when detection fails (or the device
+        is on a serial console, where there is nothing to probe over the network) the
+        default driver is used and the note says why.
+        """
+        if is_driver(device.device_type):
+            return device.device_type.strip().lower(), ""
+        fallback = cls.fallback_driver(device)
+        if device.connection_mode == "serial":
+            return fallback, f"serial console: auto-detect skipped, default driver {fallback}"
+        try:
+            detected, reason = cls.detect_device_type(device)
+        except Exception as e:
+            return fallback, f"auto-detect error ({e}), default driver {fallback}"
+        if is_driver(detected):
+            return detected, f"auto-detected {detected}: {reason}"
+        return fallback, f"auto-detect {detected} ({reason}), default driver {fallback}"
 
     @classmethod
     def clear_cache(cls):
@@ -92,45 +191,48 @@ class AutoDetectService:
         Returns: (detected_type, details_reason)
         e.g. ("huawei", "Detected from prompt signature: <Huawei-Core>")
         """
+        if device.connection_mode == "serial":
+            # host defaults to 192.168.1.1, so probing it would name some other device's vendor
+            return "cant_detect", "Serial console device: vendor cannot be detected over the network, set the type manually"
+
         host = (device.host or "").strip()
         if not host:
             return "unreachable", "Host not specified"
 
+        is_telnet = cls.is_telnet(device)
+        port = device.port or (23 if is_telnet else settings.DEFAULT_SSH_PORT or 22)
+
         # Check memory cache first (respecting TTL unless force_refresh requested)
         if not force_refresh:
-            cached = cls.get_cached_type(host)
+            cached = cls.get_cached_type(host, port)
             if cached:
                 return cached, f"Resolved from session cache: {cached}"
-
-        port = device.port or settings.DEFAULT_SSH_PORT or 22
-        username = device.username or ""
-        password = device.password or ""
-        is_telnet = (port == 23) or ("telnet" in (device.device_type or "").lower())
 
         # Resolve credentials pool / fallback candidates
         from app.services.netmiko_service import NetmikoService
         candidates = NetmikoService._resolve_credential_candidates(device)
         has_credentials = any(c.get("username") and c.get("password") for c in candidates)
 
+        # Telnet has no SSH banner or paramiko session to look at: its own path
+        if is_telnet:
+            return cls._detect_over_telnet(device, host, port, candidates)
+
         # --- Stage 1: Pre-Auth Raw SSH Greeting Banner (< 0.1s, Zero Credentials Needed) ---
         try:
             detected_raw, reason_raw = cls._probe_raw_ssh_banner(host, port=port, timeout=0.8)
             if detected_raw:
-                if is_telnet and not detected_raw.endswith("_telnet"):
-                    if detected_raw in ["huawei", "cisco_ios", "raisecom_roap"]:
-                        detected_raw = f"{detected_raw}_telnet" if detected_raw != "raisecom_roap" else "raisecom_telnet"
-                cls.set_cached_type(host, detected_raw)
+                cls.set_cached_type(host, detected_raw, port)
                 return detected_raw, reason_raw
         except Exception:
             pass
 
         # --- Stage 2: Web/HTTP Signature Sniffing (< 0.1s Fallback when Zero Credentials) ---
         # If no credentials were provided and raw SSH banner was generic, try Web management
-        if not has_credentials and not is_telnet:
+        if not has_credentials:
             try:
                 detected_web, reason_web = cls._probe_via_web(host, timeout=0.8)
                 if detected_web:
-                    cls.set_cached_type(host, detected_web)
+                    cls.set_cached_type(host, detected_web, port)
                     return detected_web, reason_web
             except Exception:
                 pass
@@ -168,11 +270,8 @@ class AutoDetectService:
                         timeout=min(max(timeout, 6), 10)
                     )
                     if detected_ssh:
-                        if is_telnet and not detected_ssh.endswith("_telnet"):
-                            if detected_ssh in ["huawei", "cisco_ios", "raisecom_roap"]:
-                                detected_ssh = f"{detected_ssh}_telnet" if detected_ssh != "raisecom_roap" else "raisecom_telnet"
                         device.username = c_user
-                        cls.set_cached_type(host, detected_ssh)
+                        cls.set_cached_type(host, detected_ssh, port)
                         return detected_ssh, f"{reason_ssh} (via user: {c_user})"
                     # Logged in, but the banner/prompt did not name a vendor. Keep this
                     # credential for the command probe below and stop here: the remaining
@@ -226,7 +325,7 @@ class AutoDetectService:
                     detected_fast, reason_fast = cls._probe_prioritized_cli(probe_dev)
                     if detected_fast:
                         device.username = c["username"]
-                        cls.set_cached_type(host, detected_fast)
+                        cls.set_cached_type(host, detected_fast, port)
                         return detected_fast, f"{reason_fast} (via user: {c['username']})"
                 except Exception:
                     pass
@@ -236,15 +335,114 @@ class AutoDetectService:
             return "auth_failed", f"Authentication Failed on {host}:{port} - {err_reason}"
 
         if authed_cred:
-            return "unknown", (
+            return "cant_detect", (
                 f"Logged in to {host}:{port} as {authed_cred.get('username')}, but the vendor could not be "
                 f"identified from the banner, the prompt or a version command"
             )
 
         if not has_credentials:
-            return "unknown", f"Host {host}:{port} is reachable, but credentials are required to detect vendor"
+            return "cant_detect", f"Host {host}:{port} is reachable, but credentials are required to detect vendor"
 
-        return "unknown", f"Unable to determine vendor type on {host}:{port}; detection inconclusive ({err_reason})"
+        return "cant_detect", f"Unable to determine vendor type on {host}:{port}; detection inconclusive ({err_reason})"
+
+    @classmethod
+    def _detect_over_telnet(
+        cls, device: DeviceCredentials, host: str, port: int, candidates: List[Dict[str, Any]]
+    ) -> Tuple[str, str]:
+        """
+        Telnet: read the pre-login banner (many switches name their vendor there), then
+        log in with the telnet drivers and run a version command. Returns a *_telnet driver.
+        """
+        try:
+            banner = cls._read_telnet_banner(host, port, timeout=2.0)
+        except OSError as e:
+            return "unreachable", f"Host {host} unreachable on telnet port {port}: {e}"
+
+        hit = match_login_banner(banner)
+        if hit:
+            driver = cls.telnet_driver(hit[0])
+            cls.set_cached_type(host, driver, port)
+            return driver, f"Detected {hit[1]} from the telnet login banner"
+
+        creds = [c for c in candidates if c.get("username") or c.get("password")]
+        if not creds:
+            return "cant_detect", f"Telnet {host}:{port} answered, but credentials are required to detect the vendor"
+
+        rejected = 0
+        for c in creds:
+            probe_dev = device.copy()
+            probe_dev.username = c.get("username") or ""
+            probe_dev.password = c.get("password") or ""
+            probe_dev.secret = c.get("secret") or None
+            probe_dev.port = port
+            detected, reason = cls._probe_prioritized_cli(probe_dev, telnet=True)
+            if detected:
+                device.username = probe_dev.username
+                cls.set_cached_type(host, detected, port)
+                return detected, f"{reason} (via user: {probe_dev.username})"
+            if reason == _ALL_LOGINS_REJECTED:
+                rejected += 1
+                continue
+            # Logged in but nothing matched: the other credentials would not tell us more
+            return "cant_detect", (
+                f"Logged in to {host}:{port} over telnet as {probe_dev.username}, but no version "
+                f"command named the vendor"
+            )
+        if rejected == len(creds):
+            return "auth_failed", f"Authentication Failed on {host}:{port} (telnet) for every credential"
+        return "cant_detect", f"Telnet {host}:{port}: detection inconclusive"
+
+    @staticmethod
+    def _read_telnet_banner(host: str, port: int, timeout: float = 2.0) -> str:
+        """
+        Text a telnet server prints before the login prompt. Option negotiation is
+        refused (DO -> WONT, WILL -> DONT) so the server goes on to the banner.
+        Raises OSError when the port does not answer.
+        """
+        IAC, DONT, DO, WONT, WILL, SB, SE = 255, 254, 253, 252, 251, 250, 240
+        sock = socket.create_connection((host, port), timeout=timeout)
+        text = bytearray()
+        try:
+            sock.settimeout(0.5)
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    chunk = sock.recv(1024)
+                except socket.timeout:
+                    if text:
+                        break
+                    continue
+                if not chunk:
+                    break
+                i = 0
+                while i < len(chunk):
+                    b = chunk[i]
+                    if b == IAC and i + 1 < len(chunk):
+                        cmd = chunk[i + 1]
+                        if cmd in (DO, DONT, WILL, WONT) and i + 2 < len(chunk):
+                            opt = chunk[i + 2]
+                            if cmd == DO:
+                                sock.sendall(bytes([IAC, WONT, opt]))
+                            elif cmd == WILL:
+                                sock.sendall(bytes([IAC, DONT, opt]))
+                            i += 3
+                            continue
+                        if cmd == SB:
+                            end = chunk.find(bytes([IAC, SE]), i)
+                            i = end + 2 if end >= 0 else len(chunk)
+                            continue
+                        i += 2
+                        continue
+                    text.append(b)
+                    i += 1
+                if re.search(rb"(username|login|password)\s*:\s*$", bytes(text), re.I):
+                    break
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
+        return clean_ansi(text.decode("utf-8", errors="ignore"))
 
     @classmethod
     def _probe_via_web(cls, host: str, timeout: float = 0.8) -> Tuple[Optional[str], str]:
@@ -406,30 +604,10 @@ class AutoDetectService:
                 initial_cleaned = clean_ansi(initial_buffer)
 
             # Check initial banner text
-            if re.search(r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", initial_cleaned, re.I):
+            hit = match_login_banner(initial_cleaned)
+            if hit:
                 client.close()
-                return "huawei", "Detected from Huawei VRP login banner"
-            if re.search(r"Cisco Nexus|NX-OS", initial_cleaned, re.I):
-                client.close()
-                return "cisco_nxos", "Detected from Cisco NX-OS login banner"
-            if re.search(r"Cisco IOS Software|IOS-XE|Cisco Systems", initial_cleaned, re.I):
-                client.close()
-                return "cisco_ios", "Detected from Cisco IOS login banner"
-            if re.search(r"H3C Comware|HPE Comware|Comware Software", initial_cleaned, re.I):
-                client.close()
-                return "hp_comware", "Detected from H3C Comware login banner"
-            if re.search(r"ArubaOS|ProCurve", initial_cleaned, re.I):
-                client.close()
-                return "aruba_os", "Detected from Aruba OS login banner"
-            if re.search(r"JUNOS", initial_cleaned, re.I):
-                client.close()
-                return "juniper_junos", "Detected from Juniper JunOS login banner"
-            if re.search(r"MikroTik|RouterOS", initial_cleaned, re.I):
-                client.close()
-                return "mikrotik_routeros", "Detected from MikroTik RouterOS login banner"
-            if re.search(r"Raisecom Technology|ROS Software|ISCOM|RAX|Gazelle", initial_cleaned, re.I):
-                client.close()
-                return "raisecom_roap", "Detected from Raisecom ROS login banner"
+                return hit[0], f"Detected from {hit[1]} login banner"
 
             # 3. Wake up prompt by sending newline
             channel.send("\r\n")
@@ -512,13 +690,17 @@ class AutoDetectService:
         return None, "SSH probe inconclusive"
 
     @classmethod
-    def _probe_prioritized_cli(cls, device: DeviceCredentials) -> Tuple[Optional[str], str]:
+    def _probe_prioritized_cli(cls, device: DeviceCredentials, telnet: bool = False) -> Tuple[Optional[str], str]:
         """
         Fast prioritized probe testing the top enterprise network vendors
         in direct priority (Huawei, Cisco NX-OS, Cisco IOS, Aruba, HP Comware, Juniper, Raisecom, MikroTik)
-        without looping 40+ vendors.
+        without looping 40+ vendors. With telnet=True the telnet drivers are used (and the
+        vendors without one skipped). Returns (None, _ALL_LOGINS_REJECTED) when every
+        attempt failed on the login itself, so the caller can tell bad credentials apart.
         """
         from netmiko import ConnectHandler
+        from netmiko.exceptions import NetmikoAuthenticationException
+        from netmiko.ssh_dispatcher import platforms
 
         # Priority test sequence: (vendor_driver, probe_command, match_pattern)
         test_profiles = [
@@ -531,12 +713,18 @@ class AutoDetectService:
             ("raisecom_roap", "show version", r"Raisecom|\bROS\b|ISCOM|RAX|iTN|RC\d{3}|Gazelle"),
             ("mikrotik_routeros", "/system resource print", r"RouterOS|MikroTik"),
         ]
+        if telnet:
+            test_profiles = [
+                (cls.telnet_driver(v), cmd, pat) for v, cmd, pat in test_profiles
+                if cls.telnet_driver(v).endswith("_telnet") and cls.telnet_driver(v) in platforms
+            ]
 
+        attempts = rejected = 0
         for vendor, cmd, pattern in test_profiles:
             params = {
                 "device_type": vendor,
                 "host": device.host,
-                "port": device.port or 22,
+                "port": device.port or (23 if telnet else 22),
                 "username": device.username or "",
                 "password": device.password or "",
                 "timeout": 5,
@@ -545,12 +733,18 @@ class AutoDetectService:
             if device.secret:
                 params["secret"] = device.secret
 
+            attempts += 1
             try:
                 with ConnectHandler(**params) as conn:
                     out = conn.send_command(cmd, read_timeout=4)
                     if re.search(pattern, out, re.I):
                         return vendor, f"Detected {vendor} via prioritized probe ({cmd})"
+            except NetmikoAuthenticationException:
+                rejected += 1
+                continue
             except Exception:
                 continue
 
+        if attempts and rejected == attempts:
+            return None, _ALL_LOGINS_REJECTED
         return None, "Prioritized probe inconclusive"

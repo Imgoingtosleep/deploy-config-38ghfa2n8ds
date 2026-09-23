@@ -227,6 +227,63 @@ class LldpService:
         cands = _MODEL_RE_RAISECOM.findall(text)
         return max(cands, key=len) if cands else ""
 
+    # ---- Command profile regexes: run on one command's output before the parser sees it ----
+    @staticmethod
+    def brief_header(lines: List[str], parser: str = "huawei"):
+        """Index and column positions of the neighbor table header, (None, []) when absent"""
+        aliases_map = _BRIEF_HEADER_ALIASES_CISCO if parser == "cisco" else _BRIEF_HEADER_ALIASES
+        for idx, line in enumerate(lines):
+            found = []
+            for key, aliases in aliases_map.items():
+                for alias in aliases:
+                    pos = line.find(alias)
+                    if pos >= 0:
+                        found.append((pos, key))
+                        break
+            if any(k == "local" for _, k in found) and len(found) >= 2:
+                return idx, sorted(found)
+        return None, []
+
+    @classmethod
+    def keep_brief_header(cls, raw: str, kept: str, parser: str) -> str:
+        """The brief parser takes its column positions from the table header, so a regex that
+        keeps only neighbor rows must not throw that header away"""
+        if cls.brief_header(kept.splitlines(), parser)[0] is not None:
+            return kept
+        idx, _ = cls.brief_header(raw.splitlines(), parser)
+        return f"{raw.splitlines()[idx]}\n{kept}" if idx is not None else kept
+
+    @staticmethod
+    def regex_capture(text: str, pattern: str) -> Optional[str]:
+        """
+        Value read by a command profile regex: capture group 1 when the pattern has one,
+        otherwise the whole match. None when the pattern is empty, does not compile or does
+        not match, and the caller then falls back to the built-in parsing.
+        """
+        if not pattern or not text:
+            return None
+        try:
+            m = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+        except re.error:
+            return None
+        if not m:
+            return None
+        value = (m.group(1) if m.groups() else m.group(0)) or ""
+        return value.strip() or None
+
+    @staticmethod
+    def regex_lines(text: str, pattern: str) -> Optional[str]:
+        """Only the lines a command profile regex matches, None when the pattern is empty,
+        does not compile or keeps nothing (the caller then parses the untouched output)"""
+        if not pattern or not text:
+            return None
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            return None
+        kept = [line for line in text.splitlines() if rx.search(line)]
+        return "\n".join(kept) if kept else None
+
     @classmethod
     def extract_model(cls, text: str, parser: str = "") -> str:
         """
@@ -346,23 +403,7 @@ class LldpService:
         """
         rows: List[Dict[str, str]] = []
         lines = (output or "").splitlines()
-        aliases_map = _BRIEF_HEADER_ALIASES_CISCO if parser == "cisco" else _BRIEF_HEADER_ALIASES
-
-        header_idx = None
-        columns = []
-        for idx, line in enumerate(lines):
-            found = []
-            for key, aliases in aliases_map.items():
-                for alias in aliases:
-                    pos = line.find(alias)
-                    if pos >= 0:
-                        found.append((pos, key))
-                        break
-            if any(k == "local" for _, k in found) and len(found) >= 2:
-                header_idx = idx
-                columns = sorted(found)
-                break
-
+        header_idx, columns = LldpService.brief_header(lines, parser)
         if header_idx is None:
             return rows
 
@@ -557,7 +598,26 @@ class LldpService:
                     is_last_profile = prof_no == len(cmd_profiles)
                     cmds = cprof["commands"]
                     parser = cprof["parser"]
+                    rxs = cprof.get("regexes") or {}
                     used_profile = cprof["name"]
+
+                    def keep_lines(raw: str, field: str, step: str) -> str:
+                        """Trim one command's output with this profile's regex, if it has one"""
+                        pattern = rxs.get(field) or ""
+                        if not pattern:
+                            return raw
+                        kept = cls.regex_lines(raw, pattern)
+                        if kept is not None and field == "lldp_brief":
+                            kept = cls.keep_brief_header(raw, kept, parser)
+                        if kept is None:
+                            log_lines.append(f"{step}: regex for '{field}' matched no line, parsing the full output")
+                            return raw
+                        log_lines.append(
+                            f"{step}: regex for '{field}' kept {len(kept.splitlines())} of "
+                            f"{len(raw.splitlines())} line(s)"
+                        )
+                        return kept
+
                     log_lines.append(
                         f"Step 0b: Command profile {prof_no}/{len(cmd_profiles)} [{cprof['name']}] (parser: {parser})"
                     )
@@ -576,10 +636,17 @@ class LldpService:
                             net_connect.send_command(cmds["sysname"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
                         raw_parts.append(f"<{sysname}> {cmds['sysname']}\n{sys_raw}")
-                        # [ \t] instead of \s: a bare 'hostname' line must not swallow the next line
-                        # of config (e.g. 'ip domain-name lab.local') as the device name
-                        m = re.search(r"^[ \t]*(?:sysname|hostname)[ \t]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
-                        cfg_sysname = cls.short_hostname(m.group(1).strip().strip('"')) if m else ""
+                        custom_sysname = cls.regex_capture(sys_raw, rxs.get("sysname") or "")
+                        if custom_sysname:
+                            cfg_sysname = cls.short_hostname(custom_sysname.strip('"'))
+                            sysname_source = f"regex on '{cmds['sysname']}'"
+                        else:
+                            if rxs.get("sysname"):
+                                log_lines.append("Step 1: regex for 'sysname' did not match, using the built-in pattern")
+                            # [ \t] instead of \s: a bare 'hostname' line must not swallow the next line
+                            # of config (e.g. 'ip domain-name lab.local') as the device name
+                            m = re.search(r"^[ \t]*(?:sysname|hostname)[ \t]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
+                            cfg_sysname = cls.short_hostname(m.group(1).strip().strip('"')) if m else ""
                     except Exception as e:
                         log_lines.append(f"Step 1: '{cmds.get('sysname')}' failed: {e}")
                     if cfg_sysname:
@@ -596,9 +663,17 @@ class LldpService:
                             net_connect.send_command(cmds["version"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
                         raw_parts.append(f"<{sysname}> {cmds['version']}\n{ver_raw}")
-                        model = cls.extract_model(ver_raw, parser)
+                        custom_model = cls.regex_capture(ver_raw, rxs.get("version") or "")
+                        if custom_model:
+                            model = custom_model
+                            model_source = f"regex on '{cmds['version']}'"
+                        else:
+                            if rxs.get("version"):
+                                log_lines.append("Step 1b: regex for 'version' did not match, using the model rules")
+                            model = cls.extract_model(ver_raw, parser)
+                            model_source = f"'{cmds['version']}'"
                         version_output = ver_raw
-                        log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from '{cmds['version']}'")
+                        log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from {model_source}")
                     except Exception as e:
                         log_lines.append(f"Step 1b: '{cmds.get('version')}' failed: {e}")
 
@@ -606,7 +681,7 @@ class LldpService:
                         net_connect.send_command(cmds["lldp_brief"], read_timeout=settings.DEFAULT_TIMEOUT)
                     )
                     raw_parts.append(f"<{sysname}> {cmds['lldp_brief']}\n{brief_raw}")
-                    brief_rows = cls.parse_lldp_brief(brief_raw, parser)
+                    brief_rows = cls.parse_lldp_brief(keep_lines(brief_raw, "lldp_brief", "Step 2"), parser)
                     log_lines.append(f"Step 2: '{cmds['lldp_brief']}' returned {len(brief_rows)} neighbor row(s)")
 
                     # Wrong vendor for this profile: the CLI rejected the LLDP command,
@@ -634,7 +709,9 @@ class LldpService:
                                 net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
                             )
                             raw_parts.append(f"<{sysname}> {cmd}\n{detail_raw}")
-                            details = cls.parse_detail(detail_raw, parser, default_local_port=intf)
+                            details = cls.parse_detail(
+                                keep_lines(detail_raw, "lldp_detail", f"Step 3 [{intf}]"), parser, default_local_port=intf
+                            )
                         except Exception as e:
                             log_lines.append(f"Step 3: '{cmd}' failed: {e}")
                         details_by_intf[intf] = details
@@ -648,7 +725,7 @@ class LldpService:
                                 net_connect.send_command(cmds["lldp_full"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
                             )
                             raw_parts.append(f"<{sysname}> {cmds['lldp_full']}\n{full_raw}")
-                            full_rows = cls.parse_detail(full_raw, parser)
+                            full_rows = cls.parse_detail(keep_lines(full_raw, "lldp_full", "Step 4"), parser)
                             log_lines.append(
                                 f"Step 4: {len(missing)} port(s) without detail, '{cmds['lldp_full']}' returned {len(full_rows)} neighbor(s)"
                             )

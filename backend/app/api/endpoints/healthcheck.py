@@ -239,16 +239,10 @@ def _execute_device_health_check(
     vendor_commands: Dict[str, List[str]] = None,
     command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
 ) -> MultiCommandResponse:
-    device_type = (device.device_type or "").lower()
-    if not device_type or device_type in ["autodetect", "auto"]:
-        try:
-            from app.services.autodetect_service import AutoDetectService
-            detected_type, _ = AutoDetectService.detect_device_type(device)
-            device.device_type = detected_type
-            device_type = detected_type
-        except Exception:
-            from app.core.config import settings
-            device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
+    from app.services.autodetect_service import AutoDetectService
+    # Always a real driver (never 'unreachable' / 'cant_detect'); serial consoles are not probed
+    device_type, _ = AutoDetectService.resolve_driver(device)
+    device.device_type = device_type
     
     # Resolve vendor driver group for presets
     from app.services.command_translator import CommandTranslator

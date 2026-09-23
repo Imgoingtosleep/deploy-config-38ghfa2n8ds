@@ -18,6 +18,8 @@ DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "co
 file_lock = threading.Lock()
 
 COMMAND_KEYS = ["pager_disable", "sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
+# Commands whose output can carry a user regex; 'pager_disable' prints nothing worth reading
+REGEX_KEYS = ["sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
 VALID_PARSERS = ["huawei", "cisco"]
 
 DEFAULT_PROFILES = [
@@ -93,6 +95,12 @@ class CommandProfileService:
         if not isinstance(raw, dict):
             raw = {}
         p["commands"] = {k: (str(raw.get(k) or "").strip() or defaults.get(k, "")) for k in COMMAND_KEYS}
+
+        # Regexes are optional throughout: an empty pattern means "let the parser do it"
+        raw_rx = p.get("regexes") or {}
+        if not isinstance(raw_rx, dict):
+            raw_rx = {}
+        p["regexes"] = {k: str(raw_rx.get(k) or "").strip() for k in REGEX_KEYS}
         return p
 
     @classmethod
@@ -167,6 +175,7 @@ class CommandProfileService:
             "priority": priority,
             "enabled": data.get("enabled", True),
             "commands": data.get("commands"),
+            "regexes": data.get("regexes"),
             "created_at": now,
             "updated_at": now,
         })
@@ -185,6 +194,8 @@ class CommandProfileService:
                 target[field] = data[field]
         if data.get("commands") is not None:
             target["commands"] = data["commands"]
+        if data.get("regexes") is not None:
+            target["regexes"] = data["regexes"]
         target["updated_at"] = cls._now_iso()
         cls._save(profiles)
         return cls._normalize(target)

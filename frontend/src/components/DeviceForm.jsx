@@ -614,14 +614,19 @@ export default function DeviceForm({
         const map = {};
         const unreachableList = [];
         const authFailedList = [];
+        const cantDetectList = [];
         res.results.forEach((r) => {
-          if (r.device_type && !['unreachable', 'auth_failed', 'unknown'].includes(r.device_type)) {
+          if (r.status === 'detected' && r.device_type) {
             if (r.id) map[r.id] = r.device_type;
             else if (r.host) map[r.host] = r.device_type;
-          } else if (r.device_type === 'unreachable') {
+          } else if (r.status === 'unreachable') {
             unreachableList.push(r.host);
-          } else if (r.device_type === 'auth_failed') {
+          } else if (r.status === 'auth_failed') {
             authFailedList.push(r.host);
+          } else {
+            // cant_detect: reachable (often logged in) but no vendor could be named;
+            // the device keeps its current type, which falls back to the default driver
+            cantDetectList.push(r.host);
           }
         });
         setFleet((prev) =>
@@ -636,6 +641,9 @@ export default function DeviceForm({
         }
         if (authFailedList.length > 0) {
           msg += `🔑 Authentication Failed (${authFailedList.length}): ${authFailedList.slice(0, 5).join(', ')}${authFailedList.length > 5 ? '...' : ''}\n`;
+        }
+        if (cantDetectList.length > 0) {
+          msg += `❓ Can't Detect (${cantDetectList.length}): ${cantDetectList.slice(0, 5).join(', ')}${cantDetectList.length > 5 ? '...' : ''} — reachable, but the vendor could not be identified; set the type manually\n`;
         }
         if (msg) {
           alert(msg.trim());

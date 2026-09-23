@@ -400,6 +400,34 @@
   border-color: #6366f1;
 }
 
+/* Optional regex under each command of a command profile */
+.lldp-regex-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.lldp-regex-tag {
+  flex: none;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #818cf8;
+  background-color: #1e1b4b;
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.lldp-field .lldp-regex-input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.72rem;
+  padding: 0.3rem 0.45rem;
+  border-color: #27314a;
+}
+
 .lldp-hint {
   font-size: 0.72rem;
   color: #64748b;

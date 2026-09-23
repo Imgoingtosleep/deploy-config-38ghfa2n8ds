@@ -1,5 +1,7 @@
+import re
+
 from fastapi import APIRouter, HTTPException
-from typing import List
+from typing import Any, List, Optional
 from app.schemas.command_profile import (
     CommandProfile,
     CommandProfileCreate,
@@ -10,6 +12,20 @@ from app.schemas.command_profile import (
 from app.services.command_profile_service import CommandProfileService
 
 router = APIRouter()
+
+
+def _check_regexes(regexes: Optional[Any]) -> None:
+    """A pattern that does not compile would break every sweep using this profile"""
+    if not regexes:
+        return
+    values = regexes if isinstance(regexes, dict) else regexes.dict()
+    for field, pattern in values.items():
+        if not pattern:
+            continue
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex for '{field}': {e}")
 
 
 @router.get("", response_model=List[CommandProfile])
@@ -33,6 +49,7 @@ def create_command_profile(request: CommandProfileCreate):
         raise HTTPException(status_code=400, detail="Profile name is required")
     if request.parser and request.parser not in PARSERS:
         raise HTTPException(status_code=400, detail=f"parser must be one of {PARSERS}")
+    _check_regexes(request.regexes)
     return CommandProfileService.create_profile(request.dict())
 
 
@@ -40,6 +57,7 @@ def create_command_profile(request: CommandProfileCreate):
 def update_command_profile(profile_id: str, request: CommandProfileUpdate):
     if request.parser and request.parser not in PARSERS:
         raise HTTPException(status_code=400, detail=f"parser must be one of {PARSERS}")
+    _check_regexes(request.regexes)
     updated = CommandProfileService.update_profile(profile_id, request.dict(exclude_unset=True))
     if not updated:
         raise HTTPException(status_code=404, detail="Command profile not found")

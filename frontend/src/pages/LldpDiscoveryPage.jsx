@@ -70,15 +70,18 @@ const SCAN_STATUSES = [
   { key: 'UNREACHABLE', label: 'Unreachable', tone: 'muted' },
 ];
 const POLL_MS = 1500;
-// Editable command set of a command profile: [field, label, placeholder]
+// Editable command set of a command profile: [field, label, command placeholder, regex placeholder]
+// A field without a regex placeholder takes no regex: 'pager_disable' prints nothing to read.
+// A pattern with a capture group reads the value, one without keeps only the matching lines.
 const COMMAND_FIELDS = [
-  ['pager_disable', 'Disable paging', 'screen-length 0 temporary'],
-  ['sysname', 'Sysname / hostname', 'display current-configuration | include sysname'],
-  ['version', 'Version (used for the model)', 'display version'],
-  ['lldp_brief', 'LLDP neighbor list', 'display lldp neighbor brief'],
-  ['lldp_detail', 'LLDP detail per port — {intf} = local port', 'display lldp neighbor interface {intf}'],
-  ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor'],
+  ['pager_disable', 'Disable paging', 'screen-length 0 temporary', ''],
+  ['sysname', 'Sysname / hostname', 'display current-configuration | include sysname', 'reads the name, e.g. ^\\s*sysname\\s+(\\S+)'],
+  ['version', 'Version (used for the model)', 'display version', 'reads the model, e.g. (S\\d{4}\\S*)'],
+  ['lldp_brief', 'LLDP neighbor list', 'display lldp neighbor brief', 'keeps the neighbor rows, e.g. ^(GE|XGE|Eth)'],
+  ['lldp_detail', 'LLDP detail per port — {intf} = local port', 'display lldp neighbor interface {intf}', 'keeps the wanted lines'],
+  ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor', 'keeps the wanted lines'],
 ];
+const REGEX_FIELDS = COMMAND_FIELDS.filter(([, , , rxPlaceholder]) => rxPlaceholder);
 const blankCommandProfile = () => ({
   id: null,
   name: '',
@@ -86,6 +89,7 @@ const blankCommandProfile = () => ({
   parser: 'huawei',
   enabled: true,
   commands: Object.fromEntries(COMMAND_FIELDS.map(([f]) => [f, ''])),
+  regexes: Object.fromEntries(REGEX_FIELDS.map(([f]) => [f, ''])),
 });
 
 const splitList = (text) => text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
@@ -257,6 +261,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         parser: editingCmd.parser || 'huawei',
         enabled: editingCmd.enabled !== false,
         commands: editingCmd.commands,
+        regexes: editingCmd.regexes || {},
       };
       const saved = editingCmd.id
         ? await updateCommandProfile(editingCmd.id, payload)
@@ -1231,7 +1236,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                           className="lldp-btn-secondary lldp-btn-mini"
                           onClick={() => {
                             setCmdError('');
-                            setEditingCmd({ ...p, commands: { ...p.commands } });
+                            setEditingCmd({ ...p, commands: { ...p.commands }, regexes: { ...(p.regexes || {}) } });
                           }}
                         >
                           <Edit2 className="h-3.5 w-3.5" />
@@ -1291,7 +1296,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     <span>Enabled</span>
                   </label>
 
-                  {COMMAND_FIELDS.map(([field, label, placeholder]) => (
+                  {COMMAND_FIELDS.map(([field, label, placeholder, rxPlaceholder]) => (
                     <label className="lldp-field" key={field}>
                       <span>{label}</span>
                       <input
@@ -1305,10 +1310,29 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                         }
                         placeholder={placeholder}
                       />
+                      {rxPlaceholder && (
+                        <div className="lldp-regex-row">
+                          <span className="lldp-regex-tag">regex</span>
+                          <input
+                            className="lldp-regex-input"
+                            value={editingCmd.regexes?.[field] || ''}
+                            onChange={(e) =>
+                              setEditingCmd((prev) => ({
+                                ...prev,
+                                regexes: { ...(prev.regexes || {}), [field]: e.target.value },
+                              }))
+                            }
+                            placeholder={`optional — ${rxPlaceholder}`}
+                          />
+                        </div>
+                      )}
                     </label>
                   ))}
                   <span className="lldp-hint">
-                    Leave a command empty to use the built-in default for the selected parser.
+                    Leave a command empty to use the built-in default for the selected parser. A regex is optional:
+                    with a capture group it reads the value itself (sysname, model), without one it keeps only the
+                    matching lines before the parser runs. If it matches nothing, the built-in parsing is used and the
+                    sweep log says so.
                   </span>
 
                   <div className="lldp-actions">

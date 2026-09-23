@@ -94,19 +94,20 @@ class NetmikoService:
                 "fast_cli": False,
             }
         else:
-            is_telnet = "telnet" in (device.device_type or "").lower()
+            from app.services.autodetect_service import AutoDetectService
+
+            # 'autodetect' (or a status left over from an earlier detection) becomes a real
+            # driver here; a failed detection falls back to DEFAULT_DEVICE_TYPE, never a status
+            raw_type, _ = AutoDetectService.resolve_driver(device)
+            device.device_type = raw_type
+
+            # Same telnet rule as the detector: port 23 means telnet even when the type
+            # only names the vendor ('huawei' on port 23 -> huawei_telnet)
+            is_telnet = AutoDetectService.is_telnet(device)
+            if is_telnet:
+                raw_type = AutoDetectService.telnet_driver(raw_type)
             default_port = 23 if is_telnet else settings.DEFAULT_SSH_PORT
             port = device.port if device.port and device.port > 0 else default_port
-
-            raw_type = (device.device_type or "").lower().strip()
-            if not raw_type or raw_type in ["autodetect", "auto"]:
-                try:
-                    from app.services.autodetect_service import AutoDetectService
-                    detected_type, _ = AutoDetectService.detect_device_type(device)
-                    device.device_type = detected_type
-                    raw_type = detected_type
-                except Exception:
-                    raw_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
 
             if raw_type not in NETMIKO_PLATFORMS:
                 dev_type = "cisco_ios_telnet" if is_telnet else "cisco_ios"

@@ -112,7 +112,7 @@ class CredentialLoopTest(unittest.TestCase):
         with patch.object(AutoDetectService, "_probe_via_ssh", side_effect=self._probe_side_effect) as probe, \
                 patch.object(AutoDetectService, "_probe_prioritized_cli", return_value=(None, "inconclusive")):
             detected, reason = AutoDetectService.detect_device_type(self.device, force_refresh=True)
-        self.assertEqual(detected, "unknown", reason)
+        self.assertEqual(detected, "cant_detect", reason)
         self.assertIn("admintest", reason)
         self.assertEqual(probe.call_count, 1)  # the wrong credentials are not tried after a login works
 

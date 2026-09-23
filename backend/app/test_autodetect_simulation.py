@@ -368,7 +368,7 @@ def run_simulation_tests():
          patch("app.services.netmiko_service.NetmikoService._resolve_credential_candidates", return_value=[]):
         no_cred_dev = DeviceCredentials(host="10.20.30.40", port=22, username="", password="")
         res_unknown_type, res_unknown_reason = AutoDetectService.detect_device_type(no_cred_dev, timeout=1)
-        status_7_4 = "PASSED" if res_unknown_type == "unknown" else "FAILED"
+        status_7_4 = "PASSED" if res_unknown_type == "cant_detect" else "FAILED"
         if status_7_4 == "FAILED":
             all_passed = False
         print(f"[{status_7_4}] Open Port Zero Credentials        -> Result: {res_unknown_type:<12} (Reason: {res_unknown_reason[:45]}...)")
@@ -378,7 +378,7 @@ def run_simulation_tests():
          patch.object(AutoDetectService, "_probe_prioritized_cli", return_value=(None, "Inconclusive")):
         inconclusive_dev = DeviceCredentials(host="10.20.30.50", port=22, username="admin", password="password")
         res_inc_type, res_inc_reason = AutoDetectService.detect_device_type(inconclusive_dev, timeout=1)
-        status_7_5 = "PASSED" if res_inc_type == "unknown" else "FAILED"
+        status_7_5 = "PASSED" if res_inc_type == "cant_detect" else "FAILED"
         if status_7_5 == "FAILED":
             all_passed = False
         print(f"[{status_7_5}] Inconclusive Probe (Never Huawei)  -> Result: {res_inc_type:<12} (Reason: {res_inc_reason[:45]}...)")

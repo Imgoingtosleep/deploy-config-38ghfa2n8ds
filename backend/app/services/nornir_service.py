@@ -70,6 +70,11 @@ class NornirService:
     @staticmethod
     def _map_platform(device_type: str) -> str:
         dev_type = (device_type or "cisco_ios").lower().strip()
+        # An exact Netmiko driver is kept as is, so e.g. hp_comware_telnet does not
+        # lose its telnet transport to the fuzzy vendor matching below
+        from netmiko.ssh_dispatcher import platforms
+        if dev_type in platforms:
+            return dev_type
         if "cisco_nxos" in dev_type or "nxos" in dev_type:
             return "cisco_nxos"
         elif "cisco_ios_telnet" in dev_type or ("cisco" in dev_type and "telnet" in dev_type):
@@ -243,14 +248,12 @@ class NornirService:
         host_dict = {}
         for idx, dev in enumerate(devices):
             host_key = dev.host.strip() if dev.host and dev.host.strip() else f"device_{idx+1}"
-            raw = (dev.device_type or "").lower().strip()
-            if not raw or raw in ["autodetect", "auto"]:
-                try:
-                    from app.services.autodetect_service import AutoDetectService
-                    detected, _ = AutoDetectService.detect_device_type(dev)
-                    dev.device_type = detected
-                except Exception:
-                    dev.device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
+            from app.services.autodetect_service import AutoDetectService
+            # Never a detection status: a failed detection falls back to DEFAULT_DEVICE_TYPE,
+            # and the note says so in the deploy log
+            dev.device_type, driver_note = AutoDetectService.resolve_driver(dev)
+            if AutoDetectService.is_telnet(dev):
+                dev.device_type = AutoDetectService.telnet_driver(dev.device_type)
             platform = cls._map_platform(dev.device_type)
 
             
@@ -276,6 +279,7 @@ class NornirService:
                 "extras": extras,
                 "data": {
                     "original_device": dev,
+                    "driver_note": driver_note,
                     "index": idx,
                     "credential_candidates": candidates,
                 }
@@ -516,7 +520,8 @@ class NornirService:
         def _nornir_deploy_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
             dev_type = task.host.platform or "cisco_ios"
-            emit(task, "START", "running", f"driver={dev_type}")
+            note = task.host.data.get("driver_note")
+            emit(task, "START", "running", f"driver={dev_type}" + (f" ({note})" if note else ""))
             cred_name = cls._connect_with_credential_fallback(task)
             emit(task, "LOGIN", "success", f"user={task.host.username}" + (f" ({cred_name})" if cred_name else ""))
             backup_output = None
