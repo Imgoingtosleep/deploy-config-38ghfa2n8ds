@@ -157,7 +157,11 @@ class NetmikoService:
 
     @classmethod
     def _resolve_credential_candidates(cls, device: DeviceCredentials) -> List[Dict[str, Any]]:
-        """Resolve ordered list of credential candidates for priority fallback (Priority 1 -> 2 -> 3)"""
+        """
+        Resolve ordered list of credential candidates for priority fallback (Priority 1 -> 2 -> 3).
+        Credentials only: the driver always comes from the device itself (the fleet list),
+        never from a credential profile.
+        """
         candidates = []
         seen = set()
 
@@ -182,9 +186,7 @@ class NetmikoService:
             for c in sorted_creds:
                 u = (c.get("username") or "").strip()
                 p = c.get("password") or ""
-                # Driver is part of the key: the same user/password on a Huawei profile and a
-                # Cisco profile are two distinct attempts, not a duplicate
-                key = (u, p, prof.get("device_type") or device.device_type)
+                key = (u, p)
                 if key not in seen and (u or p):
                     lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
                     candidates.append({
@@ -192,7 +194,6 @@ class NetmikoService:
                         "username": u,
                         "password": p,
                         "secret": c.get("secret") or "",
-                        "device_type": prof.get("device_type") or device.device_type,
                         "port": prof.get("port") or device.port,
                     })
                     seen.add(key)
@@ -203,7 +204,7 @@ class NetmikoService:
             for idx, c in enumerate(sorted_pool, start=len(candidates) + 1):
                 u = (c.get("username") or "").strip()
                 p = c.get("password") or ""
-                key = (u, p, c.get("device_type") or device.device_type)
+                key = (u, p)
                 if key not in seen and (u or p):
                     lbl = c.get("label") or c.get("name") or f"Priority {c.get('priority', idx)}"
                     candidates.append({
@@ -211,14 +212,13 @@ class NetmikoService:
                         "username": u,
                         "password": p,
                         "secret": c.get("secret") or "",
-                        "device_type": c.get("device_type") or device.device_type,
                         "port": c.get("port") or device.port,
                     })
                     seen.add(key)
 
         # 3. Direct device fields (if not already captured from profile or pool)
         if device.username or device.password:
-            key = (device.username or "", device.password or "", device.device_type or "autodetect")
+            key = (device.username or "", device.password or "")
             if key not in seen:
                 label = device.active_credential_name or f"Direct Device Credentials"
                 # If candidates already had items from profile, this serves as extra candidate, or insert at front if no profile
@@ -228,7 +228,6 @@ class NetmikoService:
                         "username": device.username or "",
                         "password": device.password or "",
                         "secret": device.secret or "",
-                        "device_type": device.device_type or "autodetect",
                         "port": device.port,
                     })
                     seen.add(key)
@@ -238,7 +237,6 @@ class NetmikoService:
                         "username": device.username or "",
                         "password": device.password or "",
                         "secret": device.secret or "",
-                        "device_type": device.device_type or "autodetect",
                         "port": device.port,
                     })
                     seen.add(key)
@@ -257,7 +255,7 @@ class NetmikoService:
                             for c in sorted_creds:
                                 u = (c.get("username") or "").strip()
                                 p = c.get("password") or ""
-                                key = (u, p, prof.get("device_type") or device.device_type)
+                                key = (u, p)
                                 if key not in seen and (u or p):
                                     lbl = c.get("label") or f"Priority {c.get('priority', len(candidates) + 1)}"
                                     candidates.append({
@@ -265,21 +263,19 @@ class NetmikoService:
                                         "username": u,
                                         "password": p,
                                         "secret": c.get("secret") or "",
-                                        "device_type": prof.get("device_type") or device.device_type,
                                         "port": prof.get("port") or device.port,
                                     })
                                     seen.add(key)
                         else:
                             u = prof.get("username") or ""
                             p = prof.get("password") or ""
-                            key = (u, p, prof.get("device_type") or device.device_type)
+                            key = (u, p)
                             if key not in seen:
                                 candidates.append({
                                     "name": prof.get("name") or f"Profile ({u})",
                                     "username": u,
                                     "password": p,
                                     "secret": prof.get("secret") or "",
-                                    "device_type": prof.get("device_type") or device.device_type,
                                     "port": prof.get("port") or device.port,
                                 })
                                 seen.add(key)
@@ -293,7 +289,6 @@ class NetmikoService:
                 "username": device.username or "",
                 "password": device.password or "",
                 "secret": device.secret or "",
-                "device_type": device.device_type or "autodetect",
                 "port": device.port,
             })
 
@@ -310,7 +305,15 @@ class NetmikoService:
         candidates = cls._resolve_credential_candidates(device)
         attempt_logs = []
         target_name = device.serial_port if device.connection_mode == "serial" else (device.host or "127.0.0.1")
-        
+
+        # The driver comes from the device (fleet list) only. Resolve 'autodetect' once
+        # here rather than once per credential attempt.
+        if device.connection_mode != "serial":
+            from app.services.autodetect_service import AutoDetectService
+            device.device_type, driver_note = AutoDetectService.resolve_driver(device)
+            if driver_note:
+                attempt_logs.append(f"Driver [{device.device_type}]: {driver_note}")
+
         last_auth_error = None
         for idx, cred in enumerate(candidates, 1):
             u_name = cred.get("username") or ""
@@ -324,10 +327,6 @@ class NetmikoService:
             attempt_device.username = cred["username"]
             attempt_device.password = cred["password"]
             attempt_device.secret = cred.get("secret")
-            # force_device_type: the caller already decided the driver (LLDP sweeps the
-            # command profiles' parsers on a neighbor), so the profile must not override it
-            if cred.get("device_type") and cred["device_type"] != "autodetect" and not device.force_device_type:
-                attempt_device.device_type = cred["device_type"]
             if cred.get("port"):
                 attempt_device.port = cred["port"]
 
@@ -395,29 +394,24 @@ class NetmikoService:
                         raise NetmikoAuthenticationException(
                             f"Authentication or channel allocation failed across all {len(candidates)} credential sets on {target_name}. [{summary}]"
                         )
-                # Wrong driver (e.g. Cisco setup commands sent to a Huawei VRP) fails on the
-                # prompt / setup stage, not on auth. Retry when a later priority uses a
-                # different driver, so a Huawei-first / Cisco-second pool still connects.
-                next_drivers = {c.get("device_type") for c in candidates[idx:]}
-                if next_drivers - {cred.get("device_type")}:
-                    attempt_logs.append(f"Priority {idx} [{cred_label}]: Failed on driver '{cred.get('device_type')}' ({str(e)})")
-                    continue
+                # Not a credential problem (wrong driver, timeout, ...): every other credential
+                # would hit it too. A wrong driver is retried by the caller that owns the
+                # driver choice (the LLDP sweep walks the command profile priority).
                 raise e
 
     @classmethod
     def test_connection(cls, device: DeviceCredentials) -> Tuple[bool, str, str, Optional[str], List[str], Optional[str]]:
         """Test SSH or Serial connectivity with priority-based credential fallback"""
-        detected_info = ""
         was_auto = (device.device_type or "").lower() in ["autodetect", "auto", ""]
         target_name = device.serial_port if device.connection_mode == "serial" else device.host
-        if was_auto and device.device_type:
-            detected_info = f" (Auto-Detected: {device.device_type})"
 
         try:
             with cls.connect_with_fallback(device) as (net_connect, winning_cred, attempt_logs):
                 prompt = net_connect.find_prompt()
                 winning_user = device.username or None
                 prio_note = f" (via {winning_cred})" if winning_cred else ""
+                # Read after connecting: only now does device_type hold the resolved driver
+                detected_info = f" (Auto-Detected: {device.device_type})" if was_auto else ""
                 msg = f"Successfully connected to device on {target_name}{detected_info}{prio_note}"
                 return True, msg, prompt, winning_cred, attempt_logs, winning_user
         except NetmikoAuthenticationException as e:

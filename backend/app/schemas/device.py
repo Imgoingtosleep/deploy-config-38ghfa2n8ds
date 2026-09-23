@@ -36,10 +36,6 @@ class DeviceCredentials(BaseModel):
         None,
         description="Name or indicator of the credential that successfully authenticated"
     )
-    force_device_type: bool = Field(
-        False,
-        description="Keep this device_type even when the credential profile defines one (LLDP driver sweep)"
-    )
 
 class DeviceTestResult(BaseModel):
     host: str

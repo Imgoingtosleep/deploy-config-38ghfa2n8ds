@@ -308,7 +308,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         name: d.name || '',
         host: d.host.trim(),
         port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'huawei',
+        device_type: d.device_type || 'autodetect',
         username: d.username || '',
         password: d.password || '',
         secret: d.secret || '',
@@ -368,7 +368,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
       const payload = {
         targets,
         exclude: splitList(excludeText),
-        device_type: 'huawei',
         recursive,
         max_depth: maxDepth,
         num_workers: nornirWorkers,
@@ -384,7 +383,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         if (credentialSource.fallback_profile_ids?.length) {
           payload.fallback_profile_ids = credentialSource.fallback_profile_ids;
         }
-        payload.device_type = credentialProfile?.device_type || credentialSource.device_type || 'autodetect';
         payload.port = parseInt(credentialSource.port, 10) || credentialProfile?.port || 22;
       }
       const job = await submitLldpSubnetScan(payload);

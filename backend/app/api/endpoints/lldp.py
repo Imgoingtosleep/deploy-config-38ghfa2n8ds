@@ -26,7 +26,8 @@ class LldpSubnetScanRequest(LldpTargetPreviewRequest):
     username: Optional[str] = ""
     password: Optional[str] = ""
     secret: Optional[str] = None
-    device_type: str = "huawei"
+    # Scanned IPs have no fleet row: the driver comes from the command profile priority
+    device_type: str = "autodetect"
     port: int = Field(22, ge=1, le=65535)
     num_workers: Optional[int] = Field(None, ge=1, le=100, description="Concurrent SSH sessions")
     enable_tcp_scan: bool = Field(True, description="Enable TCP port 22 pre-scan before LLDP collection")

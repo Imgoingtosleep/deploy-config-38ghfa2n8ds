@@ -561,8 +561,7 @@ class LldpService:
         SSH to one device -> 'display lldp neighbor brief' -> loop every local
         interface that has a neighbor with 'display lldp neighbor interface <if>'.
 
-        driver:       netmiko device type to log in with, overriding the credential
-                      profile's (used by the driver sweep on discovered neighbors)
+        driver:       netmiko device type to log in with (chosen by collect_device_sweep)
         cmd_profiles: command profiles to run, already resolved (the sweep passes
                       only the ones whose parser matches the driver)
         """
@@ -583,8 +582,7 @@ class LldpService:
             cmd_profiles = CommandProfileService.resolve_ordered(command_profile_ids)
         if driver:
             device.device_type = driver
-            device.force_device_type = True
-            log_lines.append(f"Step 0a: SSH driver [{driver}] from the command profile parser")
+            log_lines.append(f"Step 0a: SSH driver [{driver}]")
         rejected_profiles = 0
 
         try:
@@ -779,7 +777,8 @@ class LldpService:
                     log_lines.append(f"Step 5: Parsed {len(neighbors)} neighbors with [{cprof['name']}].")
                     break
         except Exception as e:
-            status = f"Failed: {e}"
+            # Netmiko messages start with blank lines and run over several; keep the log to one line
+            status = f"Failed: {' '.join(str(e).split()) or type(e).__name__}"
             error = str(e)
             log_lines.append(f"ERROR: {status}")
 
@@ -803,44 +802,77 @@ class LldpService:
             "execution_time_seconds": round(time.time() - start, 2),
         }
 
+    @staticmethod
+    def driver_plan(
+        profiles: List[Dict[str, Any]], first_driver: Optional[str] = None, telnet: bool = False
+    ) -> List[Any]:
+        """
+        [(driver, command profiles)] in the order to log in with. One driver per command
+        profile parser, in command profile priority. A driver the fleet row names goes
+        first, with the profiles whose parser is its vendor; the rest keep their order.
+        """
+        from app.services.autodetect_service import AutoDetectService
+
+        order: List[str] = []
+        by_driver: Dict[str, List[Dict[str, Any]]] = {}
+        for prof in profiles:
+            drv = PARSER_DRIVERS.get(prof["parser"], prof["parser"])
+            if telnet:
+                drv = AutoDetectService.telnet_driver(drv)
+            if drv not in by_driver:
+                by_driver[drv] = []
+                order.append(drv)
+            by_driver[drv].append(prof)
+
+        plan = [(drv, by_driver[drv]) for drv in order]
+        if first_driver:
+            first = first_driver.strip().lower()
+            # 'huawei' matches huawei / huawei_telnet / huawei_vrpv8, 'cisco' matches cisco_nxos, ...
+            own = [p for p in profiles if p["parser"] in first]
+            plan = [(first, own or profiles)] + [(d, pr) for d, pr in plan if d != first]
+        return plan
+
+    @staticmethod
+    def _other_driver_may_help(result: Dict[str, Any]) -> bool:
+        """False for a wrong password or a dead host: logging in again with another driver
+        cannot fix those, and on TACACS/RADIUS every extra failed login risks a lockout"""
+        if result["success"]:
+            return bool(result.get("commands_rejected"))
+        from app.services.job_service import JobService
+        diag = JobService.format_failure_diagnostic(result.get("error") or "", host_ip=result.get("ip") or "")
+        return not diag.startswith(("Authentication Failed", "Connection Timeout", "Network Unreachable", "Connection Refused"))
+
     @classmethod
     def collect_device_sweep(
         cls,
         device: DeviceCredentials,
         depth: int = 0,
         command_profile_ids: Optional[List[str]] = None,
+        first_driver: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        A device found through LLDP has no device type of its own, so logging in
-        with the seed's driver fails on another vendor. Log in once per driver in
-        command profile order (C1's parser first) and stop at the first one whose
-        commands the device accepts; each driver is tried with its own profiles only.
+        Log in once per driver and stop at the first one whose commands the device accepts;
+        each driver runs only its own command profiles. The order is the command profile
+        priority, with `first_driver` (the driver set on the fleet row) in front of it.
+        Devices found by LLDP or a subnet scan have no driver of their own, so they get
+        the plain priority order.
         """
+        from app.services.autodetect_service import AutoDetectService
         from app.services.command_profile_service import CommandProfileService
         profiles = CommandProfileService.resolve_ordered(command_profile_ids)
-
-        order: List[str] = []
-        by_driver: Dict[str, List[Dict[str, Any]]] = {}
-        for prof in profiles:
-            drv = PARSER_DRIVERS.get(prof["parser"], prof["parser"])
-            if drv not in by_driver:
-                by_driver[drv] = []
-                order.append(drv)
-            by_driver[drv].append(prof)
+        plan = cls.driver_plan(profiles, first_driver, AutoDetectService.is_telnet(device))
 
         logs: List[str] = []
         result: Optional[Dict[str, Any]] = None
-        for attempt, drv in enumerate(order, 1):
-            result = cls.collect_device(device, depth, driver=drv, cmd_profiles=by_driver[drv])
+        for attempt, (drv, drv_profiles) in enumerate(plan, 1):
+            result = cls.collect_device(device, depth, driver=drv, cmd_profiles=drv_profiles)
             logs.append(result["log"])
-            # Logged in and the commands were understood: this is the right vendor
-            if result["success"] and not result.get("commands_rejected"):
+            if not cls._other_driver_may_help(result):
                 break
-            if attempt < len(order):
-                logs.append(
-                    f"--- Driver [{drv}] {'rejected the commands' if result['success'] else 'could not be used'}, "
-                    f"retrying as [{order[attempt]}] ---"
-                )
+            if attempt < len(plan):
+                reason = "rejected the commands" if result["success"] else "could not be used"
+                src = " (fleet)" if first_driver and attempt == 1 else ""
+                logs.append(f"--- Driver [{drv}]{src} {reason}, retrying as [{plan[attempt][0]}] ---")
         if result is not None and len(logs) > 1:
             result["log"] = "\n".join(logs)
         return result if result is not None else cls.collect_device(device, depth, command_profile_ids)
@@ -918,12 +950,15 @@ class LldpService:
                 alive_indices = list(range(len(wave)))
 
             if alive_indices:
-                # Seeds keep the device type the fleet gives them; neighbors found by
-                # LLDP have none, so their driver is swept in command profile order
-                collect = cls.collect_device if depth == 0 else cls.collect_device_sweep
+                # Seeds try the driver set on their fleet row first, then the command profile
+                # priority; neighbors found by LLDP have no driver, so only the priority
+                from app.services.autodetect_service import is_driver
                 with ThreadPoolExecutor(max_workers=min(workers, len(alive_indices))) as executor:
                     futures = {
-                        executor.submit(collect, wave[i], depth, command_profile_ids): i
+                        executor.submit(
+                            cls.collect_device_sweep, wave[i], depth, command_profile_ids,
+                            wave[i].device_type if depth == 0 and is_driver(wave[i].device_type) else None,
+                        ): i
                         for i in alive_indices
                     }
                     for fut in as_completed(futures):

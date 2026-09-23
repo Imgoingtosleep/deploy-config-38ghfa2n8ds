@@ -156,7 +156,6 @@ export default function DeviceForm({
         const def = data.find((p) => p.is_default) || data[0];
         if (def) {
           setSelectedProfileId((prev) => prev || def.id);
-          setCommonType(def.device_type || 'autodetect');
           const prio1 = (def.credentials && def.credentials[0]) || def;
           setCommonUser(prio1.username || '');
           setCommonPass(prio1.password || '');
@@ -174,10 +173,6 @@ export default function DeviceForm({
                     username: d.username || prio1.username || '',
                     password: d.password || prio1.password || '',
                     secret: d.secret !== undefined && d.secret !== '' ? d.secret : (prio1.secret || ''),
-                    device_type:
-                      d.device_type && d.device_type !== 'autodetect'
-                        ? d.device_type
-                        : (def.device_type || 'autodetect'),
                   }
             )
           );
@@ -213,14 +208,12 @@ export default function DeviceForm({
     if (!prof) return;
 
     const prio1 = (prof.credentials && prof.credentials[0]) || prof;
-    setCommonType(prof.device_type || commonType);
     setCommonUser(prio1.username || '');
     setCommonPass(prio1.password || '');
 
     setFleet((prev) =>
       prev.map((d) => ({
         ...d,
-        device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
         username: prio1.username || '',
         password: prio1.password || '',
         secret: prio1.secret !== undefined && prio1.secret !== '' ? prio1.secret : (d.secret || ''),
@@ -248,7 +241,6 @@ export default function DeviceForm({
         d.id === deviceId
           ? {
               ...d,
-              device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
               username: prio1.username || '',
               password: prio1.password || '',
               secret: prio1.secret || '',
@@ -271,7 +263,6 @@ export default function DeviceForm({
         username: p1 ? p1.username : d.username,
         password: p1 ? p1.password : d.password,
         secret: p1 ? (p1.secret || '') : d.secret,
-        device_type: p1 && p1.device_type !== 'autodetect' ? p1.device_type : d.device_type,
         profile_id: p1 ? p1.id : d.profile_id,
         fallback_profile_ids: pList,
       }))
@@ -280,7 +271,6 @@ export default function DeviceForm({
     if (p1) {
       setCommonUser(p1.username || '');
       setCommonPass(p1.password || '');
-      setCommonType(p1.device_type || commonType);
     }
 
     setShowFleetPoolModal(false);
@@ -292,7 +282,6 @@ export default function DeviceForm({
       id: null,
       name: '',
       description: '',
-      device_type: 'huawei',
       port: 22,
       is_default: false,
       credentials: [
@@ -326,7 +315,6 @@ export default function DeviceForm({
       id: profile.id,
       name: profile.name || '',
       description: profile.description || '',
-      device_type: profile.device_type || 'autodetect',
       port: profile.port || 22,
       is_default: !!profile.is_default,
       credentials: creds.map((c, i) => ({
@@ -576,7 +564,7 @@ export default function DeviceForm({
         id: newId,
         host: '',
         port: defProf?.port || 22,
-        device_type: defProf?.device_type || commonType || 'autodetect',
+        device_type: commonType || 'autodetect',
         username: prio1?.username || commonUser,
         password: prio1?.password || commonPass,
         secret: prio1?.secret || '',
@@ -744,7 +732,7 @@ export default function DeviceForm({
       name: d.name || d.hostname || '',
       host: d.host || '',
       port: d.port || prof?.port || 22,
-      device_type: d.device_type && d.device_type !== 'autodetect' ? d.device_type : (prof?.device_type || 'autodetect'),
+      device_type: d.device_type || 'autodetect',
       username: prio1?.username || '',
       password: prio1?.password || '',
       secret: prio1?.secret || '',
@@ -1296,7 +1284,6 @@ export default function DeviceForm({
                           )}
 
                           <div className="text-[11px] text-slate-400 flex items-center gap-3 mt-1 font-mono">
-                            <span>Driver: <strong className="text-slate-200">{p.device_type || 'autodetect'}</strong></span>
                             <span>Port: <strong className="text-slate-200">{p.port || 22}</strong></span>
                           </div>
 
@@ -1377,27 +1364,6 @@ export default function DeviceForm({
                     />
                   </div>
 
-                  {/* Device Driver */}
-                  <div className="form-group">
-                    <label className="form-label">Default Device Driver</label>
-                    <select
-                      value={editingProfile.device_type}
-                      onChange={(e) =>
-                        setEditingProfile((prev) => ({
-                          ...prev,
-                          device_type: e.target.value,
-                          port: e.target.value.includes('telnet') ? 23 : (prev.port || 22),
-                        }))
-                      }
-                      className="form-select"
-                    >
-                      {deviceTypes.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
 
                   {/* Port */}
                   <div className="form-group">
@@ -1781,7 +1747,7 @@ export default function DeviceForm({
                               <td className="font-mono text-sky-300">{d.name || '-'}</td>
                               <td className="font-mono font-semibold text-white">{d.host}</td>
                               <td className="text-sky-300 font-mono text-xs">{prof?.name || 'Default'}</td>
-                              <td className="text-slate-300">{d.device_type || prof?.device_type || 'autodetect'}</td>
+                              <td className="text-slate-300">{d.device_type || 'autodetect'}</td>
                               <td className="font-mono text-slate-400">{d.port || prof?.port || 22}</td>
                             </tr>
                           );

@@ -474,7 +474,8 @@ class LldpScanService:
                     overrides["fallback_profile_ids"] = None
                 dev = DeviceCredentials(**{**p["template"], **overrides})
                 futures[
-                    executor.submit(LldpService.collect_device, dev, depth, p.get("command_profile_ids"))
+                    # A scanned IP has no fleet row: its driver comes from the command profile priority
+                    executor.submit(LldpService.collect_device_sweep, dev, depth, p.get("command_profile_ids"))
                 ] = dev
             for fut in as_completed(futures):
                 if job.cancel_requested:

@@ -13,7 +13,6 @@ DEFAULT_PROFILES = [
         "id": "prof-huawei-default",
         "name": "Huawei Multi-Tier Admin",
         "description": "Credentials for Huawei VRP switches with sequential fallback priorities",
-        "device_type": "huawei",
         "port": 22,
         "is_default": True,
         "credentials": [
@@ -30,7 +29,6 @@ DEFAULT_PROFILES = [
         "id": "prof-cisco-default",
         "name": "Cisco Multi-Tier Admin",
         "description": "Credentials for Cisco IOS / IOS-XE switches",
-        "device_type": "cisco_ios",
         "port": 22,
         "is_default": False,
         "credentials": [
@@ -47,7 +45,6 @@ DEFAULT_PROFILES = [
         "id": "prof-readonly",
         "name": "NOC Monitor / Audit",
         "description": "Operator account for read-only health checks and audits",
-        "device_type": "autodetect",
         "port": 22,
         "is_default": False,
         "credentials": [
@@ -106,7 +103,9 @@ class ProfileService:
         p["username"] = p1.get("username", "")
         p["password"] = p1.get("password", "")
         p["secret"] = p1.get("secret", "")
-        p["device_type"] = p.get("device_type") or "autodetect"
+        # Credentials only: the driver belongs to the fleet device, never to a credential
+        # profile (older profiles.json files still carry one; drop it on load)
+        p.pop("device_type", None)
         p["port"] = int(p.get("port") or 22)
         return p
 
@@ -180,7 +179,6 @@ class ProfileService:
             "id": profile_id,
             "name": (data.get("name") or "Unnamed Profile").strip(),
             "description": (data.get("description") or "").strip(),
-            "device_type": (data.get("device_type") or "autodetect").strip(),
             "port": int(data.get("port") or 22),
             "is_default": is_default,
             "credentials": raw_creds,
@@ -225,8 +223,6 @@ class ProfileService:
             target["name"] = data["name"].strip()
         if "description" in data and data["description"] is not None:
             target["description"] = data["description"].strip()
-        if "device_type" in data and data["device_type"] is not None:
-            target["device_type"] = data["device_type"].strip()
         if "port" in data and data["port"] is not None:
             target["port"] = int(data["port"])
 
