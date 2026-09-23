@@ -232,7 +232,9 @@ export const submitDeployJob = async (
   return response.data;
 };
 
-// Scheduled deploy: `schedule` = { runAt, deadline, title } with runAt/deadline as Date objects
+// Scheduled deploy: `schedule` = { runAt, deadline, title, repeat, interval, weekdays, occurrences, repeatUntil }
+// runAt / deadline / repeatUntil are Date objects, repeat is 'once' | 'hourly' | 'daily' | 'weekly',
+// weekdays is 0=Monday..6=Sunday and occurrences is the total number of runs (null = until cancelled)
 export const scheduleDeployJob = async (
   devices,
   configCommands,
@@ -255,6 +257,11 @@ export const scheduleDeployJob = async (
     client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
     client_offset_minutes: -schedule.runAt.getTimezoneOffset(),
     title: schedule.title || null,
+    repeat: schedule.repeat || 'once',
+    interval: schedule.interval || 1,
+    weekdays: schedule.weekdays || [],
+    occurrences: schedule.occurrences || null,
+    repeat_until: schedule.repeatUntil ? schedule.repeatUntil.toISOString() : null,
   };
   if (numWorkers) payload.num_workers = numWorkers;
   const response = await apiClient.post('/deploy-schedules', payload);

@@ -323,6 +323,24 @@ const nextFullHour = () => {
 
 const formatScheduleTime = (iso) => (iso ? new Date(iso).toLocaleString() : '-');
 
+// 0=Monday .. 6=Sunday, the order the backend expects
+const WEEKDAYS = [
+  { value: 0, label: 'Mon' },
+  { value: 1, label: 'Tue' },
+  { value: 2, label: 'Wed' },
+  { value: 3, label: 'Thu' },
+  { value: 4, label: 'Fri' },
+  { value: 5, label: 'Sat' },
+  { value: 6, label: 'Sun' },
+];
+
+const REPEAT_MODES = [
+  { value: 'once', label: 'Once' },
+  { value: 'hourly', label: 'Every N hours' },
+  { value: 'daily', label: 'Every N days' },
+  { value: 'weekly', label: 'Weekly on days' },
+];
+
 const SCHEDULE_STATUS_STYLE = {
   scheduled: 'scheduled',
   running: 'running',
@@ -376,6 +394,12 @@ export default function DeployConfigPage({
   const [scheduleRunAt, setScheduleRunAt] = useState(() => toLocalInput(nextFullHour()));
   const [scheduleDeadline, setScheduleDeadline] = useState('');
   const [scheduleTitle, setScheduleTitle] = useState('');
+  // Repeat rule: 'once' | 'hourly' (every N hours) | 'daily' (every N days) | 'weekly' (chosen weekdays)
+  const [scheduleRepeat, setScheduleRepeat] = useState('once');
+  const [scheduleInterval, setScheduleInterval] = useState(1);
+  const [scheduleWeekdays, setScheduleWeekdays] = useState([]); // 0=Monday .. 6=Sunday
+  const [scheduleCount, setScheduleCount] = useState(''); // total runs, '' = until cancelled
+  const [scheduleRepeatUntil, setScheduleRepeatUntil] = useState('');
   const [schedules, setSchedules] = useState([]);
   const [scheduleLog, setScheduleLog] = useState(null); // { id, title, text }
 
@@ -674,9 +698,18 @@ export default function DeployConfigPage({
     const runAt = new Date(scheduleRunAt);
     if (!scheduleRunAt || Number.isNaN(runAt.getTime())) return 'Pick a start time';
     if (runAt.getTime() < Date.now() - 60000) return 'Start time is in the past';
-    if (scheduleDeadline) {
+    if (scheduleRepeat === 'once' && scheduleDeadline) {
       const deadline = new Date(scheduleDeadline);
       if (Number.isNaN(deadline.getTime()) || deadline <= runAt) return 'Deadline must be after the start time';
+    }
+    if (scheduleRepeat !== 'once') {
+      if (!(scheduleInterval >= 1)) return 'Repeat every must be 1 or more';
+      if (scheduleRepeat === 'weekly' && scheduleWeekdays.length === 0) return 'Pick at least one weekday';
+      if (scheduleCount !== '' && !(Number(scheduleCount) >= 1)) return 'Number of runs must be 1 or more';
+      if (scheduleRepeatUntil) {
+        const until = new Date(scheduleRepeatUntil);
+        if (Number.isNaN(until.getTime()) || until <= runAt) return 'Repeat until must be after the start time';
+      }
     }
     return '';
   })();
@@ -715,11 +748,19 @@ export default function DeployConfigPage({
         nornirWorkers,
         {
           runAt: new Date(scheduleRunAt),
-          deadline: scheduleDeadline ? new Date(scheduleDeadline) : null,
+          deadline: scheduleRepeat === 'once' && scheduleDeadline ? new Date(scheduleDeadline) : null,
           title: scheduleTitle.trim(),
+          repeat: scheduleRepeat,
+          interval: Number(scheduleInterval) || 1,
+          weekdays: scheduleRepeat === 'weekly' ? scheduleWeekdays : [],
+          occurrences: scheduleRepeat !== 'once' && scheduleCount !== '' ? Number(scheduleCount) : null,
+          repeatUntil: scheduleRepeat !== 'once' && scheduleRepeatUntil ? new Date(scheduleRepeatUntil) : null,
         }
       );
-      setSuccessMessage(`Scheduled "${item.title}" for ${formatScheduleTime(item.run_at)}`);
+      setSuccessMessage(
+        `Scheduled "${item.title}" for ${formatScheduleTime(item.run_at)}`
+          + (item.repeat !== 'once' ? ` (${item.repeat_label})` : '')
+      );
       setScheduleTitle('');
       await loadSchedules();
       setActiveTab('scheduled');
@@ -2469,10 +2510,11 @@ export default function DeployConfigPage({
             </div>
           ) : (
             <div className="history-table-wrapper">
-              <table className="history-table">
+              <table className="history-table schedule-table">
                 <thead>
                   <tr>
-                    <th>Start At</th>
+                    <th>Next Run</th>
+                    <th>Repeat</th>
                     <th>Title</th>
                     <th>Devices</th>
                     <th>Commands</th>
@@ -2488,6 +2530,23 @@ export default function DeployConfigPage({
                         {formatScheduleTime(item.run_at)}
                         {item.deadline && (
                           <div className="text-slate-500">until {formatScheduleTime(item.deadline)}</div>
+                        )}
+                      </td>
+                      <td className="text-xs text-slate-300">
+                        {item.repeat && item.repeat !== 'once' ? (
+                          <>
+                            <div className="text-violet-300">{item.repeat_label}</div>
+                            <div className="text-slate-500">
+                              run {item.run_count || 0}
+                              {item.occurrences ? `/${item.occurrences}` : ''} done
+                              {item.missed_count ? `, ${item.missed_count} missed` : ''}
+                            </div>
+                            {item.repeat_until && (
+                              <div className="text-slate-500">until {formatScheduleTime(item.repeat_until)}</div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-slate-500">once</span>
                         )}
                       </td>
                       <td className="text-xs text-white">
@@ -2536,7 +2595,16 @@ export default function DeployConfigPage({
                           </button>
                         )}
                         {item.status === 'scheduled' && (
-                          <button type="button" onClick={() => handleScheduleAction('run', item)} className="btn-history-restore mr-2">
+                          <button
+                            type="button"
+                            onClick={() => handleScheduleAction('run', item)}
+                            className="btn-history-restore mr-2"
+                            title={
+                              item.repeat && item.repeat !== 'once'
+                                ? 'Run this occurrence now; the series continues from the next slot'
+                                : 'Start now instead of waiting'
+                            }
+                          >
                             <Play className="h-3 w-3 inline mr-1" />
                             Run Now
                           </button>
@@ -2681,14 +2749,96 @@ export default function DeployConfigPage({
                       />
                     </div>
                     <div>
-                      <label className="form-label">Do not start after (optional)</label>
-                      <input
-                        type="datetime-local"
-                        value={scheduleDeadline}
-                        onChange={(e) => setScheduleDeadline(e.target.value)}
+                      <label className="form-label">Repeat *</label>
+                      <select
+                        value={scheduleRepeat}
+                        onChange={(e) => setScheduleRepeat(e.target.value)}
                         className="form-input"
-                      />
+                      >
+                        {REPEAT_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
+
+                    {scheduleRepeat === 'once' && (
+                      <div>
+                        <label className="form-label">Do not start after (optional)</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleDeadline}
+                          onChange={(e) => setScheduleDeadline(e.target.value)}
+                          className="form-input"
+                        />
+                      </div>
+                    )}
+
+                    {(scheduleRepeat === 'hourly' || scheduleRepeat === 'daily') && (
+                      <div>
+                        <label className="form-label">
+                          Every * {scheduleRepeat === 'hourly' ? '(hours)' : '(days)'}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max={scheduleRepeat === 'hourly' ? 168 : 365}
+                          value={scheduleInterval}
+                          onChange={(e) => setScheduleInterval(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="form-input"
+                        />
+                      </div>
+                    )}
+
+                    {scheduleRepeat === 'weekly' && (
+                      <div className="schedule-field-wide">
+                        <label className="form-label">On these days *</label>
+                        <div className="schedule-weekdays">
+                          {WEEKDAYS.map((d) => (
+                            <button
+                              key={d.value}
+                              type="button"
+                              className={scheduleWeekdays.includes(d.value) ? 'active' : ''}
+                              onClick={() =>
+                                setScheduleWeekdays((cur) =>
+                                  cur.includes(d.value) ? cur.filter((v) => v !== d.value) : [...cur, d.value].sort()
+                                )
+                              }
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {scheduleRepeat !== 'once' && (
+                      <>
+                        <div>
+                          <label className="form-label">How many times (blank = until cancelled)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={scheduleCount}
+                            onChange={(e) => setScheduleCount(e.target.value)}
+                            placeholder="e.g. 4"
+                            className="form-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label">Repeat until (optional)</label>
+                          <input
+                            type="datetime-local"
+                            value={scheduleRepeatUntil}
+                            onChange={(e) => setScheduleRepeatUntil(e.target.value)}
+                            className="form-input"
+                          />
+                        </div>
+                      </>
+                    )}
+
                     <div className="schedule-field-wide">
                       <label className="form-label">Title (optional)</label>
                       <input
@@ -2700,9 +2850,13 @@ export default function DeployConfigPage({
                       />
                     </div>
                     <p className="schedule-hint schedule-field-wide">
-                      Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}. Without a deadline, a deploy that
-                      cannot start within 15 minutes of the start time (e.g. the backend was down) is marked missed
-                      instead of running late.
+                      Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}. A run that cannot start within 15
+                      minutes of its time (e.g. the backend was down) is marked missed instead of running late; a
+                      repeating schedule then waits for its next turn.
+                      {scheduleRepeat === 'weekly'
+                        && ' The first run moves to the first chosen weekday at the start time you picked.'}
+                      {scheduleRepeat !== 'once'
+                        && ' Cancel stops the whole series; every run appends to the same log.'}
                       {!enableBackup && ' Tip: enable "Backup before deploy" for unattended runs.'}
                     </p>
                     {scheduleInputError && (

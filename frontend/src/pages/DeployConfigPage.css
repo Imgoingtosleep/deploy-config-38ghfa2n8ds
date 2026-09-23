@@ -5,6 +5,14 @@
   flex-direction: column;
   gap: 1.25rem;
   width: 100%;
+  min-width: 0;
+}
+
+/* Flex items default to min-width:auto, so a wide child (e.g. the schedule table)
+   would stretch the page instead of scrolling inside its own card */
+.deploy-page-v2 > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Top Device Banner */
@@ -245,6 +253,7 @@
 
 /* Cards */
 .deploy-card {
+  min-width: 0;
   background-color: #0f172a;
   border: 1px solid #1e293b;
   border-radius: 0.75rem;
@@ -1280,6 +1289,7 @@
 /* TAB 4: HISTORY TABLE */
 .history-table-wrapper {
   overflow-x: auto;
+  max-width: 100%;
   margin-top: 0.5rem;
 }
 
@@ -1300,6 +1310,20 @@
 .history-table td {
   padding: 0.625rem 0.75rem;
   border-bottom: 1px solid #172033;
+}
+
+/* The schedule list carries two more columns than the history one, so it is packed tighter
+   and only its action buttons are kept on one line */
+.schedule-table th,
+.schedule-table td {
+  padding: 0.5rem;
+  vertical-align: top;
+}
+
+.schedule-table td:nth-child(3) {
+  min-width: 10rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .btn-history-view {
@@ -1343,6 +1367,9 @@
   border-radius: 0.75rem;
   width: 100%;
   max-width: 600px;
+  /* Keep the header and the footer buttons on screen; the body scrolls instead */
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
   box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
@@ -1385,6 +1412,8 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .confirm-stats-grid {
@@ -1867,6 +1896,32 @@
 
 .schedule-field-wide {
   grid-column: 1 / -1;
+}
+
+.schedule-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.schedule-weekdays button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid #334155;
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.schedule-weekdays button:hover {
+  border-color: #6366f1;
+}
+
+.schedule-weekdays button.active {
+  background-color: #312e81;
+  border-color: #6366f1;
+  color: #e0e7ff;
 }
 
 .schedule-hint {
