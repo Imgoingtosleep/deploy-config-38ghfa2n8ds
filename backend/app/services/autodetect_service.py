@@ -139,6 +139,7 @@ class AutoDetectService:
         is_unreachable = False
         is_auth_failure = False
         err_reason = ""
+        authed_cred: Optional[Dict[str, Any]] = None  # a credential that logged in but told us no vendor
 
         if not has_credentials:
             # When zero credentials are provided, test raw TCP port connectivity
@@ -173,6 +174,12 @@ class AutoDetectService:
                         device.username = c_user
                         cls.set_cached_type(host, detected_ssh)
                         return detected_ssh, f"{reason_ssh} (via user: {c_user})"
+                    # Logged in, but the banner/prompt did not name a vendor. Keep this
+                    # credential for the command probe below and stop here: the remaining
+                    # credentials are wrong for this device and would only pile up failed
+                    # logins (and make the result look like an authentication problem).
+                    authed_cred = c
+                    break
                 except paramiko.ssh_exception.AuthenticationException as auth_err:
                     is_auth_failure = True
                     err_reason = f"Authentication failed for {c_user}@{host}: Username or password incorrect"
@@ -206,9 +213,10 @@ class AutoDetectService:
         if is_unreachable:
             return "unreachable", err_reason
 
-        # --- Stage 4: Prioritized Fast Prober (If not auth failure and credentials exist) ---
-        if not is_auth_failure and any(c.get("username") for c in candidates):
-            for c in candidates:
+        # --- Stage 4: Prioritized Fast Prober (with the credential that logged in, if any) ---
+        probe_creds = [authed_cred] if authed_cred else candidates
+        if (authed_cred or not is_auth_failure) and any(c.get("username") for c in probe_creds):
+            for c in probe_creds:
                 if not c.get("username"):
                     continue
                 try:
@@ -224,8 +232,14 @@ class AutoDetectService:
                     pass
 
         # --- Stage 5: Explicit status responses (NEVER default to huawei) ---
-        if is_auth_failure:
+        if is_auth_failure and not authed_cred:
             return "auth_failed", f"Authentication Failed on {host}:{port} - {err_reason}"
+
+        if authed_cred:
+            return "unknown", (
+                f"Logged in to {host}:{port} as {authed_cred.get('username')}, but the vendor could not be "
+                f"identified from the banner, the prompt or a version command"
+            )
 
         if not has_credentials:
             return "unknown", f"Host {host}:{port} is reachable, but credentials are required to detect vendor"
@@ -381,6 +395,15 @@ class AutoDetectService:
             # Read initial buffer (Welcome banners)
             initial_buffer = _read_channel_response(channel, timeout=1.0)
             initial_cleaned = clean_ansi(initial_buffer)
+
+            # Some switches (Huawei VRP with a default password, Comware) ask to change the
+            # password right after login and hold the CLI until answered, so there is no prompt
+            # to match yet. Decline with "N" like Netmiko does and read the real prompt.
+            if re.search(r"Change now\s*\?\s*\[Y/N\]|password needs to be changed|initial password poses security risks",
+                         initial_cleaned, re.I):
+                channel.send("N\r\n")
+                initial_buffer += _read_channel_response(channel, timeout=1.5)
+                initial_cleaned = clean_ansi(initial_buffer)
 
             # Check initial banner text
             if re.search(r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", initial_cleaned, re.I):
