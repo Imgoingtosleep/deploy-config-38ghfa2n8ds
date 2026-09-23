@@ -595,12 +595,34 @@ export default function DeviceForm({
     }
     setDetectingFleet(true);
     try {
-      const res = await detectFleetTypes(validDevices);
+      const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
+      const prio1 = (defProf?.credentials && defProf.credentials[0]) || defProf;
+      const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
+
+      const enrichedDevices = validDevices.map((d) => ({
+        ...d,
+        username: d.username || prio1?.username || commonUser || '',
+        password: d.password || prio1?.password || commonPass || '',
+        secret: d.secret || prio1?.secret || '',
+        profile_id: d.profile_id || selectedProfileId || null,
+        credential_pool: d.credential_pool || (defProf?.credentials?.length > 0 ? defProf.credentials : null),
+        fallback_profile_ids: d.fallback_profile_ids || (pool.length > 0 ? pool : null),
+      }));
+
+      const res = await detectFleetTypes(enrichedDevices);
       if (res && res.results) {
         const map = {};
+        const unreachableList = [];
+        const authFailedList = [];
         res.results.forEach((r) => {
-          if (r.id) map[r.id] = r.device_type;
-          else if (r.host) map[r.host] = r.device_type;
+          if (r.device_type && !['unreachable', 'auth_failed', 'unknown'].includes(r.device_type)) {
+            if (r.id) map[r.id] = r.device_type;
+            else if (r.host) map[r.host] = r.device_type;
+          } else if (r.device_type === 'unreachable') {
+            unreachableList.push(r.host);
+          } else if (r.device_type === 'auth_failed') {
+            authFailedList.push(r.host);
+          }
         });
         setFleet((prev) =>
           prev.map((d) => {
@@ -608,6 +630,16 @@ export default function DeviceForm({
             return detected ? { ...d, device_type: detected } : d;
           })
         );
+        let msg = '';
+        if (unreachableList.length > 0) {
+          msg += `⚠️ Unreachable / Offline (${unreachableList.length}): ${unreachableList.slice(0, 5).join(', ')}${unreachableList.length > 5 ? '...' : ''}\n`;
+        }
+        if (authFailedList.length > 0) {
+          msg += `🔑 Authentication Failed (${authFailedList.length}): ${authFailedList.slice(0, 5).join(', ')}${authFailedList.length > 5 ? '...' : ''}\n`;
+        }
+        if (msg) {
+          alert(msg.trim());
+        }
       }
     } catch (err) {
       console.error('Fleet type detection failed:', err);

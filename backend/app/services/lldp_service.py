@@ -57,10 +57,48 @@ _IMAGE_TOKEN_RE = re.compile(r"K9|UNIVERSAL|IPBASE|LANBASE|IPSERVICES|ENTSERVICE
 _FAMILY_RE_CISCO = re.compile(r"\bCAT(\d{1,2})K(?![A-Za-z0-9])", re.I)
 _CISCO_ROUTER_RE = re.compile(r"^(?:ISR|ASR|CSR|CISCO\d{4}|C8\d{3}|C11\d{2}|C[1-3]900$)", re.I)
 
+# Raisecom product models, e.g. ISCOM2600G-4GE-AC, ISCOM2128EA-MA, RAX711-C-AC, iTN201, RC002-16
+_MODEL_RE_RAISECOM = re.compile(
+    r"(?<![\w-])((?:ISCOM|RAX|iTN|RC|Gazelle)\d{2,5}[A-Z0-9]*(?:-[A-Z0-9]+)*)(?![\w(])",
+    re.I,
+)
+
+# Juniper model regexes
+_MODEL_LINE_JUNIPER = re.compile(r"^\s*Model\s*:\s*([A-Za-z0-9_+-]+)", re.MULTILINE | re.IGNORECASE)
+_MODEL_RE_JUNIPER = re.compile(r"(?<![\w-])((?:SRX|QFX|EX|MX|ACX|PTX|NFX)\d{3,5}[A-Z0-9]*(?:-[A-Z0-9+]+)*)(?!\w)", re.I)
+
+# Aruba / HP ProCurve model regexes
+_MODEL_LINE_ARUBA = re.compile(r"MODEL:\s*([A-Za-z0-9_+-]+)", re.I)
+_MODEL_RE_ARUBA = re.compile(
+    r"(?<![\w-])((?:(?:CX\s*)?[1-9]\d{3}[A-Z]*(?:-[A-Z0-9+]+)*|JL\d{3}[A-Z]|J\d{4}[A-Z]|Aruba\d{3,4}[A-Z0-9-]*))(?!\w)",
+    re.I,
+)
+
+# HP / H3C Comware model regexes
+_MODEL_RE_HP = re.compile(
+    r"(?<![\w-])((?:S\d{4}[A-Z0-9]*(?:-[A-Z0-9+]+)*|MSR\d{4}[A-Z0-9-]*|\d{4}(?:AF|X)?(?:-[A-Z0-9+]+)+|HPE\s+\d{4}[A-Z0-9\s+-]*EI|HPE\s+\d{4}))(?!\w)",
+    re.I,
+)
+
+# MikroTik RouterOS model regexes
+_MODEL_LINE_MIKROTIK = re.compile(r"^\s*(?:board-name|model)\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+_MODEL_RE_MIKROTIK = re.compile(
+    r"(?<![\w-])((?:CCR|CRS|CSS|RB|hEX|hAP|NetMetal|PowerBox)\d{2,5}[A-Z0-9]*(?:-[A-Z0-9+]+)*)(?!\w)",
+    re.I,
+)
+
 
 # Netmiko driver to log in with for each command profile parser: an LLDP neighbor
 # has no device type of its own, so its driver is swept in command profile order
-PARSER_DRIVERS = {"huawei": "huawei", "cisco": "cisco_ios"}
+PARSER_DRIVERS = {
+    "huawei": "huawei",
+    "cisco": "cisco_ios",
+    "raisecom": "raisecom_roap",
+    "aruba": "aruba_os",
+    "hp_comware": "hp_comware",
+    "juniper": "juniper_junos",
+    "mikrotik": "mikrotik_routeros",
+}
 
 
 def cli_rejected(text: str) -> bool:
@@ -102,6 +140,16 @@ class LldpService:
     def detect_vendor(text: str, parser: str = "") -> str:
         """Vendor of the device the text describes; falls back to the command profile's parser"""
         t = (text or "").lower()
+        if "juniper" in t or "junos" in t:
+            return "juniper"
+        if "aruba" in t or "procurve" in t:
+            return "aruba"
+        if "h3c" in t or "comware" in t or "hpe" in t:
+            return "hp_comware"
+        if "mikrotik" in t or "routeros" in t or "routerboard" in t or "crs" in t or "ccr" in t:
+            return "mikrotik"
+        if "raisecom" in t or "ros" in t or "iscom" in t or "rax" in t:
+            return "raisecom"
         if "huawei" in t or "vrp" in t:
             return "huawei"
         if "cisco" in t or "nx-os" in t or "ios-xe" in t:
@@ -134,6 +182,51 @@ class LldpService:
         fam = _FAMILY_RE_CISCO.search(text)
         return f"C{fam.group(1)}K" if fam else ""
 
+    @staticmethod
+    def _extract_huawei_model(text: str) -> str:
+        candidates = _MODEL_RE.findall(text)
+        return max(candidates, key=len) if candidates else ""
+
+    @staticmethod
+    def _extract_juniper_model(text: str) -> str:
+        m = _MODEL_LINE_JUNIPER.search(text)
+        if m:
+            return m.group(1).strip()
+        cands = _MODEL_RE_JUNIPER.findall(text)
+        return max(cands, key=len) if cands else ""
+
+    @staticmethod
+    def _extract_aruba_model(text: str) -> str:
+        m = _MODEL_LINE_ARUBA.search(text)
+        if m:
+            return m.group(1).strip()
+        cands = _MODEL_RE_ARUBA.findall(text)
+        if not cands:
+            return ""
+        # Prefer switch series name (e.g. 2930F-24G-4SFP+, 6300M, 2530-24G-PoEP) over bare part number (JL665A, J9773A)
+        series_cands = [c for c in cands if not re.fullmatch(r"J[L\d]\d{3}[A-Z]", c, re.I)]
+        if series_cands:
+            return max(series_cands, key=len)
+        return max(cands, key=len)
+
+    @staticmethod
+    def _extract_hp_model(text: str) -> str:
+        cands = _MODEL_RE_HP.findall(text)
+        return max(cands, key=len).strip() if cands else ""
+
+    @staticmethod
+    def _extract_mikrotik_model(text: str) -> str:
+        m = _MODEL_LINE_MIKROTIK.search(text)
+        if m:
+            return m.group(1).strip()
+        cands = _MODEL_RE_MIKROTIK.findall(text)
+        return max(cands, key=len) if cands else ""
+
+    @staticmethod
+    def _extract_raisecom_model(text: str) -> str:
+        cands = _MODEL_RE_RAISECOM.findall(text)
+        return max(cands, key=len) if cands else ""
+
     @classmethod
     def extract_model(cls, text: str, parser: str = "") -> str:
         """
@@ -148,13 +241,40 @@ class LldpService:
 
     @classmethod
     def builtin_model(cls, text: str, parser: str = "") -> str:
-        """Model from the built-in Huawei / Cisco regexes only"""
+        """Model from the built-in Huawei, Cisco, Raisecom, Juniper, Aruba, HP, MikroTik regexes"""
         text = text or ""
         vendor = cls.detect_vendor(text, parser)
+        if vendor == "juniper":
+            return cls._extract_juniper_model(text)
+        if vendor == "aruba":
+            return cls._extract_aruba_model(text)
+        if vendor == "hp_comware":
+            return cls._extract_hp_model(text)
+        if vendor == "mikrotik":
+            return cls._extract_mikrotik_model(text)
+        if vendor == "raisecom":
+            return cls._extract_raisecom_model(text)
         if vendor == "cisco":
             return cls._extract_cisco_model(text)
-        candidates = _MODEL_RE.findall(text)
-        return max(candidates, key=len) if candidates else ""
+        if vendor == "huawei":
+            hw = cls._extract_huawei_model(text)
+            if hw:
+                return hw
+
+        # Cascading fallback across all vendor extractors
+        for extractor in [
+            cls._extract_huawei_model,
+            cls._extract_cisco_model,
+            cls._extract_juniper_model,
+            cls._extract_aruba_model,
+            cls._extract_raisecom_model,
+            cls._extract_hp_model,
+            cls._extract_mikrotik_model,
+        ]:
+            cand = extractor(text)
+            if cand:
+                return cand
+        return ""
 
     @classmethod
     def device_role(cls, model: str) -> str:
@@ -187,12 +307,24 @@ class LldpService:
 
     @staticmethod
     def builtin_role(model: str) -> str:
-        """Huawei AR / NE and Cisco ISR / ASR / C8000 / C1100 are routers, any other recognized model is a switch"""
+        """Determine device role (router, switch, firewall, wireless) from model string"""
         if not model:
             return "unknown"
-        m = model.upper()
-        if m.startswith(ROUTER_MODEL_PREFIXES) or _CISCO_ROUTER_RE.match(m):
+        m = model.upper().strip()
+        # Firewalls
+        if m.startswith(("SRX", "USG", "ASA", "FTD", "FORTIGATE")):
+            return "firewall"
+        # Wireless APs
+        if m.startswith(("AIR-", "AP-", "AIRENGINE")):
+            return "wireless"
+        # Routers
+        if (
+            (m.startswith(ROUTER_MODEL_PREFIXES) and not m.startswith("ARUBA")) # AR, NE
+            or _CISCO_ROUTER_RE.match(m)       # ISR, ASR, CSR, C8xx, C11xx, C1-3900
+            or m.startswith(("RAX", "MX", "ACX", "PTX", "MSR", "CCR", "HEX", "HAP", "RB"))
+        ):
             return "router"
+        # Switches (all remaining models like Catalyst, S-series, ISCOM, QFX, EX, ProCurve, CRS, CSS, etc.)
         return "switch"
 
     @staticmethod

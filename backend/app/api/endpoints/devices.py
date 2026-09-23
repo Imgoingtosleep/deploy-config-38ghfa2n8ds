@@ -15,6 +15,8 @@ SUPPORTED_DEVICE_TYPES = [
     {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
     {"label": "Juniper JunOS", "value": "juniper_junos"},
     {"label": "HP / H3C Comware", "value": "hp_comware"},
+    {"label": "Raisecom ROS (SSH)", "value": "raisecom_roap"},
+    {"label": "Raisecom ROS (Telnet)", "value": "raisecom_telnet"},
     {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},
     {"label": "Linux / Cumulus", "value": "linux"},
     {"label": "Generic Telnet (No Auth / Lab Switch)", "value": "generic_termserver_telnet"},
@@ -68,10 +70,16 @@ from app.services.autodetect_service import AutoDetectService
 @router.post("/detect-type")
 def detect_single_device_type(device: DeviceCredentials):
     """Auto-detect vendor/driver type for a single network device"""
-    detected_type, reason = AutoDetectService.detect_device_type(device)
+    detected_type, reason = AutoDetectService.detect_device_type(device, force_refresh=True)
+    status = "unreachable" if detected_type == "unreachable" else (
+        "auth_failed" if detected_type == "auth_failed" else (
+            "unknown" if detected_type == "unknown" else "detected"
+        )
+    )
     return {
         "host": device.host,
         "device_type": detected_type,
+        "status": status,
         "reason": reason,
         "authenticated_username": getattr(device, "username", None),
     }
@@ -86,12 +94,18 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
     results = [None] * len(devices)
 
     def _probe_dev(dev: DeviceCredentials, index: int):
-        d_type, reason = AutoDetectService.detect_device_type(dev)
+        d_type, reason = AutoDetectService.detect_device_type(dev, force_refresh=True)
         dev_id = getattr(dev, "id", None) or f"dev-{index+1}"
+        status = "unreachable" if d_type == "unreachable" else (
+            "auth_failed" if d_type == "auth_failed" else (
+                "unknown" if d_type == "unknown" else "detected"
+            )
+        )
         return {
             "id": dev_id,
             "host": dev.host,
             "device_type": d_type,
+            "status": status,
             "reason": reason,
             "authenticated_username": getattr(dev, "username", None),
         }
@@ -108,7 +122,8 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
                 results[idx] = {
                     "id": dev_id,
                     "host": devices[idx].host,
-                    "device_type": "huawei",
+                    "device_type": "unreachable",
+                    "status": "unreachable",
                     "reason": f"Probe error: {str(e)}",
                 }
 

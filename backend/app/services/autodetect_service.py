@@ -11,41 +11,82 @@ from app.core.config import settings
 
 
 def clean_ansi(text: str) -> str:
-    """Strip VT100/ANSI escape sequences, color codes, and cursor movements from CLI buffers."""
+    """Strip VT100/ANSI escape sequences, OSC title codes, and non-printable control characters."""
     if not text:
         return ""
-    ansi_regex = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_regex.sub('', text)
+    # 1. Strip OSC (Operating System Command) e.g. \x1b]0;title\x07 or \x1b]0;title\x1b\\
+    text = re.sub(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '', text)
+    # 2. Strip CSI and standard ANSI escape sequences
+    text = re.sub(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', text)
+    # 3. Strip non-printable control characters (except newline \n and carriage return \r)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+    return text
+
+
+def _read_channel_response(channel, timeout: float = 1.2) -> str:
+    """Read channel data efficiently, returning early as soon as the switch finishes sending."""
+    start = time.time()
+    buf = ""
+    while time.time() - start < timeout:
+        if channel.recv_ready():
+            while channel.recv_ready():
+                buf += channel.recv(4096).decode("utf-8", errors="ignore")
+            # Wait a brief moment to collect any subsequent fragment
+            time.sleep(0.06)
+            while channel.recv_ready():
+                buf += channel.recv(4096).decode("utf-8", errors="ignore")
+            break
+        time.sleep(0.04)
+    return buf
 
 
 class AutoDetectService:
     """
     Intelligent Multi-Stage Network Device Auto-Detection Service.
-    Detects whether an IP is Huawei VRP, Cisco IOS/XE, Aruba, Juniper, etc.
-    using:
-      Stage 1: Web/HTTP Signature Sniffing (0.05s - ultra fast, zero credentials needed)
-      Stage 2: SSH Server Version & Pre-Auth Banner Sniffing (< 1s)
-      Stage 3: Interactive Shell with ANSI-Cleaned Prompt Matching (~2s)
+    Detects whether an IP is Huawei VRP, Cisco IOS/XE, Cisco NX-OS, Aruba, HP Comware,
+    Juniper, MikroTik, Raisecom, or Linux using:
+      Stage 1: Pre-Auth Raw SSH/Telnet Greeting Banner (< 0.1s, Zero Credentials Needed)
+      Stage 2: Web/HTTP Signature Sniffing (< 0.1s fallback if zero credentials)
+      Stage 3: Interactive Shell with ANSI-Cleaned Prompt Matching (~0.5s)
       Stage 4: Dual-Vendor Active Command Probing (`display version` vs `show version`)
-      Stage 5: Prioritized Fast Fallback Probing
+      Stage 5: Prioritized Fast Fallback Probing via Netmiko
     """
     _cache: Dict[str, str] = {}
+    _cache_ts: Dict[str, float] = {}
+    CACHE_TTL: float = 300.0  # 5 minutes TTL
 
     @classmethod
     def get_cached_type(cls, host: str) -> Optional[str]:
-        return cls._cache.get(host)
+        if not host:
+            return None
+        cached = cls._cache.get(host)
+        if not cached:
+            return None
+        ts = cls._cache_ts.get(host, 0)
+        if time.time() - ts > cls.CACHE_TTL:
+            cls._cache.pop(host, None)
+            cls._cache_ts.pop(host, None)
+            return None
+        return cached
 
     @classmethod
     def set_cached_type(cls, host: str, device_type: str):
-        if host and device_type and device_type not in ["autodetect", "auto"]:
+        if host and device_type and device_type not in ["autodetect", "auto", "unreachable", "auth_failed", "unknown"]:
             cls._cache[host] = device_type
+            cls._cache_ts[host] = time.time()
 
     @classmethod
     def clear_cache(cls):
         cls._cache.clear()
+        cls._cache_ts.clear()
 
     @classmethod
-    def detect_device_type(cls, device: DeviceCredentials, timeout: int = 10) -> Tuple[str, str]:
+    def detect_device_type(
+        cls,
+        device: DeviceCredentials,
+        timeout: int = 10,
+        force_refresh: bool = False
+    ) -> Tuple[str, str]:
         """
         Detect device type for given credentials.
         Returns: (detected_type, details_reason)
@@ -53,92 +94,117 @@ class AutoDetectService:
         """
         host = (device.host or "").strip()
         if not host:
-            fallback = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
-            return fallback, "Host not specified; default fallback"
+            return "unreachable", "Host not specified"
 
-        # Check memory cache first
-        if host in cls._cache:
-            cached = cls._cache[host]
-            return cached, f"Resolved from session cache: {cached}"
+        # Check memory cache first (respecting TTL unless force_refresh requested)
+        if not force_refresh:
+            cached = cls.get_cached_type(host)
+            if cached:
+                return cached, f"Resolved from session cache: {cached}"
 
         port = device.port or settings.DEFAULT_SSH_PORT or 22
         username = device.username or ""
         password = device.password or ""
+        is_telnet = (port == 23) or ("telnet" in (device.device_type or "").lower())
 
-        # --- Stage 1: Ultra-Fast Web/HTTP Signature Sniffing (< 0.1s) ---
-        # Many enterprise switches (e.g. Huawei EasyOperation, Cisco Web UI) expose HTTP/HTTPS
-        try:
-            detected_web, reason_web = cls._probe_via_web(host, timeout=0.8)
-            if detected_web:
-                cls._cache[host] = detected_web
-                return detected_web, reason_web
-        except Exception:
-            pass
+        # Resolve credentials pool / fallback candidates
+        from app.services.netmiko_service import NetmikoService
+        candidates = NetmikoService._resolve_credential_candidates(device)
+        has_credentials = any(c.get("username") and c.get("password") for c in candidates)
 
-        # --- Stage 2: Pre-Auth Raw SSH Greeting Banner (< 0.1s, Zero Credentials Needed) ---
+        # --- Stage 1: Pre-Auth Raw SSH Greeting Banner (< 0.1s, Zero Credentials Needed) ---
         try:
             detected_raw, reason_raw = cls._probe_raw_ssh_banner(host, port=port, timeout=0.8)
             if detected_raw:
-                cls._cache[host] = detected_raw
+                if is_telnet and not detected_raw.endswith("_telnet"):
+                    if detected_raw in ["huawei", "cisco_ios", "raisecom_roap"]:
+                        detected_raw = f"{detected_raw}_telnet" if detected_raw != "raisecom_roap" else "raisecom_telnet"
+                cls.set_cached_type(host, detected_raw)
                 return detected_raw, reason_raw
         except Exception:
             pass
 
-        # --- Stage 3 & 4: Authenticated SSH Banner, Prompt Signature & Command Probe ---
-        from app.services.netmiko_service import NetmikoService
-        candidates = NetmikoService._resolve_credential_candidates(device)
+        # --- Stage 2: Web/HTTP Signature Sniffing (< 0.1s Fallback when Zero Credentials) ---
+        # If no credentials were provided and raw SSH banner was generic, try Web management
+        if not has_credentials and not is_telnet:
+            try:
+                detected_web, reason_web = cls._probe_via_web(host, timeout=0.8)
+                if detected_web:
+                    cls.set_cached_type(host, detected_web)
+                    return detected_web, reason_web
+            except Exception:
+                pass
 
+        # --- Stage 3 & 4: Authenticated SSH Banner, Prompt Signature & Command Probe ---
         is_unreachable = False
         is_auth_failure = False
         err_reason = ""
 
-        for c_idx, c in enumerate(candidates, 1):
-            c_user = c.get("username") or ""
-            c_pass = c.get("password") or ""
-            if not c_user and not c_pass:
-                continue
-
+        if not has_credentials:
+            # When zero credentials are provided, test raw TCP port connectivity
+            sock = socket.socket()
+            sock.settimeout(1.0)
             try:
-                detected_ssh, reason_ssh = cls._probe_via_ssh(
-                    host=host,
-                    port=port,
-                    username=c_user,
-                    password=c_pass,
-                    timeout=min(max(timeout, 6), 10)
-                )
-                if detected_ssh:
-                    device.username = c_user
-                    cls._cache[host] = detected_ssh
-                    return detected_ssh, f"{reason_ssh} (via user: {c_user})"
-            except paramiko.ssh_exception.AuthenticationException as auth_err:
-                is_auth_failure = True
-                err_reason = f"Authentication failed for {c_user}@{host}: Username or password incorrect"
-                if c_idx < len(candidates):
-                    continue
-            except (socket.timeout, TimeoutError, OSError) as net_err:
+                sock.connect((host, port))
+                sock.close()
+            except Exception as net_err:
                 is_unreachable = True
-                err_reason = f"Device unreachable on port {port}: {str(net_err)}"
-                break
-            except paramiko.ssh_exception.SSHException as ssh_err:
-                err_str = str(ssh_err).lower()
-                if "auth" in err_str or "channel" in err_str:
+                err_reason = f"Host {host} unreachable on port {port}: {str(net_err)}"
+
+        if not is_unreachable:
+            for c_idx, c in enumerate(candidates, 1):
+                c_user = c.get("username") or ""
+                c_pass = c.get("password") or ""
+                if not c_user and not c_pass:
+                    continue
+
+                try:
+                    detected_ssh, reason_ssh = cls._probe_via_ssh(
+                        host=host,
+                        port=port,
+                        username=c_user,
+                        password=c_pass,
+                        timeout=min(max(timeout, 6), 10)
+                    )
+                    if detected_ssh:
+                        if is_telnet and not detected_ssh.endswith("_telnet"):
+                            if detected_ssh in ["huawei", "cisco_ios", "raisecom_roap"]:
+                                detected_ssh = f"{detected_ssh}_telnet" if detected_ssh != "raisecom_roap" else "raisecom_telnet"
+                        device.username = c_user
+                        cls.set_cached_type(host, detected_ssh)
+                        return detected_ssh, f"{reason_ssh} (via user: {c_user})"
+                except paramiko.ssh_exception.AuthenticationException as auth_err:
                     is_auth_failure = True
-                    err_reason = f"Authentication or channel failed for {c_user}@{host}: {str(ssh_err)}"
+                    err_reason = f"Authentication failed for {c_user}@{host}: Username or password incorrect"
                     if c_idx < len(candidates):
                         continue
-                elif "timed out" in err_str or "refused" in err_str or "unreachable" in err_str or "no route" in err_str:
+                except (socket.timeout, TimeoutError, OSError) as net_err:
                     is_unreachable = True
-                    err_reason = f"Connection failed on port {port}: {str(ssh_err)}"
+                    err_reason = f"Device unreachable on port {port}: {str(net_err)}"
                     break
-                else:
-                    err_reason = f"SSH Protocol error: {str(ssh_err)}"
-            except Exception as e:
-                err_reason = f"SSH Probe error: {str(e)}"
+                except paramiko.ssh_exception.SSHException as ssh_err:
+                    err_str = str(ssh_err).lower()
+                    if "auth" in err_str or "channel" in err_str or "password" in err_str:
+                        is_auth_failure = True
+                        err_reason = f"Authentication or channel failed for {c_user}@{host}: {str(ssh_err)}"
+                        if c_idx < len(candidates):
+                            continue
+                    elif any(s in err_str for s in ["timed out", "refused", "unreachable", "no route", "banner", "reset", "closed", "not connected", "protocol"]):
+                        is_unreachable = True
+                        err_reason = f"Connection failed on port {port}: {str(ssh_err)}"
+                        break
+                    else:
+                        err_reason = f"SSH Protocol error: {str(ssh_err)}"
+                except (EOFError, ConnectionResetError, ConnectionRefusedError, ConnectionError) as conn_err:
+                    is_unreachable = True
+                    err_reason = f"Connection failed on port {port}: {str(conn_err)}"
+                    break
+                except Exception as e:
+                    err_reason = f"SSH Probe error: {str(e)}"
 
-        # If device is unreachable, return immediately with reason
+        # If device is unreachable, return unreachable immediately (do NOT default to huawei)
         if is_unreachable:
-            fallback = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
-            return fallback, err_reason
+            return "unreachable", err_reason
 
         # --- Stage 4: Prioritized Fast Prober (If not auth failure and credentials exist) ---
         if not is_auth_failure and any(c.get("username") for c in candidates):
@@ -152,17 +218,19 @@ class AutoDetectService:
                     detected_fast, reason_fast = cls._probe_prioritized_cli(probe_dev)
                     if detected_fast:
                         device.username = c["username"]
-                        cls._cache[host] = detected_fast
+                        cls.set_cached_type(host, detected_fast)
                         return detected_fast, f"{reason_fast} (via user: {c['username']})"
                 except Exception:
                     pass
 
-        # --- Stage 5: Fallback with clear explanation ---
-        fallback = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
+        # --- Stage 5: Explicit status responses (NEVER default to huawei) ---
         if is_auth_failure:
-            return fallback, f"Authentication Failed (Defaulting to {fallback}): {err_reason}"
-        
-        return fallback, f"Unable to determine vendor with certainty; default fallback: {fallback}"
+            return "auth_failed", f"Authentication Failed on {host}:{port} - {err_reason}"
+
+        if not has_credentials:
+            return "unknown", f"Host {host}:{port} is reachable, but credentials are required to detect vendor"
+
+        return "unknown", f"Unable to determine vendor type on {host}:{port}; detection inconclusive ({err_reason})"
 
     @classmethod
     def _probe_via_web(cls, host: str, timeout: float = 0.8) -> Tuple[Optional[str], str]:
@@ -205,6 +273,10 @@ class AutoDetectService:
                 if "routeros" in combined or "mikrotik" in combined or "webfig" in combined:
                     return "mikrotik_routeros", f"Detected MikroTik from Web management port {port}"
 
+                # Raisecom Signatures
+                if "raisecom" in combined or "iscom" in combined:
+                    return "raisecom_roap", f"Detected Raisecom from Web management port {port}"
+
             except Exception:
                 pass
             finally:
@@ -226,14 +298,22 @@ class AutoDetectService:
             b_lower = banner.lower()
             if re.search(r"huawei|vrp|quidway", b_lower):
                 return "huawei", f"Detected Huawei from pre-auth SSH greeting: {banner}"
+            if re.search(r"nx-os|nexus", b_lower):
+                return "cisco_nxos", f"Detected Cisco NX-OS from pre-auth SSH greeting: {banner}"
             if re.search(r"cisco", b_lower):
                 return "cisco_ios", f"Detected Cisco from pre-auth SSH greeting: {banner}"
+            if re.search(r"h3c|comware", b_lower):
+                return "hp_comware", f"Detected HP/H3C Comware from pre-auth SSH greeting: {banner}"
             if re.search(r"aruba|procurve", b_lower):
                 return "aruba_os", f"Detected Aruba from pre-auth SSH greeting: {banner}"
             if re.search(r"juniper|junos", b_lower):
                 return "juniper_junos", f"Detected Juniper JunOS from pre-auth SSH greeting: {banner}"
             if re.search(r"mikrotik|routeros", b_lower):
                 return "mikrotik_routeros", f"Detected MikroTik from pre-auth SSH greeting: {banner}"
+            if re.search(r"raisecom|roap", b_lower):
+                return "raisecom_roap", f"Detected Raisecom from pre-auth SSH greeting: {banner}"
+            if re.search(r"ubuntu|debian|raspbian|centos|redhat|alma|rocky", b_lower):
+                return "linux", f"Detected Linux from pre-auth SSH greeting: {banner}"
         except Exception:
             pass
         finally:
@@ -269,9 +349,15 @@ class AutoDetectService:
                 if re.search(r"huawei|vrp|quidway", remote_ver):
                     client.close()
                     return "huawei", f"Detected from SSH server version: {remote_ver}"
+                if re.search(r"nx-os|nexus", remote_ver):
+                    client.close()
+                    return "cisco_nxos", f"Detected from SSH server version: {remote_ver}"
                 if re.search(r"cisco", remote_ver):
                     client.close()
                     return "cisco_ios", f"Detected from SSH server version: {remote_ver}"
+                if re.search(r"h3c|comware", remote_ver):
+                    client.close()
+                    return "hp_comware", f"Detected from SSH server version: {remote_ver}"
                 if re.search(r"aruba|procurve", remote_ver):
                     client.close()
                     return "aruba_os", f"Detected from SSH server version: {remote_ver}"
@@ -281,27 +367,32 @@ class AutoDetectService:
                 if re.search(r"mikrotik|routeros", remote_ver):
                     client.close()
                     return "mikrotik_routeros", f"Detected from SSH server version: {remote_ver}"
+                if re.search(r"raisecom|roap", remote_ver):
+                    client.close()
+                    return "raisecom_roap", f"Detected from SSH server version: {remote_ver}"
+                if re.search(r"ubuntu|debian|raspbian|centos|redhat|alma|rocky", remote_ver):
+                    client.close()
+                    return "linux", f"Detected from SSH server version: {remote_ver}"
 
             # 2. Open interactive shell channel to read welcome banners and prompt
             channel = client.invoke_shell(term="vt100", width=120, height=40)
             channel.settimeout(4.0)
 
             # Read initial buffer (Welcome banners)
-            time.sleep(1.0)
-            initial_buffer = ""
-            while channel.recv_ready():
-                initial_buffer += channel.recv(4096).decode("utf-8", errors="ignore")
-
+            initial_buffer = _read_channel_response(channel, timeout=1.0)
             initial_cleaned = clean_ansi(initial_buffer)
 
             # Check initial banner text
             if re.search(r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", initial_cleaned, re.I):
                 client.close()
                 return "huawei", "Detected from Huawei VRP login banner"
-            if re.search(r"Cisco IOS Software|Cisco Nexus|IOS-XE|Cisco Systems", initial_cleaned, re.I):
+            if re.search(r"Cisco Nexus|NX-OS", initial_cleaned, re.I):
+                client.close()
+                return "cisco_nxos", "Detected from Cisco NX-OS login banner"
+            if re.search(r"Cisco IOS Software|IOS-XE|Cisco Systems", initial_cleaned, re.I):
                 client.close()
                 return "cisco_ios", "Detected from Cisco IOS login banner"
-            if re.search(r"H3C Comware|HPE Comware", initial_cleaned, re.I):
+            if re.search(r"H3C Comware|HPE Comware|Comware Software", initial_cleaned, re.I):
                 client.close()
                 return "hp_comware", "Detected from H3C Comware login banner"
             if re.search(r"ArubaOS|ProCurve", initial_cleaned, re.I):
@@ -313,30 +404,25 @@ class AutoDetectService:
             if re.search(r"MikroTik|RouterOS", initial_cleaned, re.I):
                 client.close()
                 return "mikrotik_routeros", "Detected from MikroTik RouterOS login banner"
+            if re.search(r"Raisecom Technology|ROS Software|ISCOM|RAX|Gazelle", initial_cleaned, re.I):
+                client.close()
+                return "raisecom_roap", "Detected from Raisecom ROS login banner"
 
             # 3. Wake up prompt by sending newline
             channel.send("\r\n")
-            time.sleep(0.8)
-            prompt_buffer = ""
-            while channel.recv_ready():
-                prompt_buffer += channel.recv(4096).decode("utf-8", errors="ignore")
+            prompt_buffer = _read_channel_response(channel, timeout=0.8)
 
             combined = initial_cleaned + "\n" + clean_ansi(prompt_buffer)
             lines = [line.strip() for line in combined.splitlines() if line.strip()]
             last_line = lines[-1] if lines else ""
-
-            # Check Huawei Prompt Signature: <Hostname> or [Hostname]
-            if re.search(r"^<[^>]+>$", last_line) or re.search(r"^\[[^\]]+\]$", last_line):
-                client.close()
-                return "huawei", f"Detected Huawei VRP from prompt signature: {last_line}"
 
             # Check Juniper Prompt Signature: user@host> or user@host#
             if re.search(r"[\w\.\-]+@[\w\.\-]+[>#%]", last_line):
                 client.close()
                 return "juniper_junos", f"Detected Juniper JunOS from prompt signature: {last_line}"
 
-            # Check MikroTik Prompt Signature: [admin@MikroTik] >
-            if re.search(r"\[.*@.*\]\s*>", last_line):
+            # Check MikroTik Prompt Signature: [admin@MikroTik] > or [admin@MikroTik] /ip address>
+            if re.search(r"\[.*@.*\]\s*[\/\w\s\-]*[>#]", last_line):
                 client.close()
                 return "mikrotik_routeros", f"Detected MikroTik RouterOS from prompt signature: {last_line}"
 
@@ -345,15 +431,22 @@ class AutoDetectService:
                 client.close()
                 return "linux", f"Detected Linux from prompt signature: {last_line}"
 
+            # Check Bracket Prompt Signature: <Hostname> or [Hostname] (Shared by Huawei VRP and HP/H3C Comware)
+            # Exclude '@' to prevent colliding with MikroTik/Linux prompts
+            if re.search(r"^<[^>]+>$", last_line) or re.search(r"^\[[^\]@]+\]$", last_line):
+                channel.send("display version\r\n")
+                cmd_out = _read_channel_response(channel, timeout=1.2)
+                cmd_cleaned = clean_ansi(cmd_out)
+                client.close()
+                if re.search(r"H3C|Comware|HPE", cmd_cleaned, re.I):
+                    return "hp_comware", f"Confirmed HP/H3C Comware via 'display version' probe (Prompt: {last_line})"
+                return "huawei", f"Detected Huawei VRP from prompt signature: {last_line}"
+
             # 4. If prompt looks like Cisco / Generic (`>` or `#`), run Dual Active Command Probing
             if re.search(r"^[\w\.\-\(\)\/]+[>#]$", last_line):
                 # Probe 1: Send Huawei command `display version`
                 channel.send("display version\r\n")
-                time.sleep(1.0)
-                cmd_out1 = ""
-                while channel.recv_ready():
-                    cmd_out1 += channel.recv(4096).decode("utf-8", errors="ignore")
-                
+                cmd_out1 = _read_channel_response(channel, timeout=1.0)
                 cmd_cleaned1 = clean_ansi(cmd_out1)
                 if re.search(r"Huawei|VRP|CloudEngine|Quidway", cmd_cleaned1, re.I):
                     client.close()
@@ -364,17 +457,15 @@ class AutoDetectService:
 
                 # Probe 2: Send Cisco command `show version`
                 channel.send("show version\r\n")
-                time.sleep(1.0)
-                cmd_out2 = ""
-                while channel.recv_ready():
-                    cmd_out2 += channel.recv(4096).decode("utf-8", errors="ignore")
-                
+                cmd_out2 = _read_channel_response(channel, timeout=1.0)
                 cmd_cleaned2 = clean_ansi(cmd_out2)
                 client.close()
 
                 if re.search(r"NX-OS|Nexus", cmd_cleaned2, re.I):
                     return "cisco_nxos", "Confirmed Cisco NX-OS via 'show version' probe"
-                elif re.search(r"Cisco|IOS-XE|Cisco IOS", cmd_cleaned2, re.I):
+                elif re.search(r"Raisecom|\bROS\b|ISCOM|RAX|iTN|RC\d{3}|Gazelle", cmd_cleaned2, re.I):
+                    return "raisecom_roap", "Confirmed Raisecom via 'show version' probe"
+                elif re.search(r"Cisco|IOS-XE|Cisco IOS|Internetwork Operating System", cmd_cleaned2, re.I):
                     return "cisco_ios", "Confirmed Cisco IOS via 'show version' probe"
                 elif re.search(r"Aruba|ProCurve", cmd_cleaned2, re.I):
                     return "aruba_os", "Confirmed Aruba/ProCurve via 'show version' probe"
@@ -382,7 +473,9 @@ class AutoDetectService:
                     return "juniper_junos", "Confirmed Juniper JunOS via 'show version' probe"
                 elif re.search(r"Huawei|VRP", cmd_cleaned2, re.I):
                     return "huawei", "Detected Huawei VRP from command output"
-                else:
+                elif re.search(r"RouterOS|MikroTik", cmd_cleaned2, re.I):
+                    return "mikrotik_routeros", "Confirmed MikroTik via command probe"
+                elif not re.search(r"command not found|invalid|unknown|syntax error", cmd_cleaned2, re.I):
                     return "cisco_ios", f"Prompt '{last_line}' matched standard Cisco CLI"
 
             client.close()
@@ -399,7 +492,7 @@ class AutoDetectService:
     def _probe_prioritized_cli(cls, device: DeviceCredentials) -> Tuple[Optional[str], str]:
         """
         Fast prioritized probe testing the top enterprise network vendors
-        in direct priority (Huawei, Cisco IOS, Cisco NX-OS, Aruba, HP Comware, Juniper, MikroTik)
+        in direct priority (Huawei, Cisco NX-OS, Cisco IOS, Aruba, HP Comware, Juniper, Raisecom, MikroTik)
         without looping 40+ vendors.
         """
         from netmiko import ConnectHandler
@@ -412,6 +505,7 @@ class AutoDetectService:
             ("aruba_os", "show version", r"ArubaOS|ProCurve"),
             ("hp_comware", "display version", r"H3C|Comware|HPE Comware"),
             ("juniper_junos", "show version", r"JUNOS"),
+            ("raisecom_roap", "show version", r"Raisecom|\bROS\b|ISCOM|RAX|iTN|RC\d{3}|Gazelle"),
             ("mikrotik_routeros", "/system resource print", r"RouterOS|MikroTik"),
         ]
 

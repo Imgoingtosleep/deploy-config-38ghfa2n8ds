@@ -40,6 +40,10 @@ DEVICE_TYPE_MAP = {
     "juniper_junos": "juniper_junos",
     "mikrotik": "mikrotik_routeros",
     "routeros": "mikrotik_routeros",
+    "raisecom": "raisecom_roap",
+    "raisecom_roap": "raisecom_roap",
+    "roap": "raisecom_roap",
+    "raisecom_telnet": "raisecom_telnet",
     "linux": "linux",
 }
 
