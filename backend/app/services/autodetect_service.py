@@ -312,9 +312,14 @@ class AutoDetectService:
             return cls._detect_over_telnet(device, host, port, candidates)
 
         # --- Stage 1: Pre-Auth Raw SSH Greeting Banner (< 0.1s, Zero Credentials Needed) ---
+        # A Cisco greeting is only a hint when there are credentials: Cisco-style clones
+        # (Raisecom) could print one, so 'show version' after login decides
+        greeting_hint: Optional[Tuple[str, str]] = None
         try:
             detected_raw, reason_raw = cls._probe_raw_ssh_banner(host, port=port, timeout=0.8)
-            if detected_raw:
+            if detected_raw == "cisco_ios" and has_credentials:
+                greeting_hint = (detected_raw, reason_raw)
+            elif detected_raw:
                 cls.set_cached_type(host, detected_raw, port)
                 return detected_raw, reason_raw
         except Exception:
@@ -427,6 +432,11 @@ class AutoDetectService:
         # --- Stage 5: Explicit status responses (NEVER default to huawei) ---
         if is_auth_failure and not authed_cred:
             return "auth_failed", f"Authentication Failed on {host}:{port} - {err_reason}"
+
+        if authed_cred and greeting_hint:
+            # Logged in, no version output named a vendor: the Cisco greeting stands
+            cls.set_cached_type(host, greeting_hint[0], port)
+            return greeting_hint[0], f"{greeting_hint[1]} (logged in, no other vendor named)"
 
         if authed_cred:
             return "cant_detect", (
@@ -722,6 +732,7 @@ class AutoDetectService:
         """Probe device by opening SSH session and inspecting pre-auth / post-auth output and prompt"""
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        greeting_hint: Optional[Tuple[str, str]] = None
 
         try:
             try:
@@ -756,8 +767,8 @@ class AutoDetectService:
                     client.close()
                     return "cisco_nxos", f"Detected from SSH server version: {remote_ver}"
                 if re.search(r"cisco", remote_ver):
-                    client.close()
-                    return "cisco_ios", f"Detected from SSH server version: {remote_ver}"
+                    # Hint only: a Cisco-style clone could print it, 'show version' decides
+                    greeting_hint = ("cisco_ios", f"Cisco SSH server version: {remote_ver}")
                 if re.search(r"h3c|comware", remote_ver):
                     client.close()
                     return "hp_comware", f"Detected from SSH server version: {remote_ver}"
@@ -881,12 +892,16 @@ class AutoDetectService:
                     return "raisecom_roap", f"Raisecom factory hostname in prompt '{last_line}', 'show version' named no other vendor"
                 if banner_hint:
                     return banner_hint[0], f"{banner_hint[1]} login banner, 'show version' named no other vendor"
+                if greeting_hint:
+                    return greeting_hint[0], f"{greeting_hint[1]}, 'show version' named no other vendor"
                 if not re.search(r"command not found|invalid|unknown|syntax error", cmd_cleaned2, re.I):
                     return "cisco_ios", f"Prompt '{last_line}' matched standard Cisco CLI ('show version' named no vendor)"
 
             client.close()
             if banner_hint:
                 return banner_hint[0], f"Detected from {banner_hint[1]} login banner"
+            if greeting_hint:
+                return greeting_hint
         except Exception as e:
             try:
                 client.close()
