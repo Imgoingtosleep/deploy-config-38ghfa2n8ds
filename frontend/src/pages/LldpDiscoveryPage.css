@@ -818,6 +818,40 @@
   cursor: not-allowed;
 }
 
+/* Command profile order list: name, parser · command, up / down */
+.lldp-prio-name {
+  flex: 1 1 10rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: #e2e8f0;
+}
+
+.lldp-prio-move {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.lldp-prio-move:hover:not(:disabled) {
+  border-color: #6366f1;
+  color: #c7d2fe;
+}
+
+.lldp-prio-move:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .lldp-prio-add {
   margin-top: 0.55rem;
 }

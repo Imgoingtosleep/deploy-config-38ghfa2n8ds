@@ -11,6 +11,7 @@ import openpyxl
 DEVICE_TYPE_MAP = {
     "auto": "autodetect",
     "autodetect": "autodetect",
+    "unknown": "unknown",
     "huawei": "huawei",
     "vrp": "huawei",
 

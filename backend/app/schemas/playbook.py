@@ -13,6 +13,13 @@ class PlaybookCommand(BaseModel):
     comware: Optional[str] = Field("", description="Command syntax for HP Comware")
     isCustom: Optional[bool] = False
 
+class CommandSet(BaseModel):
+    """Commands for the devices whose driver is ticked. 'default' = any driver no other set has."""
+    drivers: List[str] = Field(default_factory=list, description="Netmiko drivers, e.g. ['huawei', 'hp_comware'], or 'default'")
+    commands: List[str] = Field(default_factory=list, description="CLI commands, run as written (no translation)")
+    regexes: Optional[List[str]] = Field(default=None, description="Optional regex per command (same order)")
+
+
 class PlaybookCreate(BaseModel):
     name: str = Field(..., description="Profile title / name")
     description: Optional[str] = Field("", description="Detailed purpose of the profile")
@@ -25,6 +32,7 @@ class PlaybookCreate(BaseModel):
     aruba_commands: Optional[List[str]] = Field(default=None, description="Commands for Aruba devices")
     mikrotik_commands: Optional[List[str]] = Field(default=None, description="Commands for MikroTik devices")
     vendor_commands: Optional[Dict[str, List[str]]] = Field(default=None, description="Commands mapped by vendor key")
+    command_sets: Optional[List[CommandSet]] = Field(default=None, description="Commands per driver (replaces the per-vendor fields)")
 
 class PlaybookUpdate(BaseModel):
     name: Optional[str] = None
@@ -38,6 +46,7 @@ class PlaybookUpdate(BaseModel):
     aruba_commands: Optional[List[str]] = None
     mikrotik_commands: Optional[List[str]] = None
     vendor_commands: Optional[Dict[str, List[str]]] = None
+    command_sets: Optional[List[CommandSet]] = None
 
 class PlaybookResponse(BaseModel):
     id: str
@@ -45,6 +54,7 @@ class PlaybookResponse(BaseModel):
     description: str
     category: str
     commands: List[PlaybookCommand]
+    command_sets: Optional[List[CommandSet]] = None
     created_at: str
     updated_at: Optional[str] = None
 

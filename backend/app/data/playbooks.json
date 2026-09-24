@@ -84,60 +84,48 @@
   },
   {
     "id": "pb-23fe27ad",
-    "name": "new",
+    "name": "Huawei,Cisco,Raisecom",
     "description": "----",
     "category": "custom",
-    "commands": [
-      {
-        "id": "cmd-1",
-        "name": "display version",
-        "huawei": "display version",
-        "cisco": "show version",
-        "juniper": "show version",
-        "nxos": "show version",
-        "aruba": "show version",
-        "mikrotik": "/system resource print",
-        "comware": "display version",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-2",
-        "name": "display ip interface brief",
-        "huawei": "display ip interface brief",
-        "cisco": "show ip interface brief",
-        "juniper": "show interfaces terse",
-        "nxos": "show ip interface brief",
-        "aruba": "show ip interface brief",
-        "mikrotik": "/ip address print",
-        "comware": "display ip interface brief",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-3",
-        "name": "display device",
-        "huawei": "display device",
-        "cisco": "show inventory",
-        "juniper": "show chassis hardware",
-        "nxos": "show module",
-        "aruba": "show system",
-        "mikrotik": "/system routerboard print",
-        "comware": "display device",
-        "isCustom": false
-      },
-      {
-        "id": "cmd-4",
-        "name": "display vlan",
-        "huawei": "display vlan",
-        "cisco": "show vlan brief",
-        "juniper": "show vlans",
-        "nxos": "show vlan",
-        "aruba": "show vlan",
-        "mikrotik": "/interface vlan print",
-        "comware": "display vlan",
-        "isCustom": false
-      }
-    ],
+    "commands": [],
     "created_at": "2026-09-08 06:24:19",
-    "updated_at": null
+    "updated_at": "2026-09-24 07:21:31",
+    "command_sets": [
+      {
+        "drivers": [
+          "huawei",
+          "hp_comware"
+        ],
+        "commands": [
+          "display version"
+        ],
+        "regexes": [
+          ""
+        ]
+      },
+      {
+        "drivers": [
+          "cisco_ios",
+          "cisco_nxos"
+        ],
+        "commands": [
+          "show version"
+        ],
+        "regexes": [
+          ""
+        ]
+      },
+      {
+        "drivers": [
+          "raisecom_roap"
+        ],
+        "commands": [
+          "show version"
+        ],
+        "regexes": [
+          ""
+        ]
+      }
+    ]
   }
 ]

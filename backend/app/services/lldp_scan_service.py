@@ -340,6 +340,11 @@ class LldpScanService:
                                 writer.log(f"Depth {depth + 1}: skip {ip} ({name}) - in exclude list")
                                 continue
                             next_wave.append((ip, name))
+                            # Driver from the neighbor's own LLDP description, else unknown (swept)
+                            st.setdefault("drivers", {})[ip] = (
+                                LldpService.description_driver(n.get("Remote Description") or n.get("Remote Model") or "")
+                                or "unknown"
+                            )
                     if next_wave:
                         writer.log(f"Depth {depth + 1}: {len(next_wave)} new device(s) learned from LLDP management IP")
                         with JobService._lock:
@@ -468,14 +473,16 @@ class LldpScanService:
             futures = {}
             for ip, name in alive:
                 overrides: Dict[str, Any] = {"host": ip, "name": name}
+                if ip in st.get("drivers", {}):
+                    overrides["device_type"] = st["drivers"][ip]
                 if profile_id:
                     # Exactly one profile per pass, so the sweep order is the profile order
                     overrides["profile_id"] = profile_id
                     overrides["fallback_profile_ids"] = None
                 dev = DeviceCredentials(**{**p["template"], **overrides})
                 futures[
-                    # A scanned IP has no fleet row: its driver comes from the command profile priority
-                    executor.submit(LldpService.collect_device_sweep, dev, depth, p.get("command_profile_ids"))
+                    # A scanned IP has no fleet row: auto-detected, or swept when the vendor cannot be named
+                    executor.submit(LldpService.collect_auto, dev, depth, p.get("command_profile_ids"))
                 ] = dev
             for fut in as_completed(futures):
                 if job.cancel_requested:

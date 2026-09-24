@@ -307,7 +307,8 @@ export const submitHealthCheckJob = async (
   vendorCommands = {},
   suiteName = null,
   numWorkers = null,
-  commandRegexes = {}
+  commandRegexes = {},
+  commandSets = null
 ) => {
   const payload = {
     devices,
@@ -317,6 +318,8 @@ export const submitHealthCheckJob = async (
     vendor_commands: vendorCommands,
     suite_name: suiteName,
   };
+  // Profile runs: each device runs the set of its driver, as written
+  if (commandSets?.length) payload.command_sets = commandSets;
   if (numWorkers) payload.num_workers = numWorkers;
   const response = await apiClient.post('/jobs/submit-healthcheck', payload);
   return response.data;

@@ -64,6 +64,7 @@ def submit_healthcheck_job(request: BatchHealthCheckRequest):
         commands=request.commands,
         command_regexes=request.command_regexes,
         vendor_commands=request.vendor_commands,
+        command_sets=request.command_sets,
         suite_name=request.suite_name,
         num_workers=request.num_workers,
     )

@@ -328,13 +328,37 @@ class PlaybookService:
 
         return formatted_cmds
 
+    @staticmethod
+    def _clean_sets(sets: Any) -> List[Dict[str, Any]]:
+        """Command sets as stored: trimmed, empty sets dropped, a driver in one set only"""
+        cleaned: List[Dict[str, Any]] = []
+        taken = set()
+        for s in sets or []:
+            s = s if isinstance(s, dict) else {}
+            drivers = [d.strip().lower() for d in (s.get("drivers") or []) if d and d.strip()]
+            drivers = [d for d in dict.fromkeys(drivers) if d not in taken]
+            pairs = [
+                (c.strip(), ((s.get("regexes") or [])[i] if i < len(s.get("regexes") or []) else "") or "")
+                for i, c in enumerate(s.get("commands") or []) if c and c.strip()
+            ]
+            if not drivers or not pairs:
+                continue
+            taken.update(drivers)
+            cleaned.append({
+                "drivers": drivers,
+                "commands": [c for c, _ in pairs],
+                "regexes": [r.strip() for _, r in pairs],
+            })
+        return cleaned
+
     @classmethod
     def create(cls, data: Dict[str, Any]) -> Dict[str, Any]:
         playbooks = cls._read_all()
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         new_id = f"pb-{str(uuid.uuid4())[:8]}"
 
-        formatted_cmds = cls._build_formatted_commands(data)
+        sets = cls._clean_sets(data.get("command_sets")) if data.get("command_sets") is not None else None
+        formatted_cmds = [] if sets is not None else cls._build_formatted_commands(data)
 
         new_pb = {
             "id": new_id,
@@ -342,6 +366,7 @@ class PlaybookService:
             "description": data.get("description", "").strip(),
             "category": data.get("category", "custom").strip(),
             "commands": formatted_cmds,
+            **({"command_sets": sets} if sets is not None else {}),
             "created_at": now_str,
             "updated_at": None,
         }
@@ -361,7 +386,11 @@ class PlaybookService:
                 if "category" in data and data["category"] is not None:
                     playbooks[idx]["category"] = data["category"].strip()
 
-                if any(k in data for k in ["huawei_commands", "cisco_commands", "juniper_commands", "aruba_commands", "mikrotik_commands", "commands", "vendor_commands"]):
+                if data.get("command_sets") is not None:
+                    # Per-driver sets replace the old per-vendor command rows
+                    playbooks[idx]["command_sets"] = cls._clean_sets(data["command_sets"])
+                    playbooks[idx]["commands"] = []
+                elif any(k in data for k in ["huawei_commands", "cisco_commands", "juniper_commands", "aruba_commands", "mikrotik_commands", "commands", "vendor_commands"]):
                     formatted_cmds = cls._build_formatted_commands(data)
                     playbooks[idx]["commands"] = formatted_cmds
 

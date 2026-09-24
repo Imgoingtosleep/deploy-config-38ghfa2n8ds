@@ -2,9 +2,10 @@
 Where the SSH driver comes from.
 
 - Credential profiles hold credentials only: the driver is the fleet row's, never the profile's.
-- LLDP: a seed tries its fleet driver first, then the command profile priority; devices
-  without a fleet row (subnet scan, LLDP neighbors) use the priority alone. A wrong password
-  or a dead host is not retried with another driver.
+- LLDP: a device with a driver (fleet row, auto-detected, or named by a neighbor's LLDP
+  description) logs in with that driver only and runs its vendor's command profiles.
+  'unknown' (or Auto Detect that cannot name the vendor) sweeps the command profiles in order.
+  A wrong password or a dead host is not retried with another driver.
 """
 import json
 import os
@@ -73,19 +74,17 @@ class DriverPlanTest(unittest.TestCase):
     def plan(self, first=None, telnet=False):
         return [(d, [p["id"] for p in profs]) for d, profs in LldpService.driver_plan(PRIORITY, first, telnet)]
 
-    def test_no_fleet_driver_follows_the_command_profile_priority(self):
+    def test_unknown_sweeps_the_command_profile_order(self):
         self.assertEqual(self.plan(), [("huawei", ["c-hw"]), ("cisco_ios", ["c-cs"])])
 
-    def test_the_fleet_driver_goes_first_with_its_own_profiles(self):
-        self.assertEqual(self.plan("cisco_ios"), [("cisco_ios", ["c-cs"]), ("huawei", ["c-hw"])])
+    def test_a_known_driver_is_the_only_one_with_its_own_profiles(self):
+        self.assertEqual(self.plan("cisco_ios"), [("cisco_ios", ["c-cs"])])
 
-    def test_a_fleet_driver_variant_matches_its_vendor_profiles(self):
-        # cisco_nxos is not a sweep driver: it goes first with the Cisco commands, and the
-        # plain Cisco driver stays in the list as a later attempt
-        self.assertEqual(
-            self.plan("cisco_nxos"),
-            [("cisco_nxos", ["c-cs"]), ("huawei", ["c-hw"]), ("cisco_ios", ["c-cs"])],
-        )
+    def test_a_driver_variant_matches_its_vendor_profiles(self):
+        self.assertEqual(self.plan("cisco_nxos"), [("cisco_nxos", ["c-cs"])])
+
+    def test_a_known_driver_on_telnet_uses_its_telnet_driver(self):
+        self.assertEqual(self.plan("cisco_ios", telnet=True), [("cisco_ios_telnet", ["c-cs"])])
 
     def test_a_fleet_driver_without_a_command_profile_runs_all_profiles(self):
         self.assertEqual(self.plan("juniper_junos")[0], ("juniper_junos", ["c-hw", "c-cs"]))
@@ -117,8 +116,11 @@ class SweepTest(unittest.TestCase):
     def test_fleet_driver_that_works_needs_one_login(self):
         self.assertEqual(self.sweep([result()], first="cisco_ios"), ["cisco_ios"])
 
-    def test_wrong_fleet_driver_falls_back_to_the_priority(self):
-        self.assertEqual(self.sweep([result(rejected=True), result()], first="huawei"), ["huawei", "cisco_ios"])
+    def test_a_known_driver_whose_commands_are_rejected_is_not_swept(self):
+        self.assertEqual(self.sweep([result(rejected=True), result()], first="huawei"), ["huawei"])
+
+    def test_unknown_goes_on_until_a_driver_accepts_the_commands(self):
+        self.assertEqual(self.sweep([result(rejected=True), result()]), ["huawei", "cisco_ios"])
 
     def test_a_wrong_password_is_not_retried_with_another_driver(self):
         err = "Authentication failed across all 1 credential sets on 10.254.254.254"
@@ -131,6 +133,43 @@ class SweepTest(unittest.TestCase):
     def test_a_driver_that_cannot_read_the_prompt_is_retried(self):
         err = "Pattern not detected: 'terminal width 511'"
         self.assertEqual(self.sweep([result(False, error=err), result()]), ["huawei", "cisco_ios"])
+
+
+class LldpDriverSourceTest(unittest.TestCase):
+    def resolve(self, device_type, detected=None):
+        dev = DeviceCredentials(host="10.254.254.254", device_type=device_type, username="u", password="p")
+        with patch("app.services.autodetect_service.AutoDetectService.detect_device_type",
+                   return_value=detected or ("cant_detect", "why")) as det:
+            out = LldpService.resolve_lldp_driver(dev)
+        return out, det.called
+
+    def test_a_set_driver_is_used_without_detection(self):
+        (drv, _, failed), detected = self.resolve("raisecom_roap")
+        self.assertEqual((drv, failed, detected), ("raisecom_roap", None, False))
+
+    def test_unknown_is_swept_without_detection(self):
+        (drv, _, failed), detected = self.resolve("unknown")
+        self.assertEqual((drv, failed, detected), (None, None, False))
+
+    def test_auto_detect_uses_the_detected_driver(self):
+        (drv, _, _), detected = self.resolve("autodetect", ("raisecom_roap", "show version"))
+        self.assertEqual((drv, detected), ("raisecom_roap", True))
+
+    def test_auto_detect_that_names_no_vendor_is_swept(self):
+        (drv, _, failed), _ = self.resolve("autodetect", ("cant_detect", "no vendor"))
+        self.assertEqual((drv, failed), (None, None))
+
+    def test_auto_detect_with_a_rejected_password_does_not_log_in_again(self):
+        (drv, _, failed), _ = self.resolve("autodetect", ("auth_failed", "Authentication Failed"))
+        self.assertIsNone(drv)
+        self.assertFalse(failed["success"])
+
+    def test_neighbor_driver_from_its_lldp_description(self):
+        self.assertEqual(LldpService.description_driver("Cisco IOS Software, C2960X Software"), "cisco_ios")
+        self.assertEqual(LldpService.description_driver("ROS_5.2.1 ISCOM2608G-4GE-AC"), "raisecom_roap")
+        self.assertEqual(LldpService.description_driver("Huawei Versatile Routing Platform"), "huawei")
+        self.assertIsNone(LldpService.description_driver(""))
+        self.assertIsNone(LldpService.description_driver("Linux 5.10 ubuntu"))
 
 
 if __name__ == "__main__":

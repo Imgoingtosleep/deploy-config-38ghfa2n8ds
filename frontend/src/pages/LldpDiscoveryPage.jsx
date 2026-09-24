@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Server,
   Network,
@@ -35,6 +36,7 @@ import {
   createCommandProfile,
   updateCommandProfile,
   deleteCommandProfile,
+  reorderCommandProfiles,
   previewScanTargets,
   submitLldpSubnetScan,
   getLldpSubnetScan,
@@ -121,7 +123,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
 
   // Command profiles: which CLI commands to run (independent of the SSH login)
   const [cmdProfiles, setCmdProfiles] = useState(null);
-  const [cmdPool, setCmdPool] = useState(['', '']);
   const [showCmdModal, setShowCmdModal] = useState(false);
   const [editingCmd, setEditingCmd] = useState(null);
   const [cmdError, setCmdError] = useState('');
@@ -196,16 +197,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
       .catch(() => setCmdProfiles([]));
   }, []);
 
-  // Seed the command order once from the saved priorities (Huawei, then Cisco)
-  useEffect(() => {
-    if (!cmdProfiles || cmdProfiles.length === 0) return;
-    setCmdPool((prev) => {
-      if (prev.some(Boolean)) return prev;
-      const enabled = cmdProfiles.filter((p) => p.enabled !== false);
-      return [enabled[0]?.id || '', enabled[1]?.id || ''];
-    });
-  }, [cmdProfiles]);
-
   useEffect(() => {
     if (mode !== 'subnet') return undefined;
     const targets = splitList(targetsText);
@@ -228,16 +219,22 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const credentialSource = validFleet.find((d) => d.profile_id) || fleet.find((d) => d.profile_id) || null;
   const credentialProfile = (profiles || []).find((p) => p.id === credentialSource?.profile_id) || null;
 
-  const cmdProfileById = (id) => (cmdProfiles || []).find((p) => p.id === id);
-  const cmdPoolIds = [...new Set(cmdPool.filter(Boolean))];
-  const cmdPoolProfiles = cmdPoolIds.map(cmdProfileById).filter(Boolean);
-  const setCmdPrio = (index, value) =>
-    setCmdPool((prev) => prev.map((id, i) => (i === index ? value : id)));
-  // One priority slot per command profile at most: more would only repeat a profile
-  const maxCmdPrio = Math.max(2, (cmdProfiles || []).length);
-  const addCmdPrio = () => setCmdPool((prev) => (prev.length >= maxCmdPrio ? prev : [...prev, '']));
-  const removeCmdPrio = (index) =>
-    setCmdPool((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== index)));
+  // One order for every command profile: it is only used for devices whose driver is
+  // Unknown (the sweep). A device with a driver runs the profile of its own vendor.
+  const orderedCmdProfiles = cmdProfiles || [];
+  const sweepProfiles = orderedCmdProfiles.filter((p) => p.enabled !== false);
+  const moveCmdProfile = async (index, delta) => {
+    const ids = orderedCmdProfiles.map((p) => p.id);
+    const to = index + delta;
+    if (to < 0 || to >= ids.length) return;
+    [ids[index], ids[to]] = [ids[to], ids[index]];
+    try {
+      await reorderCommandProfiles(ids);
+      await loadCmdProfiles();
+    } catch (err) {
+      setErrorMessage(errMsg(err, 'Failed to reorder command profiles'));
+    }
+  };
 
   const loadCmdProfiles = async () => {
     const data = await getCommandProfiles();
@@ -263,12 +260,10 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         commands: editingCmd.commands,
         regexes: editingCmd.regexes || {},
       };
-      const saved = editingCmd.id
+      await (editingCmd.id
         ? await updateCommandProfile(editingCmd.id, payload)
-        : await createCommandProfile(payload);
+        : createCommandProfile(payload));
       await loadCmdProfiles();
-      // A brand new profile is not in the order yet: put it in the first free slot
-      setCmdPool((prev) => (prev.includes(saved.id) ? prev : prev.map((id, i) => (!id && !prev.slice(0, i).some((x) => !x) ? saved.id : id))));
       setEditingCmd(null);
     } catch (err) {
       setCmdError(errMsg(err, 'Failed to save command profile'));
@@ -283,7 +278,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     try {
       await deleteCommandProfile(prof.id);
       await loadCmdProfiles();
-      setCmdPool((prev) => prev.map((id) => (id === prof.id ? '' : id)));
     } catch (err) {
       setCmdError(errMsg(err, 'Failed to delete command profile'));
     }
@@ -324,7 +318,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         enableTcpScan: enableTcpScanSeed,
         scanWorkers,
         tcpTimeout,
-        commandProfileIds: cmdPoolIds,
       });
       setReport(data);
     } catch (err) {
@@ -375,7 +368,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         scan_workers: scanWorkers,
         tcp_timeout: tcpTimeout,
       };
-      if (cmdPoolIds.length) payload.command_profile_ids = cmdPoolIds;
       if (credentialSource) {
         // Same SSH credentials as the fleet: whatever the Credential Profile
         // selector above applied. Without one the backend uses its default profile.
@@ -722,15 +714,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           </>
         )}
 
-        {/* Which CLI commands to run: P1 first, next profile when the device rejects them */}
+        {/* Which CLI commands to run: the driver decides; the order is only for Unknown devices */}
         <div className="lldp-prio-pool">
           <div className="lldp-prio-head">
             <span>
               <Terminal className="h-3.5 w-3.5" style={{ display: 'inline', marginRight: '0.35rem' }} />
-              Command Profile Priority
-              {cmdPoolProfiles.length ? ` (${cmdPoolProfiles.map((p) => p.name).join(' → ')})` : ''}
+              Command Profiles
+              {sweepProfiles.length ? ` (Unknown: ${sweepProfiles.map((p) => p.name).join(' → ')})` : ''}
             </span>
-            <div className="lldp-prio-head-actions">
+          <div className="lldp-prio-head-actions">
               <button
                 className="lldp-btn-secondary lldp-btn-mini"
                 onClick={() => setShowRulesModal(true)}
@@ -754,61 +746,41 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           </div>
 
           <div className="lldp-prio-rows">
-            {cmdPool.map((id, i) => {
-              const prof = cmdProfileById(id);
-              return (
-                <label className="lldp-prio-row" key={i}>
-                  <span className={`lldp-prio-badge p${i + 1}`}>C{i + 1}</span>
-                  <select value={id} onChange={(e) => setCmdPrio(i, e.target.value)} disabled={running}>
-                    <option value="">{i === 0 ? '— All enabled profiles —' : '— None —'}</option>
-                    {(cmdProfiles || []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {p.enabled === false ? ' (disabled)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="lldp-prio-driver">
-                    {prof ? `${prof.parser} · ${prof.commands?.lldp_brief || '-'}` : '-'}
-                  </span>
-                  {cmdPool.length > 2 && (
-                    <button
-                      type="button"
-                      className="lldp-prio-remove"
-                      onClick={() => removeCmdPrio(i)}
-                      disabled={running}
-                      title="Remove this priority slot"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </label>
-              );
-            })}
+            {orderedCmdProfiles.map((p, i) => (
+              <div className="lldp-prio-row" key={p.id}>
+                <span className={`lldp-prio-badge p${Math.min(i + 1, 3)}`}>{i + 1}</span>
+                <span className="lldp-prio-name">
+                  {p.name}
+                  {p.enabled === false ? ' (disabled)' : ''}
+                </span>
+                <span className="lldp-prio-driver">{`${p.parser} · ${p.commands?.lldp_brief || '-'}`}</span>
+                <button
+                  type="button"
+                  className="lldp-prio-move"
+                  onClick={() => moveCmdProfile(i, -1)}
+                  disabled={running || i === 0}
+                  title="Try earlier for Unknown devices"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="lldp-prio-move"
+                  onClick={() => moveCmdProfile(i, 1)}
+                  disabled={running || i === orderedCmdProfiles.length - 1}
+                  title="Try later for Unknown devices"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
-
-          {cmdPool.length < maxCmdPrio && (
-            <button
-              type="button"
-              className="lldp-btn-secondary lldp-btn-mini lldp-prio-add"
-              onClick={addCmdPrio}
-              disabled={running}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add priority (C{cmdPool.length + 1})
-            </button>
-          )}
           <span className="lldp-hint">
-            Commands only — the SSH login comes from the credential profile above. C1's commands run first on the open
-            session; if the device rejects them (Huawei <code>display</code> on a Cisco), C2's commands are run on the
-            same session instead, with no second login. Devices found by recursive discovery have no device type of
-            their own, so they are logged in with C1's SSH driver first and tried again with C2's when the commands
-            are rejected.
-            <br />
-            A fleet row with a Device Type / Driver (Raisecom, Cisco, ...) runs the command profile of that driver
-            first, even when it is not picked here; an Auto Detect row does the same with the driver{' '}
-            <b>Detect Types</b> found in the last 5 minutes. This priority is for the other devices, and for the
-            fallback when the driver's commands are rejected.
+            Commands only — the SSH login comes from the credential profile above. Each device runs the command
+            profile of its <b>Device Type / Driver</b>: set on the fleet row, found by auto-detect, or (LLDP
+            neighbors) named by the neighbor's LLDP system description. Only a device that is <b>Unknown</b> — set
+            so, or auto-detect could not name its vendor — tries the profiles in the order above: one login per
+            driver, until one is accepted. A wrong password or a dead host is never retried.
           </span>
         </div>
 

@@ -5,21 +5,21 @@ from app.services.netmiko_service import NetmikoService
 
 router = APIRouter()
 
+# SSH drivers only: a device on port 23 is connected with the telnet variant of its
+# driver automatically (huawei -> huawei_telnet), so telnet needs no entries of its own
 SUPPORTED_DEVICE_TYPES = [
     {"label": "Auto Detect (Recommended)", "value": "autodetect"},
-    {"label": "Huawei VRP (SSH)", "value": "huawei"},
-    {"label": "Huawei VRP (Telnet)", "value": "huawei_telnet"},
-    {"label": "Cisco IOS / IOS-XE (SSH)", "value": "cisco_ios"},
-    {"label": "Cisco IOS (Telnet - No Auth / Simple Pass)", "value": "cisco_ios_telnet"},
+    # Auto-detect could not name the vendor: LLDP tries every command profile in order
+    {"label": "Unknown (try every command profile)", "value": "unknown"},
+    {"label": "Huawei VRP", "value": "huawei"},
+    {"label": "Cisco IOS / IOS-XE", "value": "cisco_ios"},
     {"label": "Cisco NX-OS", "value": "cisco_nxos"},
     {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
     {"label": "Juniper JunOS", "value": "juniper_junos"},
     {"label": "HP / H3C Comware", "value": "hp_comware"},
-    {"label": "Raisecom ROS (SSH)", "value": "raisecom_roap"},
-    {"label": "Raisecom ROS (Telnet)", "value": "raisecom_telnet"},
+    {"label": "Raisecom ROS", "value": "raisecom_roap"},
     {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},
     {"label": "Linux / Cumulus", "value": "linux"},
-    {"label": "Generic Telnet (No Auth / Lab Switch)", "value": "generic_termserver_telnet"},
     {"label": "Generic SSH / Paramiko", "value": "generic_termserver"},
 ]
 

@@ -238,11 +238,15 @@ def _execute_device_health_check(
     custom_commands: List[str] = None,
     vendor_commands: Dict[str, List[str]] = None,
     command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = None,
+    command_sets: Optional[List[Dict[str, Any]]] = None,
 ) -> MultiCommandResponse:
     from app.services.autodetect_service import AutoDetectService
     # Always a real driver (never 'unreachable' / 'cant_detect'); serial consoles are not probed
     device_type, _ = AutoDetectService.resolve_driver(device)
     device.device_type = device_type
+
+    if command_sets:
+        return _run_command_set(device, device_type, command_sets)
     
     # Resolve vendor driver group for presets
     from app.services.command_translator import CommandTranslator
@@ -294,6 +298,49 @@ def _execute_device_health_check(
         overall_time_seconds=result.get("overall_time_seconds"),
         summary=summary,
     )
+
+def pick_command_set(driver: str, command_sets: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The set that lists the device's driver (telnet variants count as their SSH driver),
+    else the 'default' set, else None"""
+    from app.services.autodetect_service import AutoDetectService
+    drv = AutoDetectService.ssh_driver((driver or "").strip().lower())
+    for s in command_sets:
+        if drv in [d.strip().lower() for d in s.get("drivers") or []]:
+            return s
+    for s in command_sets:
+        if "default" in [d.strip().lower() for d in s.get("drivers") or []]:
+            return s
+    return None
+
+
+def _run_command_set(device: DeviceCredentials, device_type: str, command_sets: List[Dict[str, Any]]) -> MultiCommandResponse:
+    """Run the command set of the device's driver as written: the user chose these commands
+    for this driver, so nothing is translated"""
+    chosen = pick_command_set(device_type, command_sets)
+    if not chosen:
+        drivers = sorted({d for s in command_sets for d in s.get("drivers") or []})
+        msg = (f"No command set for driver [{device_type}] in this profile (sets cover: {', '.join(drivers)}). "
+               f"Tick this driver, or 'Any other driver', in one of the profile's command sets.")
+        return MultiCommandResponse(
+            host=device.host or "Unknown", hostname_import=device.name, device_name=device.name,
+            results=[], success=False, error=msg, overall_time_seconds=0,
+        )
+    commands = [c.strip() for c in chosen.get("commands") or [] if c and c.strip()]
+    regexes = list(chosen.get("regexes") or [])
+    result = NetmikoService.send_multiple_commands(device, commands, command_regexes=regexes)
+    command_results = result.get("results", [])
+    return MultiCommandResponse(
+        host=result.get("host", device.host or "Unknown"),
+        hostname_import=device.name,
+        sysname_device=result.get("sysname_device"),
+        device_name=device.name,
+        results=command_results,
+        success=result.get("success", False),
+        error=result.get("error"),
+        overall_time_seconds=result.get("overall_time_seconds"),
+        summary=ParserService.parse_health_summary(command_results, device_type),
+    )
+
 
 @router.get("/presets")
 def get_presets():
@@ -382,6 +429,8 @@ def run_batch_health_check(request: BatchHealthCheckRequest):
                 check_type,
                 request.commands,
                 request.vendor_commands,
+                request.command_regexes,
+                request.command_sets,
             ): i
             for i, dev in enumerate(devices)
         }

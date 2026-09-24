@@ -167,6 +167,7 @@ class JobService:
         vendor_commands: Dict[str, List[str]] = None,
         suite_name: str = None,
         num_workers: Optional[int] = None,
+        command_sets: Optional[List[Dict[str, Any]]] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
         workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
@@ -179,6 +180,7 @@ class JobService:
                 "commands": commands or [],
                 "command_regexes": command_regexes or {},
                 "vendor_commands": vendor_commands or {},
+                "command_sets": command_sets or None,
                 "suite_name": suite_name or check_type.capitalize(),
                 "num_workers": workers_val,
             }
@@ -494,6 +496,7 @@ class JobService:
         commands = job.payload.get("commands", [])
         command_regexes = job.payload.get("command_regexes", {})
         vendor_commands = job.payload.get("vendor_commands", {})
+        command_sets = job.payload.get("command_sets")
         suite_name = job.payload.get("suite_name", check_type.capitalize())
 
         for i in range(0, len(devices), chunk_size):
@@ -514,6 +517,7 @@ class JobService:
                         commands,
                         vendor_commands,
                         command_regexes,
+                        command_sets,
                     ): idx
                     for idx, dev in enumerate(chunk)
                 }

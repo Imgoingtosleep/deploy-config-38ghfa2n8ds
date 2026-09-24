@@ -896,18 +896,24 @@ class LldpService:
 
     @staticmethod
     def driver_plan(
-        profiles: List[Dict[str, Any]], first_driver: Optional[str] = None, telnet: bool = False,
-        all_profiles: Optional[List[Dict[str, Any]]] = None,
+        profiles: List[Dict[str, Any]], driver: Optional[str] = None, telnet: bool = False
     ) -> List[Any]:
         """
-        [(driver, command profiles)] in the order to log in with. One driver per command
-        profile parser, in command profile priority. A driver the fleet row names goes
-        first, with the profiles whose parser is its vendor - from the priority when it
-        has one, else from every enabled profile (`all_profiles`), so a row set to Raisecom
-        runs the Raisecom commands without Raisecom being picked in the priority. The rest
-        keep their order.
+        [(driver, command profiles)] in the order to log in with.
+
+        Known driver: that driver only, with the command profiles of its vendor ('cisco'
+        matches cisco_ios / cisco_nxos, 'raisecom' raisecom_roap / raisecom_telnet, ...).
+        A driver no profile is written for gets every profile, cycled on its one session.
+        Unknown (driver None): one driver per profile parser, in command profile order.
         """
         from app.services.autodetect_service import AutoDetectService
+
+        if driver:
+            drv = driver.strip().lower()
+            if telnet:
+                drv = AutoDetectService.telnet_driver(drv)
+            own = [p for p in profiles if p["parser"] in drv]
+            return [(drv, own or profiles)]
 
         order: List[str] = []
         by_driver: Dict[str, List[Dict[str, Any]]] = {}
@@ -919,15 +925,65 @@ class LldpService:
                 by_driver[drv] = []
                 order.append(drv)
             by_driver[drv].append(prof)
+        return [(drv, by_driver[drv]) for drv in order]
 
-        plan = [(drv, by_driver[drv]) for drv in order]
-        if first_driver:
-            first = first_driver.strip().lower()
-            # 'huawei' matches huawei / huawei_telnet / huawei_vrpv8, 'cisco' matches cisco_nxos, ...
-            own = ([p for p in profiles if p["parser"] in first]
-                   or [p for p in (all_profiles or []) if p["parser"] in first])
-            plan = [(first, own or profiles)] + [(d, pr) for d, pr in plan if d != first]
-        return plan
+    @staticmethod
+    def description_driver(description: str) -> Optional[str]:
+        """Driver of the vendor an LLDP System Description names, None when it names none"""
+        vendor = LldpService.detect_vendor(description or "", parser="-")
+        return PARSER_DRIVERS.get(vendor) if vendor != "-" else None
+
+    @classmethod
+    def resolve_lldp_driver(cls, device: DeviceCredentials) -> Any:
+        """
+        (driver or None, where it came from, failure result or None).
+
+        - a driver on the device (fleet row, or read from the LLDP description of a neighbor)
+          is used as it is
+        - 'unknown' -> None: the command profiles are swept
+        - Auto Detect -> detected now (or the result of 'Detect Types' from the last few
+          minutes); a vendor that cannot be named -> None (swept like 'unknown'). A dead
+          host or rejected password returns a failure instead: logging in again with every
+          driver cannot fix those and piles up failed logins.
+        """
+        from app.services.autodetect_service import AutoDetectService, AUTO_TYPES, is_driver
+        dtype = (device.device_type or "").strip().lower()
+        if is_driver(dtype):
+            return dtype, "device type", None
+        if dtype not in AUTO_TYPES:
+            return None, "unknown", None
+        try:
+            detected, reason = AutoDetectService.detect_device_type(device)
+        except Exception as e:
+            return None, f"auto-detect error ({e})", None
+        if is_driver(detected):
+            return detected, f"auto-detect: {reason}", None
+        if detected in ("unreachable", "auth_failed"):
+            return None, detected, {
+                "hostname": device.name or device.host, "ip": device.host, "model": "",
+                "version_output": "", "command_profile": "", "status": f"Failed: {reason}",
+                "success": False, "error": reason, "neighbors_found": 0, "neighbors": [],
+                "commands_rejected": False, "raw_output": "", "execution_time_seconds": 0,
+                "log": f"Auto-detect: {detected} - {reason}. No LLDP login attempted.",
+            }
+        return None, f"auto-detect could not name the vendor ({reason})", None
+
+    @classmethod
+    def collect_auto(
+        cls, device: DeviceCredentials, depth: int = 0, command_profile_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Driver first (resolve_lldp_driver), then collect: one driver, or the sweep for unknown"""
+        driver, source, failed = cls.resolve_lldp_driver(device)
+        if depth > 0 and source == "device type":
+            source = "the neighbor's LLDP system description"
+        if failed:
+            failed["depth"] = depth
+            return failed
+        result = cls.collect_device_sweep(device, depth, command_profile_ids, driver)
+        note = (f"Driver [{driver}] from {source}" if driver
+                else f"Driver unknown ({source}): sweeping the command profiles in order")
+        result["log"] = f"{note}\n{result['log']}"
+        return result
 
     @staticmethod
     def _other_driver_may_help(result: Dict[str, Any]) -> bool:
@@ -950,22 +1006,17 @@ class LldpService:
         device: DeviceCredentials,
         depth: int = 0,
         command_profile_ids: Optional[List[str]] = None,
-        first_driver: Optional[str] = None,
+        driver: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Log in once per driver and stop at the first one whose commands the device accepts;
-        each driver runs only its own command profiles. The order is the command profile
-        priority, with `first_driver` (the driver set on the fleet row) in front of it.
-        Devices found by LLDP or a subnet scan have no driver of their own, so they get
-        the plain priority order.
+        Known `driver`: one login with it, running its own command profiles. Unknown
+        (None): log in once per driver in command profile order and stop at the first one
+        whose commands the device accepts, or at a wrong password / dead host.
         """
         from app.services.autodetect_service import AutoDetectService
         from app.services.command_profile_service import CommandProfileService
         profiles = CommandProfileService.resolve_ordered(command_profile_ids)
-        plan = cls.driver_plan(
-            profiles, first_driver, AutoDetectService.is_telnet(device),
-            all_profiles=CommandProfileService.resolve_ordered(None) if first_driver else None,
-        )
+        plan = cls.driver_plan(profiles, driver, AutoDetectService.is_telnet(device))
 
         logs: List[str] = []
         result: Optional[Dict[str, Any]] = None
@@ -976,8 +1027,16 @@ class LldpService:
                 break
             if attempt < len(plan):
                 reason = "rejected the commands" if result["success"] else "could not be used"
-                src = " (fleet)" if first_driver and attempt == 1 else ""
-                logs.append(f"--- Driver [{drv}]{src} {reason}, retrying as [{plan[attempt][0]}] ---")
+                logs.append(f"--- Driver [{drv}] {reason}, retrying as [{plan[attempt][0]}] ---")
+        if driver and result is not None and cls._other_driver_may_help(result):
+            # The device type is followed as it is set: say so instead of a quiet
+            # "Success, 0 neighbors" when it is the wrong one
+            why = "rejected the LLDP commands" if result["success"] else "could not be used"
+            msg = (f"Driver [{driver}] {why}: the device type may be wrong. Set it to Unknown to try every "
+                   f"command profile, or pick the right driver")
+            logs.append(f"--- {msg} ---")
+            if result["success"]:
+                result.update(success=False, status=f"Failed: {msg}", error=msg)
         if result is not None and len(logs) > 1:
             result["log"] = "\n".join(logs)
         return result if result is not None else cls.collect_device(device, depth, command_profile_ids)
@@ -1055,24 +1114,11 @@ class LldpService:
                 alive_indices = list(range(len(wave)))
 
             if alive_indices:
-                # Seeds try the driver set on their fleet row first, then the command profile
-                # priority; neighbors found by LLDP have no driver, so only the priority
-                from app.services.autodetect_service import AutoDetectService, is_driver
-
-                def seed_driver(dev: DeviceCredentials) -> Optional[str]:
-                    """The fleet row's driver; for an Auto Detect row the one 'Detect Types'
-                    found in the last few minutes (cached - no extra login)"""
-                    if depth != 0:
-                        return None
-                    if is_driver(dev.device_type):
-                        return dev.device_type
-                    return AutoDetectService.get_cached_type(dev.host or "", dev.port)
-
+                # Each device logs in with its driver: the fleet row's, the one auto-detect
+                # names, or (neighbors) the one its LLDP description names. Unknown sweeps.
                 with ThreadPoolExecutor(max_workers=min(workers, len(alive_indices))) as executor:
                     futures = {
-                        executor.submit(
-                            cls.collect_device_sweep, wave[i], depth, command_profile_ids, seed_driver(wave[i]),
-                        ): i
+                        executor.submit(cls.collect_auto, wave[i], depth, command_profile_ids): i
                         for i in alive_indices
                     }
                     for fut in as_completed(futures):
@@ -1110,11 +1156,15 @@ class LldpService:
                         visited_ips.add(ip)
                         if name_key:
                             visited_names.add(name_key)
+                        # The seed's credentials, but not its driver: the neighbor's own LLDP
+                        # description names its vendor, else it is unknown and swept
+                        n_driver = cls.description_driver(n.get("Remote Description") or n.get("Remote Model") or "")
                         next_wave.append(dev.copy(update={
                             "id": None,
                             "host": ip,
                             "name": n["Remote Device"],
                             "active_credential_name": None,
+                            "device_type": n_driver or "unknown",
                         }))
                 queue_log.append(
                     f"Depth {depth} -> {depth + 1}: {total} neighbor row(s) seen, {len(next_wave)} new IP(s) queued "

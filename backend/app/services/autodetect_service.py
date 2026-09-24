@@ -17,7 +17,9 @@ AUTO_TYPES = ("", "autodetect", "auto")
 #   auth_failed - it answered, every credential was rejected
 #   cant_detect - it answered (and usually logged in) but no banner, prompt or
 #                 version command named the vendor
-DETECT_FAILURES = ("unreachable", "auth_failed", "cant_detect", "unknown")  # 'unknown' = old name of cant_detect
+DETECT_FAILURES = ("unreachable", "auth_failed", "cant_detect", "unknown")
+# 'unknown' is also a device type the user (or Detect Types) sets when the vendor cannot be
+# named: LLDP then tries every command profile; other features detect again, then use the default
 
 # Vendor names printed before / right after login, shared by the SSH and telnet probes
 _LOGIN_BANNER_SIGNATURES = [
@@ -226,6 +228,16 @@ class AutoDetectService:
         tel = _TELNET_DRIVERS.get(driver) or f"{driver}_telnet"
         return tel if tel in platforms else driver
 
+    @staticmethod
+    def ssh_driver(driver: str) -> str:
+        """SSH name of a driver: huawei_telnet -> huawei, aruba_procurve_telnet -> aruba_os.
+        Detection answers in SSH names; the connection picks the telnet variant from the
+        port (23), so the Device Type list needs SSH drivers only."""
+        for ssh, tel in _TELNET_DRIVERS.items():
+            if driver == tel:
+                return ssh
+        return driver[: -len("_telnet")] if driver.endswith("_telnet") else driver
+
     @classmethod
     def fallback_driver(cls, device: DeviceCredentials) -> str:
         """Driver used when detection cannot name one: DEFAULT_DEVICE_TYPE, telnet variant on telnet"""
@@ -433,7 +445,8 @@ class AutoDetectService:
     ) -> Tuple[str, str]:
         """
         Telnet: read the pre-login banner (many switches name their vendor there), then
-        log in with the telnet drivers and run a version command. Returns a *_telnet driver.
+        log in with the telnet drivers and run a version command. Returns the SSH name of
+        the driver (huawei, not huawei_telnet): the connection takes telnet from port 23.
         """
         try:
             banner = cls._read_telnet_banner(host, port, timeout=2.0)
@@ -442,9 +455,8 @@ class AutoDetectService:
 
         hit = match_login_banner(banner)
         if hit and hit[0] not in ("cisco_ios", "raisecom_roap"):
-            driver = cls.telnet_driver(hit[0])
-            cls.set_cached_type(host, driver, port)
-            return driver, f"Detected {hit[1]} from the telnet login banner"
+            cls.set_cached_type(host, hit[0], port)
+            return hit[0], f"Detected {hit[1]} from the telnet login banner"
 
         # Cisco and Raisecom share the CLI, a banner naming either is free text and
         # "User Access Verification" is printed by Cisco-style clones too: these only pick
@@ -465,9 +477,8 @@ class AutoDetectService:
             prefer = None
 
         def from_hint(why: str) -> Tuple[str, str]:
-            driver = cls.telnet_driver(hint[0])
-            cls.set_cached_type(host, driver, port)
-            return driver, f"{hint[1]} ({why})"
+            cls.set_cached_type(host, hint[0], port)
+            return hint[0], f"{hint[1]} ({why})"
 
         creds = [c for c in candidates if c.get("username") or c.get("password")]
         if not creds:
@@ -484,6 +495,7 @@ class AutoDetectService:
             probe_dev.port = port
             detected, reason = cls._probe_prioritized_cli(probe_dev, telnet=True, prefer=prefer)
             if detected:
+                detected = cls.ssh_driver(detected)
                 device.username = probe_dev.username
                 cls.set_cached_type(host, detected, port)
                 return detected, f"{reason} (via user: {probe_dev.username})"

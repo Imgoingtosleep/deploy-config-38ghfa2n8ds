@@ -127,15 +127,13 @@ export default function DeviceForm({
 
   const [deviceTypes, setDeviceTypes] = useState([
     { label: 'Auto Detect (Recommended)', value: 'autodetect' },
-    { label: 'Huawei VRP (SSH)', value: 'huawei' },
-    { label: 'Huawei VRP (Telnet)', value: 'huawei_telnet' },
-    { label: 'Cisco IOS / IOS-XE (SSH)', value: 'cisco_ios' },
-    { label: 'Cisco IOS (Telnet)', value: 'cisco_ios_telnet' },
+    { label: 'Unknown (try every command profile)', value: 'unknown' },
+    { label: 'Huawei VRP', value: 'huawei' },
+    { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
     { label: 'HP / H3C Comware', value: 'hp_comware' },
     { label: 'Aruba OS-CX', value: 'aruba_os' },
     { label: 'Juniper JunOS', value: 'juniper_junos' },
-    { label: 'Raisecom ROS (SSH)', value: 'raisecom_roap' },
-    { label: 'Raisecom ROS (Telnet)', value: 'raisecom_telnet' },
+    { label: 'Raisecom ROS', value: 'raisecom_roap' },
   ]);
 
   // Driver <option>s from the backend list. A driver that is not in the list (e.g. a
@@ -626,8 +624,10 @@ export default function DeviceForm({
           } else if (r.status === 'auth_failed') {
             authFailedList.push(r.host);
           } else {
-            // cant_detect: reachable (often logged in) but no vendor could be named;
-            // the device keeps its current type, which falls back to the default driver
+            // cant_detect: reachable (often logged in) but no vendor could be named.
+            // The row becomes Unknown, which LLDP answers by trying every command profile
+            if (r.id) map[r.id] = 'unknown';
+            else if (r.host) map[r.host] = 'unknown';
             cantDetectList.push(r.host);
           }
         });
@@ -645,7 +645,7 @@ export default function DeviceForm({
           msg += `🔑 Authentication Failed (${authFailedList.length}): ${authFailedList.slice(0, 5).join(', ')}${authFailedList.length > 5 ? '...' : ''}\n`;
         }
         if (cantDetectList.length > 0) {
-          msg += `❓ Can't Detect (${cantDetectList.length}): ${cantDetectList.slice(0, 5).join(', ')}${cantDetectList.length > 5 ? '...' : ''} — reachable, but the vendor could not be identified; set the type manually\n`;
+          msg += `❓ Can't Detect (${cantDetectList.length}): ${cantDetectList.slice(0, 5).join(', ')}${cantDetectList.length > 5 ? '...' : ''} — reachable, but the vendor could not be identified: set to Unknown (LLDP tries every command profile), or pick the driver\n`;
         }
         if (msg) {
           alert(msg.trim());

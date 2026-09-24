@@ -96,12 +96,13 @@ class TelnetTest(DetectionTestCase):
         self.assertIn("Huawei Versatile Routing Platform", banner)
         self.assertNotIn("\xff", banner)
 
-    def test_vendor_in_the_telnet_banner_gives_a_telnet_driver(self):
+    def test_vendor_in_the_telnet_banner_gives_the_ssh_driver_name(self):
+        """Detection answers in SSH names only; port 23 makes the connection telnet"""
         dev = DeviceCredentials(host="10.254.254.254", port=23, device_type="autodetect")
         with patch.object(AutoDetectService, "_read_telnet_banner",
                           return_value="User Access Verification\r\n\r\nUsername: "):
             detected, reason = AutoDetectService.detect_device_type(dev, force_refresh=True)
-        self.assertEqual(detected, "cisco_ios_telnet", reason)
+        self.assertEqual(detected, "cisco_ios", reason)
 
     def test_telnet_probe_uses_telnet_drivers_on_port_23(self):
         dialed = []
@@ -123,7 +124,14 @@ class TelnetTest(DetectionTestCase):
                 patch.object(AutoDetectService, "_probe_prioritized_cli",
                              return_value=("huawei_telnet", "Detected huawei_telnet via prioritized probe")):
             detected, _ = AutoDetectService.detect_device_type(dev, force_refresh=True)
-        self.assertEqual(detected, "huawei_telnet")
+        self.assertEqual(detected, "huawei")
+
+    def test_an_ssh_driver_on_port_23_connects_over_telnet(self):
+        for drv, telnet_drv in [("huawei", "huawei_telnet"), ("cisco_ios", "cisco_ios_telnet"),
+                                ("raisecom_roap", "raisecom_telnet")]:
+            dev = DeviceCredentials(host="10.254.254.254", port=23, device_type=drv, username="u", password="p")
+            params = NetmikoService._build_netmiko_dict(dev)
+            self.assertEqual((params["device_type"], params["port"]), (telnet_drv, 23))
 
     def test_telnet_statuses(self):
         dev = DeviceCredentials(host="10.254.254.254", port=23, device_type="autodetect",
