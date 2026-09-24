@@ -804,6 +804,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
             same session instead, with no second login. Devices found by recursive discovery have no device type of
             their own, so they are logged in with C1's SSH driver first and tried again with C2's when the commands
             are rejected.
+            <br />
+            A fleet row with a Device Type / Driver (Raisecom, Cisco, ...) runs the command profile of that driver
+            first, even when it is not picked here; an Auto Detect row does the same with the driver{' '}
+            <b>Detect Types</b> found in the last 5 minutes. This priority is for the other devices, and for the
+            fallback when the driver's commands are rejected.
           </span>
         </div>
 
@@ -1283,6 +1288,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     >
                       <option value="huawei">huawei — display lldp neighbor style</option>
                       <option value="cisco">cisco — show lldp neighbors style</option>
+                      <option value="raisecom">raisecom — show lldp remote style</option>
                     </select>
                   </label>
                   <label className="lldp-toggle">

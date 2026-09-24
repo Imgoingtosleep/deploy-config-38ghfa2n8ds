@@ -38,9 +38,21 @@ _BRIEF_HEADER_ALIASES_CISCO = {
     "exptime": ["Hold-time"],
 }
 
+# Raisecom ROS 'show lldp remote':
+#   Port      ChassisId        PortId       SysName     MgtAddress     ExpiredTime
+_BRIEF_HEADER_ALIASES_RAISECOM = {
+    "local": ["Local Port", "Local Intf", "Interface", "Port"],
+    "chassis": ["ChassisId", "Chassis ID", "Chassis Id"],
+    "remote_intf": ["PortId", "Port ID", "Port Id"],
+    "remote_dev": ["SysName", "System Name"],
+    "mgmt": ["MgtAddress", "Management Address", "MgmtAddress", "Mgmt Address"],
+    "exptime": ["ExpiredTime", "Expired Time", "TTL"],
+}
+
 # The device parser rejected the command, so this command profile is the wrong vendor
+# ('% Unknown command.' is Raisecom ROS)
 _CLI_REJECT_RE = re.compile(
-    r"unrecognized command|invalid input|% invalid|syntax error|wrong parameter|incomplete command",
+    r"unrecognized command|invalid input|% invalid|syntax error|wrong parameter|incomplete command|unknown command",
     re.I,
 )
 
@@ -148,12 +160,16 @@ class LldpService:
             return "hp_comware"
         if "mikrotik" in t or "routeros" in t or "routerboard" in t or "crs" in t or "ccr" in t:
             return "mikrotik"
-        if "raisecom" in t or "ros" in t or "iscom" in t or "rax" in t:
+        if "raisecom" in t:
             return "raisecom"
         if "huawei" in t or "vrp" in t:
             return "huawei"
         if "cisco" in t or "nx-os" in t or "ios-xe" in t:
             return "cisco"
+        # Raisecom descriptions without the company name: "ROS_5.2.1", "ISCOM2608G", "RAX711".
+        # Whole words only - the substrings hit "microsoft", "syntax", "across"
+        if re.search(r"(?<![a-z])ros(?![a-z])|\biscom\d|\brax\d", t):
+            return "raisecom"
         return parser or "huawei"
 
     @staticmethod
@@ -231,7 +247,10 @@ class LldpService:
     @staticmethod
     def brief_header(lines: List[str], parser: str = "huawei"):
         """Index and column positions of the neighbor table header, (None, []) when absent"""
-        aliases_map = _BRIEF_HEADER_ALIASES_CISCO if parser == "cisco" else _BRIEF_HEADER_ALIASES
+        aliases_map = {
+            "cisco": _BRIEF_HEADER_ALIASES_CISCO,
+            "raisecom": _BRIEF_HEADER_ALIASES_RAISECOM,
+        }.get(parser, _BRIEF_HEADER_ALIASES)
         for idx, line in enumerate(lines):
             found = []
             for key, aliases in aliases_map.items():
@@ -428,10 +447,13 @@ class LldpService:
             # Interface names like GE0/0/1, 10GE1/0/48, Eth-Trunk1, MEth0/0/1
             if not re.match(r"^(?=[\w\-]*[A-Za-z])[\w\-]+\d", local):
                 continue
+            mgmt = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", values.get("mgmt", ""))
             rows.append({
                 "local_port": local,
                 "remote_device": LldpService.short_hostname(values.get("remote_dev", "")),
                 "remote_port": values.get("remote_intf", ""),
+                # Only tables with a management address column (Raisecom 'show lldp remote')
+                "remote_ip": mgmt.group(0) if mgmt else "",
             })
         return rows
 
@@ -543,9 +565,60 @@ class LldpService:
         return results
 
     @classmethod
+    def parse_lldp_detail_raisecom(cls, output: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Parse Raisecom ROS 'show lldp remote [interface <if>] detail'. One block per
+        neighbor, headed by its local port ('Port gigaethernet1/1/1:', 'Port 1:',
+        'Interface GE1/1/1 has 1 neighbor(s):'), then 'Key : value' lines with the ROS
+        names (ChassisId, PortId, SysName, SysDesc, MgtAddress) or the long ones
+        (Port ID, System Name, System Description, Management Address).
+        """
+        results: List[Dict[str, str]] = []
+        # A block header is a line naming the local port, not a 'PortId :' / 'PortDesc :' field
+        header = re.compile(
+            r"^[ \t]*(?:Local[ \t]*)?(?:Port|Interface|Intf)(?![ \t]*(?:Id|Desc|Description|Subtype|Name)\b)"
+            r"[ \t:]+(\S[^\r\n]*?)[ \t]*(?:has[ \t]+\d+[ \t]+neighbors?(?:\(s\))?)?[ \t]*:?[ \t]*$",
+            re.MULTILINE | re.IGNORECASE,
+        )
+        parts = header.split(output or "")
+        blocks = [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts), 2)]
+        if not blocks and default_local_port:
+            blocks = [(default_local_port, output or "")]
+        for local_port, content in blocks:
+            sysname = re.search(r"^\s*Sys(?:tem)?\s*Name\s*:(.*)$", content, re.MULTILINE | re.IGNORECASE)
+            port_id = re.search(r"^\s*Port\s*Id\s*:(.*)$", content, re.MULTILINE | re.IGNORECASE)
+            if not sysname and not port_id:
+                continue
+            remote_ip = ""
+            for m in re.finditer(r"^\s*M(?:gt|gmt|anagement)\s*Addr(?:ess)?[^:\r\n]*:(.*)$", content, re.MULTILINE | re.IGNORECASE):
+                ip = re.search(r"(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])", m.group(1))
+                if ip:
+                    try:
+                        remote_ip = str(ipaddress.IPv4Address(ip.group(0)))
+                        break
+                    except ValueError:
+                        continue
+            # System description spans several lines, up to the next 'Key :' line
+            desc = re.search(
+                r"^\s*Sys(?:tem)?\s*Desc(?:ription)?\s*:(.*?)(?=^\s*[A-Za-z][A-Za-z /()\-]{2,40}:|\Z)",
+                content, re.MULTILINE | re.IGNORECASE | re.DOTALL,
+            )
+            results.append({
+                "local_port": local_port or default_local_port or "",
+                "remote_device": cls.short_hostname(sysname.group(1)) if sysname else "N/A",
+                "remote_port": port_id.group(1).strip() if port_id else "N/A",
+                "remote_ip": remote_ip,
+                "remote_model": cls.extract_model(desc.group(1), "raisecom") if desc else "",
+                "remote_description": desc.group(1).strip() if desc else "",
+            })
+        return results
+
+    @classmethod
     def parse_detail(cls, output: str, parser: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
         if parser == "cisco":
             return cls.parse_lldp_detail_cisco(output, default_local_port=default_local_port)
+        if parser == "raisecom":
+            return cls.parse_lldp_detail_raisecom(output, default_local_port=default_local_port)
         return cls.parse_lldp_detail(output, default_local_port=default_local_port)
 
     @classmethod
@@ -695,11 +768,29 @@ class LldpService:
                     # Step 3: per-interface detail for every port that has a neighbor
                     intf_order: List[str] = []
                     details_by_intf: Dict[str, List[Dict[str, str]]] = {}
+                    # A detail command without '{intf}' prints every port: run it once and
+                    # split the neighbors by local port instead of once per port
+                    shared_detail: Optional[Dict[str, List[Dict[str, str]]]] = None
+                    if brief_rows and "{intf}" not in cmds["lldp_detail"]:
+                        shared_detail = {}
+                        try:
+                            detail_raw = NetmikoService.clean_cli_output(
+                                net_connect.send_command(cmds["lldp_detail"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
+                            )
+                            raw_parts.append(f"<{sysname}> {cmds['lldp_detail']}\n{detail_raw}")
+                            for r in cls.parse_detail(keep_lines(detail_raw, "lldp_detail", "Step 3"), parser):
+                                shared_detail.setdefault(cls.intf_key(r["local_port"]), []).append(r)
+                        except Exception as e:
+                            log_lines.append(f"Step 3: '{cmds['lldp_detail']}' failed: {e}")
                     for row in brief_rows:
                         intf = row["local_port"]
                         if intf in details_by_intf:
                             continue
                         intf_order.append(intf)
+                        if shared_detail is not None:
+                            details_by_intf[intf] = shared_detail.get(cls.intf_key(intf), [])
+                            log_lines.append(f"Step 3: '{cmds['lldp_detail']}' [{intf}] -> {len(details_by_intf[intf])} neighbor(s)")
+                            continue
                         cmd = cmds["lldp_detail"].format(intf=intf) if "{intf}" in cmds["lldp_detail"] else cmds["lldp_detail"]
                         details: List[Dict[str, str]] = []
                         try:
@@ -717,7 +808,8 @@ class LldpService:
 
                     # Step 4: ports without detail -> run the full LLDP detail command once
                     missing = [i for i in intf_order if not details_by_intf[i]]
-                    if missing or not brief_rows:
+                    same_as_detail = shared_detail is not None and cmds["lldp_full"] == cmds["lldp_detail"]
+                    if (missing or not brief_rows) and not same_as_detail:
                         try:
                             full_raw = NetmikoService.clean_cli_output(
                                 net_connect.send_command(cmds["lldp_full"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
@@ -752,7 +844,7 @@ class LldpService:
                                     "local_port": r["local_port"],
                                     "remote_device": r["remote_device"] or "N/A",
                                     "remote_port": r["remote_port"] or "N/A",
-                                    "remote_ip": "",
+                                    "remote_ip": r.get("remote_ip", ""),
                                     "remote_model": "",
                                 }
                                 for r in brief_rows if r["local_port"] == intf
@@ -804,12 +896,16 @@ class LldpService:
 
     @staticmethod
     def driver_plan(
-        profiles: List[Dict[str, Any]], first_driver: Optional[str] = None, telnet: bool = False
+        profiles: List[Dict[str, Any]], first_driver: Optional[str] = None, telnet: bool = False,
+        all_profiles: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Any]:
         """
         [(driver, command profiles)] in the order to log in with. One driver per command
         profile parser, in command profile priority. A driver the fleet row names goes
-        first, with the profiles whose parser is its vendor; the rest keep their order.
+        first, with the profiles whose parser is its vendor - from the priority when it
+        has one, else from every enabled profile (`all_profiles`), so a row set to Raisecom
+        runs the Raisecom commands without Raisecom being picked in the priority. The rest
+        keep their order.
         """
         from app.services.autodetect_service import AutoDetectService
 
@@ -828,7 +924,8 @@ class LldpService:
         if first_driver:
             first = first_driver.strip().lower()
             # 'huawei' matches huawei / huawei_telnet / huawei_vrpv8, 'cisco' matches cisco_nxos, ...
-            own = [p for p in profiles if p["parser"] in first]
+            own = ([p for p in profiles if p["parser"] in first]
+                   or [p for p in (all_profiles or []) if p["parser"] in first])
             plan = [(first, own or profiles)] + [(d, pr) for d, pr in plan if d != first]
         return plan
 
@@ -838,6 +935,11 @@ class LldpService:
         cannot fix those, and on TACACS/RADIUS every extra failed login risks a lockout"""
         if result["success"]:
             return bool(result.get("commands_rejected"))
+        # Logged in, but the prompt is not this driver's (Huawei driver on a 'Raisecom#' or
+        # 'Switch#' prompt). Netmiko's message says "increase the read_timeout", which must
+        # not be taken for a dead host: the next driver is the fix.
+        if "pattern not detected" in (result.get("error") or "").lower():
+            return True
         from app.services.job_service import JobService
         diag = JobService.format_failure_diagnostic(result.get("error") or "", host_ip=result.get("ip") or "")
         return not diag.startswith(("Authentication Failed", "Connection Timeout", "Network Unreachable", "Connection Refused"))
@@ -860,7 +962,10 @@ class LldpService:
         from app.services.autodetect_service import AutoDetectService
         from app.services.command_profile_service import CommandProfileService
         profiles = CommandProfileService.resolve_ordered(command_profile_ids)
-        plan = cls.driver_plan(profiles, first_driver, AutoDetectService.is_telnet(device))
+        plan = cls.driver_plan(
+            profiles, first_driver, AutoDetectService.is_telnet(device),
+            all_profiles=CommandProfileService.resolve_ordered(None) if first_driver else None,
+        )
 
         logs: List[str] = []
         result: Optional[Dict[str, Any]] = None
@@ -952,12 +1057,21 @@ class LldpService:
             if alive_indices:
                 # Seeds try the driver set on their fleet row first, then the command profile
                 # priority; neighbors found by LLDP have no driver, so only the priority
-                from app.services.autodetect_service import is_driver
+                from app.services.autodetect_service import AutoDetectService, is_driver
+
+                def seed_driver(dev: DeviceCredentials) -> Optional[str]:
+                    """The fleet row's driver; for an Auto Detect row the one 'Detect Types'
+                    found in the last few minutes (cached - no extra login)"""
+                    if depth != 0:
+                        return None
+                    if is_driver(dev.device_type):
+                        return dev.device_type
+                    return AutoDetectService.get_cached_type(dev.host or "", dev.port)
+
                 with ThreadPoolExecutor(max_workers=min(workers, len(alive_indices))) as executor:
                     futures = {
                         executor.submit(
-                            cls.collect_device_sweep, wave[i], depth, command_profile_ids,
-                            wave[i].device_type if depth == 0 and is_driver(wave[i].device_type) else None,
+                            cls.collect_device_sweep, wave[i], depth, command_profile_ids, seed_driver(wave[i]),
                         ): i
                         for i in alive_indices
                     }

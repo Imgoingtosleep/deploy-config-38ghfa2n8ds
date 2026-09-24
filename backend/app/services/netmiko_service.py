@@ -17,6 +17,37 @@ from netmiko.exceptions import (
 from app.schemas.device import DeviceCredentials
 from app.core.config import settings
 from app.services.save_config import save_command, save_kwargs, save_startup_config
+from netmiko.raisecom.raisecom_roap import RaisecomRoapSSH
+
+# Netmiko's Raisecom SSH driver opens the session with "none" auth and answers the
+# Login: / Password: that some ROS releases ask inside the shell. Other ROS releases take
+# a normal SSH password and refuse "none" auth, which Netmiko reports as a failed login.
+_RAISECOM_SSH_DRIVERS = ("raisecom_roap", "raisecom_roap_ssh", "raisecom_ros", "raisecom_ros_ssh")
+
+
+_NETMIKO_CONNECT = ConnectHandler
+
+
+class RaisecomPasswordSSH(RaisecomRoapSSH):
+    """Raisecom ROS over SSH with ordinary password auth (no in-shell login)"""
+
+    def _get_ssh_client_instance(self) -> paramiko.SSHClient:
+        return paramiko.SSHClient()
+
+    def special_login_handler(self, delay_factor: float = 1.0) -> None:
+        return
+
+
+def open_connection(**params):
+    """ConnectHandler, plus the password-auth retry for Raisecom ROS described above"""
+    import netmiko  # looked up per call, so tests patching netmiko.ConnectHandler reach it
+    handler = ConnectHandler if netmiko.ConnectHandler is _NETMIKO_CONNECT else netmiko.ConnectHandler
+    try:
+        return handler(**params)
+    except (NetmikoAuthenticationException, paramiko.ssh_exception.AuthenticationException):
+        if str(params.get("device_type", "")).lower() not in _RAISECOM_SSH_DRIVERS:
+            raise
+    return RaisecomPasswordSSH(**params)
 
 class NetmikoService:
     @staticmethod
@@ -333,7 +364,7 @@ class NetmikoService:
             params = cls._build_netmiko_dict(attempt_device)
             net_connect = None
             try:
-                net_connect = ConnectHandler(**params)
+                net_connect = open_connection(**params)
                 cls._prepare_session(net_connect, attempt_device)
                 
                 # Update device state with working credentials

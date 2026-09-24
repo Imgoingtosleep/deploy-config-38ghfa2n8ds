@@ -134,7 +134,21 @@ export default function DeviceForm({
     { label: 'HP / H3C Comware', value: 'hp_comware' },
     { label: 'Aruba OS-CX', value: 'aruba_os' },
     { label: 'Juniper JunOS', value: 'juniper_junos' },
+    { label: 'Raisecom ROS (SSH)', value: 'raisecom_roap' },
+    { label: 'Raisecom ROS (Telnet)', value: 'raisecom_telnet' },
   ]);
+
+  // Driver <option>s from the backend list. A driver that is not in the list (e.g. a
+  // detected juniper_junos_telnet) still gets its own option: a <select> whose value has
+  // no option shows the first one, "Auto Detect", although the device holds a driver.
+  const driverOptions = (current) => {
+    const list = current && !deviceTypes.some((t) => t.value === current)
+      ? [...deviceTypes, { label: current, value: current }]
+      : deviceTypes;
+    return list.map((t) => (
+      <option key={t.value} value={t.value}>{t.label}</option>
+    ));
+  };
 
   useEffect(() => {
     getSupportedDeviceTypes()
@@ -957,12 +971,7 @@ export default function DeviceForm({
               className="quick-select"
               title="Select device driver to apply to all devices in list"
             >
-              <option value="autodetect">Auto Detect (Recommended)</option>
-              <option value="huawei">Huawei (VRP)</option>
-              <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-              <option value="hp_comware">HP / H3C Comware</option>
-              <option value="aruba_os">Aruba OS</option>
-              <option value="juniper_junos">Juniper JunOS</option>
+              {driverOptions(commonType)}
             </select>
             <button
               type="button"
@@ -1106,12 +1115,7 @@ export default function DeviceForm({
                           onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
                           className="fleet-select"
                         >
-                          <option value="autodetect">Auto Detect</option>
-                          <option value="huawei">Huawei (VRP)</option>
-                          <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                          <option value="hp_comware">HP / H3C Comware</option>
-                          <option value="aruba_os">Aruba OS</option>
-                          <option value="juniper_junos">Juniper JunOS</option>
+                          {driverOptions(dev.device_type)}
                         </select>
                       </td>
                       <td>
@@ -1865,9 +1869,7 @@ export default function DeviceForm({
                     onChange={(e) => setEditForm({ ...editForm, device_type: e.target.value })}
                     className="form-select"
                   >
-                    {deviceTypes.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
+                    {driverOptions(editForm.device_type)}
                   </select>
                 </div>
               </div>

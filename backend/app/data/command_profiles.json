@@ -48,5 +48,30 @@
       "lldp_detail": "",
       "lldp_full": ""
     }
+  },
+  {
+    "id": "cmdprof-aa54807f",
+    "name": "Raisecom ROS",
+    "description": "show lldp remote commands for Raisecom ROS (ISCOM / RAX / iTN series)",
+    "parser": "raisecom",
+    "priority": 3,
+    "enabled": true,
+    "commands": {
+      "pager_disable": "terminal page-break disable",
+      "sysname": "show running-config | include hostname",
+      "version": "show version",
+      "lldp_brief": "show lldp remote",
+      "lldp_detail": "show lldp remote detail",
+      "lldp_full": "show lldp remote detail"
+    },
+    "regexes": {
+      "sysname": "",
+      "version": "",
+      "lldp_brief": "",
+      "lldp_detail": "",
+      "lldp_full": ""
+    },
+    "created_at": "2026-09-24T06:31:38.963885+00:00",
+    "updated_at": "2026-09-24T06:31:38.963885+00:00"
   }
 ]

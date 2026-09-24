@@ -23,13 +23,43 @@ DETECT_FAILURES = ("unreachable", "auth_failed", "cant_detect", "unknown")  # 'u
 _LOGIN_BANNER_SIGNATURES = [
     ("huawei", r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", "Huawei VRP"),
     ("cisco_nxos", r"Cisco Nexus|NX-OS", "Cisco NX-OS"),
-    ("cisco_ios", r"Cisco IOS Software|IOS-XE|Cisco Systems|User Access Verification", "Cisco IOS"),
+    ("cisco_ios", r"Cisco IOS Software|IOS-XE|Cisco Systems", "Cisco IOS"),
     ("hp_comware", r"H3C Comware|HPE Comware|Comware Software|New H3C Technologies", "H3C Comware"),
     ("aruba_os", r"ArubaOS|ProCurve", "Aruba OS"),
     ("juniper_junos", r"JUNOS", "Juniper JunOS"),
     ("mikrotik_routeros", r"MikroTik|RouterOS", "MikroTik RouterOS"),
-    ("raisecom_roap", r"Raisecom Technology|ROS Software|ISCOM|RAX|Gazelle", "Raisecom ROS"),
+    ("raisecom_roap", r"Raisecom|ROS Software", "Raisecom ROS"),
 ]
+# Printed by Cisco IOS on telnet, but also by Cisco-style clones: decides which driver
+# logs in first, and names Cisco only when logging in cannot name the vendor
+_CISCO_TELNET_HINT = r"User Access Verification"
+
+# Vendor named outright in the output of a version command, in the order they are told
+# apart (NX-OS before IOS: its 'show version' also says "Cisco Systems")
+_VERSION_SIGNATURES = [
+    ("huawei", r"Huawei|VRP \(R\)|CloudEngine|Quidway"),
+    ("hp_comware", r"H3C|Comware"),
+    ("cisco_nxos", r"NX-OS|Nexus"),
+    ("raisecom_roap", r"Raisecom"),
+    ("cisco_ios", r"Cisco IOS Software|Cisco Internetwork Operating System|IOS \(tm\)|IOS-XE|Cisco Systems|"
+                  r"\bcisco (?:WS-|C\d|ISR|CISCO|Catalyst)"),
+    ("aruba_os", r"ArubaOS|ProCurve"),
+    ("juniper_junos", r"JUNOS"),
+    ("mikrotik_routeros", r"RouterOS|MikroTik"),
+]
+
+# Raisecom 'show version' without the company name: "Software Version: ROS_4.14.2211...",
+# product names ISCOM2924GF, RAX711, iTN201, RC002. Weak - a Cisco could be named "RAX1" -
+# so only used once no vendor above is named, with the device's own hostname taken out.
+# ROS is matched with no letter around it (\bROS\b misses "ROS_4.14", and must not hit "RouterOS")
+_RAISECOM_HINTS = r"(?<![A-Za-z])ROS(?![A-Za-z])|\bISCOM\d|\bRAX\d|\biTN\d|\bRC\d{3}|Gazelle"
+
+# Raisecom ROS keeps its factory hostname "Raisecom" on most boxes (a hint: confirmed by 'show version')
+_RAISECOM_PROMPT = r"^Raisecom[\w.\-]*[>#]$"
+# Login asked inside the shell after the SSH session opened (Raisecom ROS: "Login:" / "Password:")
+_SHELL_LOGIN_PROMPT = r"(?:^|\n)\s*(?:login|username|user name)\s*:\s*$"
+_SHELL_PASSWORD_PROMPT = r"(?:^|\n)\s*password\s*:\s*$"
+_MORE_PROMPT = r"-+\s*more\s*-+|\(more\)|press any key"
 
 # Telnet driver for each SSH driver the detector can return
 _TELNET_DRIVERS = {
@@ -57,6 +87,30 @@ def match_login_banner(text: str) -> Optional[Tuple[str, str]]:
         if re.search(pattern, text or "", re.I):
             return driver, label
     return None
+
+
+def match_version_output(text: str, hostname: str = "") -> Optional[str]:
+    """
+    Driver of the vendor a version command's output names. The device's own hostname
+    lines (prompt, "<host> uptime is") are left out first, so a Cisco named
+    "Raisecom-uplink" or "RAX1-core" stays Cisco. A vendor named outright wins; the
+    Raisecom model / ROS hints come last.
+    """
+    text = text or ""
+    if hostname:
+        own = re.compile(r"^\s*" + re.escape(hostname) + r"(?:[\s>#(]|$)", re.I)
+        text = "\n".join(line for line in text.splitlines() if not own.match(line))
+    for driver, pattern in _VERSION_SIGNATURES:
+        if re.search(pattern, text, re.I):
+            return driver
+    if re.search(_RAISECOM_HINTS, text, re.I):
+        return "raisecom_roap"
+    return None
+
+
+def prompt_hostname(prompt: str) -> str:
+    """'Core-SW(config)#' -> 'Core-SW'"""
+    return re.sub(r"(\(.*\))?[>#\]]\s*$", "", (prompt or "").strip()).lstrip("<[")
 
 
 def clean_ansi(text: str) -> str:
@@ -87,6 +141,34 @@ def _read_channel_response(channel, timeout: float = 1.2) -> str:
             break
         time.sleep(0.04)
     return buf
+
+
+def _last_line(text: str) -> str:
+    lines = [line.strip() for line in clean_ansi(text).splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+def _run_probe_command(channel, command: str, timeout: float = 4.0) -> str:
+    """
+    Send a command and read until the prompt comes back (or timeout), paging through
+    --More--. Reading only the first burst can return just the echoed command, which
+    would then look like a Cisco box that accepted the command.
+    """
+    channel.send(command + "\r\n")
+    buf = ""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        chunk = _read_channel_response(channel, timeout=0.6)
+        if not chunk:
+            continue
+        buf += chunk
+        last = _last_line(buf)
+        if re.search(_MORE_PROMPT, last, re.I):
+            channel.send(" ")
+            continue
+        if last and last != command and re.search(r"[>#\]]$", last):
+            break
+    return clean_ansi(buf)
 
 
 class AutoDetectService:
@@ -359,13 +441,38 @@ class AutoDetectService:
             return "unreachable", f"Host {host} unreachable on telnet port {port}: {e}"
 
         hit = match_login_banner(banner)
-        if hit:
+        if hit and hit[0] not in ("cisco_ios", "raisecom_roap"):
             driver = cls.telnet_driver(hit[0])
             cls.set_cached_type(host, driver, port)
             return driver, f"Detected {hit[1]} from the telnet login banner"
 
+        # Cisco and Raisecom share the CLI, a banner naming either is free text and
+        # "User Access Verification" is printed by Cisco-style clones too: these only pick
+        # the driver that logs in first, and the version output decides. Only when logging
+        # in names no vendor does the banner hint stand.
+        if hit:
+            hint = (hit[0], f"{hit[1]} named in the telnet login banner")
+        elif re.search(_CISCO_TELNET_HINT, banner, re.I):
+            hint = ("cisco_ios", "'User Access Verification' in the telnet login banner")
+        else:
+            hint = None
+        # Raisecom ROS asks "Login:" where Cisco / Huawei / H3C ask "Username:"
+        if hint:
+            prefer = hint[0]
+        elif re.search(r"(?:^|\n)\s*Login:\s*$", banner.rstrip()):
+            prefer = "raisecom_roap"
+        else:
+            prefer = None
+
+        def from_hint(why: str) -> Tuple[str, str]:
+            driver = cls.telnet_driver(hint[0])
+            cls.set_cached_type(host, driver, port)
+            return driver, f"{hint[1]} ({why})"
+
         creds = [c for c in candidates if c.get("username") or c.get("password")]
         if not creds:
+            if hint:
+                return from_hint("no credentials to confirm it")
             return "cant_detect", f"Telnet {host}:{port} answered, but credentials are required to detect the vendor"
 
         rejected = 0
@@ -375,7 +482,7 @@ class AutoDetectService:
             probe_dev.password = c.get("password") or ""
             probe_dev.secret = c.get("secret") or None
             probe_dev.port = port
-            detected, reason = cls._probe_prioritized_cli(probe_dev, telnet=True)
+            detected, reason = cls._probe_prioritized_cli(probe_dev, telnet=True, prefer=prefer)
             if detected:
                 device.username = probe_dev.username
                 cls.set_cached_type(host, detected, port)
@@ -384,12 +491,16 @@ class AutoDetectService:
                 rejected += 1
                 continue
             # Logged in but nothing matched: the other credentials would not tell us more
+            if hint:
+                return from_hint("no version command named another vendor")
             return "cant_detect", (
                 f"Logged in to {host}:{port} over telnet as {probe_dev.username}, but no version "
                 f"command named the vendor"
             )
         if rejected == len(creds):
             return "auth_failed", f"Authentication Failed on {host}:{port} (telnet) for every credential"
+        if hint:
+            return from_hint("login probe inconclusive")
         return "cant_detect", f"Telnet {host}:{port}: detection inconclusive"
 
     @staticmethod
@@ -535,6 +646,65 @@ class AutoDetectService:
                 pass
         return None, ""
 
+    @staticmethod
+    def _connect_noauth(host: str, port: int, username: str, timeout: int) -> Optional[paramiko.SSHClient]:
+        """SSH session opened with "none" auth (login then happens in the shell), None when refused"""
+        from netmiko.ssh_auth import SSHClient_noauth
+        client = SSHClient_noauth()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=host,
+                port=port,
+                username=username,
+                password="",
+                timeout=timeout,
+                banner_timeout=timeout,
+                auth_timeout=timeout,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            return client
+        except Exception:
+            client.close()
+            return None
+
+    @staticmethod
+    def _shell_login(channel, text: str, username: str, password: str) -> str:
+        """
+        Answer Login:/Password: asked inside the shell. Returns what the device printed;
+        raises AuthenticationException when it asks again (credential rejected).
+        """
+        out = ""
+        sent_user = sent_pass = False
+        for _ in range(4):
+            tail = clean_ansi(text).rstrip()
+            if re.search(_SHELL_PASSWORD_PROMPT, tail, re.I):
+                if sent_pass:
+                    raise paramiko.ssh_exception.AuthenticationException("in-shell login rejected")
+                channel.send((password or "") + "\r\n")
+                sent_pass = True
+            elif re.search(_SHELL_LOGIN_PROMPT, tail, re.I):
+                if sent_user:
+                    raise paramiko.ssh_exception.AuthenticationException("in-shell login rejected")
+                channel.send((username or "") + "\r\n")
+                sent_user = True
+            else:
+                break
+            # Read until the next question or a prompt: the echoed username comes first
+            text = ""
+            deadline = time.time() + 4.0
+            while time.time() < deadline:
+                text += _read_channel_response(channel, timeout=0.6)
+                t = clean_ansi(text).rstrip()
+                if (re.search(_SHELL_LOGIN_PROMPT, t, re.I) or re.search(_SHELL_PASSWORD_PROMPT, t, re.I)
+                        or re.search(r"[>#]$", t)):
+                    break
+            out += text
+        if re.search(r"fail|incorrect|invalid|denied", clean_ansi(out), re.I) and not re.search(r"[>#]\s*$", clean_ansi(out)):
+            raise paramiko.ssh_exception.AuthenticationException("in-shell login rejected")
+        return out
+
     @classmethod
     def _probe_via_ssh(cls, host: str, port: int, username: str, password: str, timeout: int) -> Tuple[Optional[str], str]:
         """Probe device by opening SSH session and inspecting pre-auth / post-auth output and prompt"""
@@ -542,17 +712,26 @@ class AutoDetectService:
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         try:
-            client.connect(
-                hostname=host,
-                port=port,
-                username=username,
-                password=password,
-                timeout=timeout,
-                banner_timeout=timeout,
-                auth_timeout=timeout,
-                allow_agent=False,
-                look_for_keys=False,
-            )
+            try:
+                client.connect(
+                    hostname=host,
+                    port=port,
+                    username=username,
+                    password=password,
+                    timeout=timeout,
+                    banner_timeout=timeout,
+                    auth_timeout=timeout,
+                    allow_agent=False,
+                    look_for_keys=False,
+                )
+            except paramiko.ssh_exception.AuthenticationException as auth_err:
+                # Raisecom ROS (some releases) takes the SSH session with "none" auth and
+                # asks Login: / Password: inside the shell - Netmiko's raisecom driver
+                # connects the same way. Anything else still fails as a bad login.
+                client.close()
+                client = cls._connect_noauth(host, port, username, timeout)
+                if client is None:
+                    raise auth_err
 
             # 1. Check SSH transport banner
             transport = client.get_transport()
@@ -592,7 +771,16 @@ class AutoDetectService:
 
             # Read initial buffer (Welcome banners)
             initial_buffer = _read_channel_response(channel, timeout=1.0)
+            if not initial_buffer.strip():
+                channel.send("\r\n")
+                initial_buffer += _read_channel_response(channel, timeout=1.5)
             initial_cleaned = clean_ansi(initial_buffer)
+
+            tail = initial_cleaned.rstrip()
+            shell_login = bool(re.search(_SHELL_LOGIN_PROMPT, tail, re.I) or re.search(_SHELL_PASSWORD_PROMPT, tail, re.I))
+            if shell_login:
+                initial_buffer += cls._shell_login(channel, initial_cleaned, username, password)
+                initial_cleaned = clean_ansi(initial_buffer)
 
             # Some switches (Huawei VRP with a default password, Comware) ask to change the
             # password right after login and hold the CLI until answered, so there is no prompt
@@ -603,9 +791,17 @@ class AutoDetectService:
                 initial_buffer += _read_channel_response(channel, timeout=1.5)
                 initial_cleaned = clean_ansi(initial_buffer)
 
-            # Check initial banner text
-            hit = match_login_banner(initial_cleaned)
-            if hit:
+            # Check initial banner text - without the prompt line (a hostname is not a vendor)
+            # or the username echoed by an in-shell login
+            banner_lines = [line for line in initial_cleaned.splitlines() if line.strip()][:-1]
+            banner_text = "\n".join(banner_lines)
+            if username:
+                banner_text = re.sub(re.escape(username), " ", banner_text, flags=re.I)
+            hit = match_login_banner(banner_text)
+            # Cisco and Raisecom share the CLI and a MOTD is free text ("Raisecom OLT uplink"
+            # on a Cisco): for those two the banner is only a hint, 'show version' decides
+            banner_hint = hit if hit and hit[0] in ("cisco_ios", "raisecom_roap") else None
+            if hit and not banner_hint:
                 client.close()
                 return hit[0], f"Detected from {hit[1]} login banner"
 
@@ -635,9 +831,7 @@ class AutoDetectService:
             # Check Bracket Prompt Signature: <Hostname> or [Hostname] (Shared by Huawei VRP and HP/H3C Comware)
             # Exclude '@' to prevent colliding with MikroTik/Linux prompts
             if re.search(r"^<[^>]+>$", last_line) or re.search(r"^\[[^\]@]+\]$", last_line):
-                channel.send("display version\r\n")
-                cmd_out = _read_channel_response(channel, timeout=1.2)
-                cmd_cleaned = clean_ansi(cmd_out)
+                cmd_cleaned = _run_probe_command(channel, "display version", timeout=3.0)
                 client.close()
                 if re.search(r"H3C|Comware|HPE", cmd_cleaned, re.I):
                     return "hp_comware", f"Confirmed HP/H3C Comware via 'display version' probe (Prompt: {last_line})"
@@ -646,9 +840,7 @@ class AutoDetectService:
             # 4. If prompt looks like Cisco / Generic (`>` or `#`), run Dual Active Command Probing
             if re.search(r"^[\w\.\-\(\)\/]+[>#]$", last_line):
                 # Probe 1: Send Huawei command `display version`
-                channel.send("display version\r\n")
-                cmd_out1 = _read_channel_response(channel, timeout=1.0)
-                cmd_cleaned1 = clean_ansi(cmd_out1)
+                cmd_cleaned1 = _run_probe_command(channel, "display version", timeout=3.0)
                 if re.search(r"Huawei|VRP|CloudEngine|Quidway", cmd_cleaned1, re.I):
                     client.close()
                     return "huawei", "Confirmed Huawei VRP via 'display version' probe"
@@ -657,29 +849,32 @@ class AutoDetectService:
                     return "hp_comware", "Confirmed HP/H3C Comware via 'display version' probe"
 
                 # Probe 2: Send Cisco command `show version`
-                channel.send("show version\r\n")
-                cmd_out2 = _read_channel_response(channel, timeout=1.0)
-                cmd_cleaned2 = clean_ansi(cmd_out2)
+                cmd_cleaned2 = _run_probe_command(channel, "show version", timeout=4.0)
                 client.close()
 
-                if re.search(r"NX-OS|Nexus", cmd_cleaned2, re.I):
-                    return "cisco_nxos", "Confirmed Cisco NX-OS via 'show version' probe"
-                elif re.search(r"Raisecom|\bROS\b|ISCOM|RAX|iTN|RC\d{3}|Gazelle", cmd_cleaned2, re.I):
-                    return "raisecom_roap", "Confirmed Raisecom via 'show version' probe"
-                elif re.search(r"Cisco|IOS-XE|Cisco IOS|Internetwork Operating System", cmd_cleaned2, re.I):
-                    return "cisco_ios", "Confirmed Cisco IOS via 'show version' probe"
-                elif re.search(r"Aruba|ProCurve", cmd_cleaned2, re.I):
-                    return "aruba_os", "Confirmed Aruba/ProCurve via 'show version' probe"
-                elif re.search(r"JUNOS|Juniper", cmd_cleaned2, re.I):
-                    return "juniper_junos", "Confirmed Juniper JunOS via 'show version' probe"
-                elif re.search(r"Huawei|VRP", cmd_cleaned2, re.I):
-                    return "huawei", "Detected Huawei VRP from command output"
-                elif re.search(r"RouterOS|MikroTik", cmd_cleaned2, re.I):
-                    return "mikrotik_routeros", "Confirmed MikroTik via command probe"
-                elif not re.search(r"command not found|invalid|unknown|syntax error", cmd_cleaned2, re.I):
-                    return "cisco_ios", f"Prompt '{last_line}' matched standard Cisco CLI"
+                # Cisco and Raisecom share this CLI: the vendor must be named by the output.
+                # Cisco IOS always prints "Cisco IOS Software" / "Cisco Internetwork Operating
+                # System"; Raisecom prints "Raisecom" or at least its ROS_ version / model.
+                named = match_version_output(cmd_cleaned2, prompt_hostname(last_line))
+                if named == "raisecom_roap":
+                    return named, "Confirmed Raisecom ROS via 'show version' probe"
+                if named == "cisco_ios":
+                    return named, "Confirmed Cisco IOS via 'show version' probe"
+                if named:
+                    return named, f"Confirmed {named} via 'show version' probe"
+                if shell_login:
+                    # Cisco-style CLI that asked Login:/Password: inside the SSH shell: Raisecom ROS
+                    return "raisecom_roap", f"Cisco-style prompt '{last_line}' after a login inside the SSH shell (Raisecom ROS)"
+                if re.search(_RAISECOM_PROMPT, last_line, re.I):
+                    return "raisecom_roap", f"Raisecom factory hostname in prompt '{last_line}', 'show version' named no other vendor"
+                if banner_hint:
+                    return banner_hint[0], f"{banner_hint[1]} login banner, 'show version' named no other vendor"
+                if not re.search(r"command not found|invalid|unknown|syntax error", cmd_cleaned2, re.I):
+                    return "cisco_ios", f"Prompt '{last_line}' matched standard Cisco CLI ('show version' named no vendor)"
 
             client.close()
+            if banner_hint:
+                return banner_hint[0], f"Detected from {banner_hint[1]} login banner"
         except Exception as e:
             try:
                 client.close()
@@ -690,37 +885,44 @@ class AutoDetectService:
         return None, "SSH probe inconclusive"
 
     @classmethod
-    def _probe_prioritized_cli(cls, device: DeviceCredentials, telnet: bool = False) -> Tuple[Optional[str], str]:
+    def _probe_prioritized_cli(
+        cls, device: DeviceCredentials, telnet: bool = False, prefer: Optional[str] = None
+    ) -> Tuple[Optional[str], str]:
         """
         Fast prioritized probe testing the top enterprise network vendors
         in direct priority (Huawei, Cisco NX-OS, Cisco IOS, Aruba, HP Comware, Juniper, Raisecom, MikroTik)
-        without looping 40+ vendors. With telnet=True the telnet drivers are used (and the
-        vendors without one skipped). Returns (None, _ALL_LOGINS_REJECTED) when every
+        without looping 40+ vendors; `prefer` moves one vendor to the front. The output is
+        matched against every vendor, so a Raisecom answering the Cisco driver's
+        'show version' is named right away. With telnet=True the telnet drivers are used (and
+        the vendors without one skipped). Returns (None, _ALL_LOGINS_REJECTED) when every
         attempt failed on the login itself, so the caller can tell bad credentials apart.
         """
-        from netmiko import ConnectHandler
         from netmiko.exceptions import NetmikoAuthenticationException
+        from app.services.netmiko_service import open_connection
         from netmiko.ssh_dispatcher import platforms
 
-        # Priority test sequence: (vendor_driver, probe_command, match_pattern)
+        # Priority test sequence: (vendor_driver, probe_command). The output decides the
+        # vendor, not the driver that logged in: Cisco and Raisecom drivers log in to each other
         test_profiles = [
-            ("huawei", "display version", r"Huawei|VRP \(R\)|CloudEngine"),
-            ("cisco_nxos", "show version", r"NX-OS|Nexus"),
-            ("cisco_ios", "show version", r"Cisco IOS Software|Cisco Systems|IOS-XE"),
-            ("aruba_os", "show version", r"ArubaOS|ProCurve"),
-            ("hp_comware", "display version", r"H3C|Comware|HPE Comware"),
-            ("juniper_junos", "show version", r"JUNOS"),
-            ("raisecom_roap", "show version", r"Raisecom|\bROS\b|ISCOM|RAX|iTN|RC\d{3}|Gazelle"),
-            ("mikrotik_routeros", "/system resource print", r"RouterOS|MikroTik"),
+            ("huawei", "display version"),
+            ("cisco_nxos", "show version"),
+            ("cisco_ios", "show version"),
+            ("aruba_os", "show version"),
+            ("hp_comware", "display version"),
+            ("juniper_junos", "show version"),
+            ("raisecom_roap", "show version"),
+            ("mikrotik_routeros", "/system resource print"),
         ]
+        if prefer:
+            test_profiles.sort(key=lambda p: p[0] != prefer)
         if telnet:
             test_profiles = [
-                (cls.telnet_driver(v), cmd, pat) for v, cmd, pat in test_profiles
+                (cls.telnet_driver(v), cmd) for v, cmd in test_profiles
                 if cls.telnet_driver(v).endswith("_telnet") and cls.telnet_driver(v) in platforms
             ]
 
         attempts = rejected = 0
-        for vendor, cmd, pattern in test_profiles:
+        for vendor, cmd in test_profiles:
             params = {
                 "device_type": vendor,
                 "host": device.host,
@@ -735,10 +937,14 @@ class AutoDetectService:
 
             attempts += 1
             try:
-                with ConnectHandler(**params) as conn:
+                with open_connection(**params) as conn:
                     out = conn.send_command(cmd, read_timeout=4)
-                    if re.search(pattern, out, re.I):
-                        return vendor, f"Detected {vendor} via prioritized probe ({cmd})"
+                    named = match_version_output(out, getattr(conn, "base_prompt", "") or "")
+                    if named:
+                        named = cls.telnet_driver(named) if telnet else named
+                        if named == vendor:
+                            return named, f"Detected {named} via prioritized probe ({cmd})"
+                        return named, f"Detected {named} from '{cmd}' output while probing as {vendor}"
             except NetmikoAuthenticationException:
                 rejected += 1
                 continue

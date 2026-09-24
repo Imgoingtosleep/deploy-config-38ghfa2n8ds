@@ -20,7 +20,7 @@ file_lock = threading.Lock()
 COMMAND_KEYS = ["pager_disable", "sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
 # Commands whose output can carry a user regex; 'pager_disable' prints nothing worth reading
 REGEX_KEYS = ["sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
-VALID_PARSERS = ["huawei", "cisco"]
+VALID_PARSERS = ["huawei", "cisco", "raisecom"]
 
 DEFAULT_PROFILES = [
     {
@@ -58,6 +58,26 @@ DEFAULT_PROFILES = [
         },
         "created_at": "2026-09-16T00:00:00Z",
         "updated_at": "2026-09-16T00:00:00Z",
+    },
+    {
+        "id": "cmdprof-raisecom",
+        "name": "Raisecom ROS",
+        "description": "show lldp remote commands for Raisecom ROS (ISCOM / RAX / iTN series)",
+        "parser": "raisecom",
+        "priority": 3,
+        "enabled": True,
+        "commands": {
+            "pager_disable": "terminal page-break disable",
+            "sysname": "show running-config | include hostname",
+            "version": "show version",
+            "lldp_brief": "show lldp remote",
+            # No '{intf}': ROS names ports differently per release (gigaethernet 1/1/1,
+            # port-list 1), so the detail of every port is read once and split by port
+            "lldp_detail": "show lldp remote detail",
+            "lldp_full": "show lldp remote detail",
+        },
+        "created_at": "2026-09-24T00:00:00Z",
+        "updated_at": "2026-09-24T00:00:00Z",
     },
 ]
 

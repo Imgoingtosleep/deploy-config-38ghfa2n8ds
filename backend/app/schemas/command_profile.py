@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 # Parsers available for LLDP output. The command set is editable, but the parser
 # that reads the output has to be implemented in code, so it is a fixed choice.
-PARSERS = ["huawei", "cisco"]
+PARSERS = ["huawei", "cisco", "raisecom"]
 
 
 class CommandSet(BaseModel):
