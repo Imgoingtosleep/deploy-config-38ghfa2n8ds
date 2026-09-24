@@ -102,7 +102,7 @@ class SweepTest(unittest.TestCase):
     def sweep(self, outcomes, first=None):
         tried = []
 
-        def fake_collect(device, depth, driver=None, cmd_profiles=None):
+        def fake_collect(device, depth, driver=None, cmd_profiles=None, sweep_parsers=None):
             tried.append(driver)
             return outcomes[len(tried) - 1]
 
@@ -118,6 +118,26 @@ class SweepTest(unittest.TestCase):
 
     def test_a_known_driver_whose_commands_are_rejected_is_not_swept(self):
         self.assertEqual(self.sweep([result(rejected=True), result()], first="huawei"), ["huawei"])
+
+    def test_unknown_jumps_to_the_vendor_the_version_output_names(self):
+        # Cisco driver logs in to a Raisecom and its commands are not rejected, but
+        # 'show version' says Raisecom: next login is Raisecom's, Huawei is skipped
+        raisecom = {"id": "c-rc", "name": "Raisecom ROS", "parser": "raisecom"}
+        tried = []
+
+        def fake_collect(device, depth, driver=None, cmd_profiles=None, sweep_parsers=None):
+            tried.append(driver)
+            self.assertEqual(sweep_parsers, {"cisco", "huawei", "raisecom"})
+            if driver == "cisco_ios":
+                return dict(result(rejected=True), vendor_hint="raisecom")
+            return result()
+
+        dev = DeviceCredentials(host="10.254.254.254", device_type="unknown", username="u", password="p")
+        with patch("app.services.command_profile_service.CommandProfileService.resolve_ordered",
+                   return_value=[CISCO, HUAWEI, raisecom]), \
+                patch.object(LldpService, "collect_device", side_effect=fake_collect):
+            LldpService.collect_device_sweep(dev, 0, None, None)
+        self.assertEqual(tried, ["cisco_ios", "raisecom_roap"])
 
     def test_unknown_goes_on_until_a_driver_accepts_the_commands(self):
         self.assertEqual(self.sweep([result(rejected=True), result()]), ["huawei", "cisco_ios"])

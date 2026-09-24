@@ -113,6 +113,15 @@ PARSER_DRIVERS = {
 }
 
 
+# Command profile parser for a driver the version output names (reverse of PARSER_DRIVERS)
+DRIVER_PARSERS = {
+    "huawei": "huawei",
+    "cisco_ios": "cisco",
+    "cisco_nxos": "cisco",
+    "raisecom_roap": "raisecom",
+}
+
+
 def cli_rejected(text: str) -> bool:
     """True when the CLI answered with a syntax error instead of running the command"""
     return bool(text) and bool(_CLI_REJECT_RE.search(text))
@@ -576,12 +585,20 @@ class LldpService:
         results: List[Dict[str, str]] = []
         # A block header is a line naming the local port, not a 'PortId :' / 'PortDesc :' field
         header = re.compile(
-            r"^[ \t]*(?:Local[ \t]*)?(?:Port|Interface|Intf)(?![ \t]*(?:Id|Desc|Description|Subtype|Name)\b)"
-            r"[ \t:]+(\S[^\r\n]*?)[ \t]*(?:has[ \t]+\d+[ \t]+neighbors?(?:\(s\))?)?[ \t]*:?[ \t]*$",
+            # 'gigaethernet1/1/1 has  1 remotes:' (ROS 5) / 'GE1/1/5 has 1 neighbor(s):'
+            r"^[ \t]*(?:Local[ \t]*)?(?:(?:Port|Interface|Intf)[ \t:]+)?(\S+)[ \t]+has[ \t]+\d+[ \t]+"
+            r"(?:neighbors?|remotes?)(?:\(s\))?[ \t]*:?[ \t]*$"
+            # 'Port gigaethernet1/1/1:' / 'Port 1:'
+            r"|^[ \t]*(?:Local[ \t]*)?(?:Port|Interface|Intf)(?![ \t]*(?:Id|Desc|Description|Subtype|Name)\b)"
+            r"[ \t:]+(\S[^\r\n]*?)[ \t]*:?[ \t]*$",
             re.MULTILINE | re.IGNORECASE,
         )
-        parts = header.split(output or "")
-        blocks = [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts), 2)]
+        text = output or ""
+        heads = list(header.finditer(text))
+        blocks = [
+            ((m.group(1) or m.group(2) or "").strip(), text[m.end(): heads[i + 1].start() if i + 1 < len(heads) else len(text)])
+            for i, m in enumerate(heads)
+        ]
         if not blocks and default_local_port:
             blocks = [(default_local_port, output or "")]
         for local_port, content in blocks:
@@ -629,12 +646,18 @@ class LldpService:
         command_profile_ids: Optional[List[str]] = None,
         driver: Optional[str] = None,
         cmd_profiles: Optional[List[Dict[str, Any]]] = None,
+        sweep_parsers: Optional[Set[str]] = None,
     ) -> Dict[str, Any]:
         """
         SSH to one device -> 'display lldp neighbor brief' -> loop every local
         interface that has a neighbor with 'display lldp neighbor interface <if>'.
 
         driver:       netmiko device type to log in with (chosen by collect_device_sweep)
+        sweep_parsers: set while sweeping an Unknown device - the parsers of the command
+                      profiles the sweep has. When the version output names one of those
+                      vendors and it is not this profile's, this profile is the wrong one
+                      even if the CLI did not reject its commands (Raisecom takes the Cisco
+                      driver and 'show version'); 'vendor_hint' tells the sweep where to go.
         cmd_profiles: command profiles to run, already resolved (the sweep passes
                       only the ones whose parser matches the driver)
         """
@@ -649,6 +672,7 @@ class LldpService:
         error = None
         used_profile = ""
         version_output = ""
+        vendor_hint = ""
 
         from app.services.command_profile_service import CommandProfileService
         if cmd_profiles is None:
@@ -747,6 +771,21 @@ class LldpService:
                         log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from {model_source}")
                     except Exception as e:
                         log_lines.append(f"Step 1b: '{cmds.get('version')}' failed: {e}")
+
+                    if sweep_parsers:
+                        from app.services.autodetect_service import match_version_output
+                        named = DRIVER_PARSERS.get(match_version_output(ver_raw, sysname) or "")
+                        if named and named != parser and named in sweep_parsers:
+                            # The CLI took these commands, but the device says it is another
+                            # vendor that has its own command profile: use that one instead
+                            vendor_hint = named
+                            rejected_profiles += 1
+                            neighbors = []
+                            log_lines.append(
+                                f"Step 1c: '{cmds['version']}' names a {named} device, not {parser}: "
+                                f"skipping [{cprof['name']}] for the {named} command profile"
+                            )
+                            continue
 
                     brief_raw = NetmikoService.clean_cli_output(
                         net_connect.send_command(cmds["lldp_brief"], read_timeout=settings.DEFAULT_TIMEOUT)
@@ -889,6 +928,8 @@ class LldpService:
             "neighbors": neighbors,
             # Every command profile was rejected: this driver / vendor is the wrong one
             "commands_rejected": bool(cmd_profiles) and rejected_profiles >= len(cmd_profiles),
+            # Vendor the version output named (Unknown sweep only): the sweep tries it next
+            "vendor_hint": vendor_hint,
             "log": "\n".join(log_lines),
             "raw_output": "\n\n".join(raw_parts),
             "execution_time_seconds": round(time.time() - start, 2),
@@ -1020,11 +1061,18 @@ class LldpService:
 
         logs: List[str] = []
         result: Optional[Dict[str, Any]] = None
+        # Unknown: the version output may name the vendor, so the sweep can go straight to it
+        sweep_parsers = {p["parser"] for p in profiles} if not driver else None
         for attempt, (drv, drv_profiles) in enumerate(plan, 1):
-            result = cls.collect_device(device, depth, driver=drv, cmd_profiles=drv_profiles)
+            result = cls.collect_device(device, depth, driver=drv, cmd_profiles=drv_profiles, sweep_parsers=sweep_parsers)
             logs.append(result["log"])
             if not cls._other_driver_may_help(result):
                 break
+            hint = result.get("vendor_hint")
+            if hint:
+                later = [i for i in range(attempt, len(plan)) if any(p["parser"] == hint for p in plan[i][1])]
+                if later and later[0] != attempt:
+                    plan.insert(attempt, plan.pop(later[0]))
             if attempt < len(plan):
                 reason = "rejected the commands" if result["success"] else "could not be used"
                 logs.append(f"--- Driver [{drv}] {reason}, retrying as [{plan[attempt][0]}] ---")
