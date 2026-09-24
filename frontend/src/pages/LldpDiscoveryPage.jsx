@@ -66,7 +66,6 @@ const NEIGHBOR_COLUMNS = [
 const SCAN_STATUSES = [
   { key: 'SUCCESS', label: 'Success', tone: 'ok' },
   { key: 'NO_LLDP', label: 'No LLDP', tone: 'warn' },
-  { key: 'DUPLICATE', label: 'Duplicate', tone: 'muted' },
   { key: 'AUTH_FAILED', label: 'Auth Failed', tone: 'fail' },
   { key: 'FAILED', label: 'Failed', tone: 'fail' },
   { key: 'UNREACHABLE', label: 'Unreachable', tone: 'muted' },
@@ -580,6 +579,8 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     const q = search.trim().toLowerCase();
     return report.hosts.filter(
       (h) =>
+        // A device found on two IPs is one row: the other IP shows as '+IP' on it
+        !h.same_device_as &&
         !(isScanReport && hideUnreachable && h.status === 'UNREACHABLE') &&
         (!q || [h.hostname, h.ip, h.status, h.detail].some((v) => String(v || '').toLowerCase().includes(q)))
     );
@@ -933,6 +934,13 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               </span>
             ))}
           </div>
+          {(scanStatus.stats?.SAME_DEVICE ?? 0) > 0 && (
+            <div className="lldp-hint">
+              {(scanStatus.stats.SUCCESS ?? 0) + (scanStatus.stats.NO_LLDP ?? 0)} device(s) on{' '}
+              {(scanStatus.stats.SUCCESS ?? 0) + (scanStatus.stats.NO_LLDP ?? 0) + scanStatus.stats.SAME_DEVICE} IP(s):{' '}
+              {scanStatus.stats.SAME_DEVICE} IP(s) belong to a device already found on another IP
+            </div>
+          )}
           <div className="lldp-hint">
             Log directory: <code>{scanStatus.log_dir}</code>
           </div>
@@ -971,8 +979,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               <span className="lldp-stat-value">{report.total_hosts}</span>
             </div>
             <div className="lldp-stat success">
-              <span className="lldp-stat-label">{isScanReport ? 'Logged In' : 'Success Hosts'}</span>
+              <span className="lldp-stat-label">{isScanReport ? 'Devices Logged In' : 'Success Hosts'}</span>
               <span className="lldp-stat-value">{report.success_hosts}</span>
+              {report.same_device_ips > 0 && (
+                <span className="lldp-stat-note">+{report.same_device_ips} IP(s) of the same device(s)</span>
+              )}
             </div>
             <div className="lldp-stat failed">
               <span className="lldp-stat-label">Failed Hosts</span>
@@ -1128,8 +1139,28 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                       <React.Fragment key={key}>
                         <tr className="clickable" onClick={() => setExpandedHost(open ? null : key)}>
                           <td>{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
-                          <td>{h.hostname}</td>
-                          <td className="mono">{h.ip}</td>
+                          <td>
+                            {h.hostname}
+                            {h.same_name_as?.length > 0 && (
+                              <span
+                                className="lldp-name-clash"
+                                title={`Another device uses this hostname: ${h.same_name_as.join(', ')}. Rename one - the topology joins devices by name.`}
+                              >
+                                same name
+                              </span>
+                            )}
+                          </td>
+                          <td className="mono">
+                            {h.ip}
+                            {h.other_ips?.length > 0 && (
+                              <span
+                                className="lldp-other-ips"
+                                title={`Same device (same name, model and LLDP neighbors) also answered on ${h.other_ips.join(', ')}`}
+                              >
+                                {' '}+{h.other_ips.join(' +')}
+                              </span>
+                            )}
+                          </td>
                           <td>{h.model || '-'}</td>
                           <td>{h.command_profile || '-'}</td>
                           <td>{h.depth}</td>
@@ -1151,6 +1182,13 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                                 {h.log || h.detail || ''}
                                 {'\n\n' + '='.repeat(50) + '\nRAW TERMINAL OUTPUT:\n' + '='.repeat(50) + '\n'}
                                 {h.raw_output || 'No Data'}
+                                {(report.hosts || [])
+                                  .filter((o) => o.same_device_as === h.ip)
+                                  .map(
+                                    (o) =>
+                                      `\n\n${'#'.repeat(50)}\nSAME DEVICE VIA ${o.ip}\n${'#'.repeat(50)}\n${o.log || o.detail || ''}`
+                                  )
+                                  .join('')}
                               </pre>
                             </td>
                           </tr>

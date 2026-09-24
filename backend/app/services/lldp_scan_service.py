@@ -43,12 +43,13 @@ SCAN_COLUMNS = [
 
 STATUS_SUCCESS = "SUCCESS"
 STATUS_NO_LLDP = "NO_LLDP"
-STATUS_DUPLICATE = "DUPLICATE"
+# Logged in, but it is a device already recorded under another IP (Vlanif / MEth in two subnets)
+STATUS_SAME_DEVICE = "SAME_DEVICE"
 STATUS_AUTH_FAILED = "AUTH_FAILED"
 STATUS_FAILED = "FAILED"
 STATUS_UNREACHABLE = "UNREACHABLE"
-ALL_STATUSES = [STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_DUPLICATE, STATUS_AUTH_FAILED, STATUS_FAILED, STATUS_UNREACHABLE]
-LOGGED_IN_STATUSES = {STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_DUPLICATE}
+ALL_STATUSES = [STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_SAME_DEVICE, STATUS_AUTH_FAILED, STATUS_FAILED, STATUS_UNREACHABLE]
+LOGGED_IN_STATUSES = {STATUS_SUCCESS, STATUS_NO_LLDP, STATUS_SAME_DEVICE}
 # Could not get in with this profile: worth one more sweep with the next priority profile.
 # UNREACHABLE is not here - another credential cannot fix a closed port.
 RETRYABLE_STATUSES = {STATUS_AUTH_FAILED, STATUS_FAILED}
@@ -333,7 +334,7 @@ class LldpScanService:
                         for n in res["neighbors"]:
                             ip = n.get("Remote IP")
                             name = n.get("Remote Device") or ""
-                            if not ip or ip in visited_ips or name in st["seen_names"]:
+                            if not ip or ip in visited_ips or LldpService.name_key(name) in st["seen_names"]:
                                 continue
                             visited_ips.add(ip)
                             if in_ranges(ip, p["exclude_ranges"]):
@@ -514,11 +515,14 @@ class LldpScanService:
         res["credential"] = dev.active_credential_name or ""
         if res["success"]:
             with JobService._lock:
-                first_ip = st["seen_names"].setdefault(res["hostname"], res["ip"])
-            if first_ip != res["ip"]:
-                # Same switch reached via another IP (Vlanif / MEth): keep the log, drop duplicate rows
-                res["status"] = STATUS_DUPLICATE
-                res["detail"] = f"Same sysname as {first_ip}; {res['neighbors_found']} neighbor row(s) not added again"
+                first = LldpService.link_same_device(res, st["seen_names"])
+            if first:
+                # One device answering on another IP (Vlanif / MEth): the first IP's row carries
+                # this IP in 'other_ips'; this login keeps its log but not its rows again
+                res["status"] = STATUS_SAME_DEVICE
+                res["same_device_as"] = first["ip"]
+                res["detail"] = (f"Same device as {first['ip']} (same name, model and LLDP neighbors); "
+                                 f"{res['neighbors_found']} neighbor row(s) not added again")
                 res["neighbors"] = []
                 res["neighbors_found"] = 0
             elif res["neighbors_found"]:
@@ -527,6 +531,9 @@ class LldpScanService:
             else:
                 res["status"] = STATUS_NO_LLDP
                 res["detail"] = "Logged in but no LLDP neighbor (LLDP disabled or nothing connected)"
+            if res.get("same_name_as") and not first:
+                res["detail"] += (f". Another device has the same hostname ({', '.join(res['same_name_as'])}) - "
+                                  f"consider renaming, the topology joins devices by name")
         else:
             diag = JobService.format_failure_diagnostic(res.get("error") or "", host_ip=res["ip"])
             if diag.startswith("Authentication Failed"):
@@ -567,7 +574,9 @@ class LldpScanService:
             "job_id": job.job_id,
             "status": job.status,
             "total_hosts": len(hosts),
-            "success_hosts": sum(stats[s] for s in LOGGED_IN_STATUSES),
+            # Devices, not IPs: a device that answered on two IPs counts once
+            "success_hosts": stats[STATUS_SUCCESS] + stats[STATUS_NO_LLDP],
+            "same_device_ips": stats[STATUS_SAME_DEVICE],
             "failed_hosts": stats[STATUS_AUTH_FAILED] + stats[STATUS_FAILED],
             "unreachable_hosts": stats[STATUS_UNREACHABLE],
             "total_lldp_rows": len(neighbors),

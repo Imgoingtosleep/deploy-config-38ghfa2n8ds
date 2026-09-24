@@ -1063,6 +1063,7 @@ class LldpService:
         visited_ips: Set[str] = set()
         visited_names: Set[str] = set()
         hosts: List[Dict[str, Any]] = []
+        seen_devices: Dict[str, List[Dict[str, Any]]] = {}
         # Log lines about the queue itself, appended to the first host of each wave
         queue_log: List[str] = []
 
@@ -1129,6 +1130,15 @@ class LldpService:
                 hosts.append(res)
                 if res["success"]:
                     visited_names.add(cls.name_key(res["hostname"]))
+                    first = cls.link_same_device(res, seen_devices)
+                    if first:
+                        # One device on two IPs: keep this login's log, not its rows again
+                        res["same_device_as"] = first["ip"]
+                        res["status"] = "Same device"
+                        res["detail"] = (f"Same device as {first['ip']} (same name, model and LLDP neighbors); "
+                                         f"{res['neighbors_found']} neighbor row(s) not added again")
+                        res["neighbors"] = []
+                        res["neighbors_found"] = 0
 
             if recursive and depth < max_depth:
                 # The whole wave is finished first, so every management IP it learned is
@@ -1180,17 +1190,74 @@ class LldpService:
 
         all_neighbors = [n for h in hosts for n in h["neighbors"]]
         cls.fill_remote_models(all_neighbors, hosts)
-        success = sum(1 for h in hosts if h["success"])
+        # Devices, not IPs: a device that answered on two IPs counts once
+        same_ips = sum(1 for h in hosts if h.get("same_device_as"))
+        success = sum(1 for h in hosts if h["success"]) - same_ips
         return {
             "total_hosts": len(hosts),
             "success_hosts": success,
-            "failed_hosts": len(hosts) - success,
+            "same_device_ips": same_ips,
+            "failed_hosts": len(hosts) - success - same_ips,
             "total_lldp_rows": len(all_neighbors),
             "overall_time_seconds": round(time.time() - start, 2),
             "neighbors": all_neighbors,
             "hosts": hosts,
             "topology": cls.build_topology(all_neighbors, hosts),
         }
+
+    # ---- One device answering on several IPs (Vlanif / MEth / loopback in several subnets) ----
+    _SERIAL_LINE_RE = re.compile(
+        r"^.*\b(?:serial\s*(?:number|no\.?)|system serial|esn|bar\s*code|(?:system|base|bridge)\s*mac(?:\s*address)?)\b.*$",
+        re.I | re.M,
+    )
+
+    @classmethod
+    def device_fingerprint(cls, host: Dict[str, Any]) -> Dict[str, Any]:
+        """What tells two logins apart: model, the LLDP neighbors seen, serial / MAC lines"""
+        return {
+            "model": (host.get("model") or "").strip().lower(),
+            "neighbors": frozenset(
+                (cls.intf_key(n.get("Local Port") or ""), cls.name_key(n.get("Remote Device") or ""))
+                for n in host.get("neighbors") or []
+            ),
+            "ids": frozenset(
+                re.sub(r"\s+", " ", m.group(0)).strip().lower()
+                for m in cls._SERIAL_LINE_RE.finditer(host.get("version_output") or "")
+            ),
+        }
+
+    @classmethod
+    def same_device(cls, a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+        """Two logged-in hosts are one device: same name, model and LLDP neighbors, and the
+        same serial / MAC lines when both version outputs print them. A factory name shared
+        by two boxes ('Raisecom', 'HUAWEI') is not enough on its own."""
+        if cls.name_key(a.get("hostname") or "") != cls.name_key(b.get("hostname") or ""):
+            return False
+        fa, fb = cls.device_fingerprint(a), cls.device_fingerprint(b)
+        if fa["model"] != fb["model"] or fa["neighbors"] != fb["neighbors"]:
+            return False
+        return not (fa["ids"] and fb["ids"]) or fa["ids"] == fb["ids"]
+
+    @classmethod
+    def link_same_device(cls, host: Dict[str, Any], seen: Dict[str, List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+        """
+        Register a logged-in host. Returns the host it is the same device as (that host
+        gets this IP in 'other_ips'), else None. A different device with the same name is
+        kept, and both carry 'same_name_as' so the name clash can be shown.
+        """
+        key = cls.name_key(host.get("hostname") or "")
+        if not key:
+            return None
+        known = seen.setdefault(key, [])
+        for first in known:
+            if cls.same_device(first, host):
+                first.setdefault("other_ips", []).append(host.get("ip") or "")
+                return first
+        for other in known:
+            other.setdefault("same_name_as", []).append(host.get("ip") or "")
+            host.setdefault("same_name_as", []).append(other.get("ip") or "")
+        known.append(host)
+        return None
 
     @staticmethod
     def version_from_raw(raw_output: str) -> str:
@@ -1263,8 +1330,12 @@ class LldpService:
 
         # SSH'd hosts first so their login IP and 'display version' model take priority
         for h in hosts:
-            if h.get("success") and h.get("status") != "DUPLICATE" and h.get("hostname"):
-                nodes[ensure(h["hostname"], h.get("ip", ""), h.get("model", ""))]["discovered"] = True
+            # A login that was the same device as an earlier IP adds nothing but that IP
+            if h.get("success") and not h.get("same_device_as") and h.get("hostname"):
+                node = nodes[ensure(h["hostname"], h.get("ip", ""), h.get("model", ""))]
+                node["discovered"] = True
+                if h.get("other_ips"):
+                    node["other_ips"] = list(h["other_ips"])
 
         # Backup for FQDN names the rule above keeps: 'X.<domain>' is the same box as a known 'X'
         def canonical(name: str) -> str:
@@ -1359,18 +1430,20 @@ class LldpService:
         ws2 = wb.create_sheet("Execution_Summary")
         write_sheet(
             ws2,
-            ["Hostname", "IP Address", "Model", "Depth", "Status", "Neighbors Found", "Time (s)"],
+            ["Hostname", "IP Address", "Other IPs", "Model", "Depth", "Status", "Neighbors Found", "Time (s)"],
             [
                 {
                     "Hostname": h.get("hostname"),
                     "IP Address": h.get("ip"),
+                    "Other IPs": ", ".join(h.get("other_ips") or []),
                     "Model": h.get("model", ""),
                     "Depth": h.get("depth", 0),
                     "Status": h.get("status"),
                     "Neighbors Found": h.get("neighbors_found", 0),
                     "Time (s)": h.get("execution_time_seconds"),
                 }
-                for h in hosts
+                # One row per device: its other IPs are in 'Other IPs'
+                for h in hosts if not h.get("same_device_as")
             ],
         )
 

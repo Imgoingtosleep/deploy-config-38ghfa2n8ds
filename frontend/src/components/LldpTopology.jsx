@@ -1878,7 +1878,7 @@ export default function LldpTopology({
                   style={{ cursor: 'pointer' }}
                 >
                   <title>
-                    {[node.hostname, node.ip, node.model, s.label, node.manual ? 'Added manually' : node.discovered ? 'SSH collected' : 'Seen via LLDP only']
+                    {[node.hostname, node.ip, node.other_ips?.length ? `also on ${node.other_ips.join(', ')}` : '', node.model, s.label, node.manual ? 'Added manually' : node.discovered ? 'SSH collected' : 'Seen via LLDP only']
                       .filter(Boolean)
                       .join('\n')}
                   </title>

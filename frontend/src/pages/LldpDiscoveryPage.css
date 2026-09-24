@@ -681,6 +681,26 @@
   font-size: 0.9rem;
 }
 
+.lldp-other-ips {
+  color: #64748b;
+  cursor: help;
+}
+
+.lldp-name-clash {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  color: #fcd34d;
+  cursor: help;
+}
+
+.lldp-stat-note {
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
 .lldp-detail {
   font-size: 0.7rem;
   color: #64748b;
