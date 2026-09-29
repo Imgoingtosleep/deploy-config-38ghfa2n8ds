@@ -9,7 +9,6 @@ const NOT_DRIVERS = new Set(['autodetect', 'unknown']);
 const FALLBACK_DRIVERS = [
   { label: 'Huawei VRP', value: 'huawei' },
   { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
-  { label: 'HP / H3C Comware', value: 'hp_comware' },
   { label: 'Raisecom ROS', value: 'raisecom_roap' },
 ];
 

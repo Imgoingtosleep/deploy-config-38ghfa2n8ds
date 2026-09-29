@@ -130,9 +130,6 @@ export default function DeviceForm({
     { label: 'Unknown (try every command profile)', value: 'unknown' },
     { label: 'Huawei VRP', value: 'huawei' },
     { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
-    { label: 'HP / H3C Comware', value: 'hp_comware' },
-    { label: 'Aruba OS-CX', value: 'aruba_os' },
-    { label: 'Juniper JunOS', value: 'juniper_junos' },
     { label: 'Raisecom ROS', value: 'raisecom_roap' },
   ]);
 

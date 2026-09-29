@@ -13,14 +13,7 @@ SUPPORTED_DEVICE_TYPES = [
     {"label": "Unknown (try every command profile)", "value": "unknown"},
     {"label": "Huawei VRP", "value": "huawei"},
     {"label": "Cisco IOS / IOS-XE", "value": "cisco_ios"},
-    {"label": "Cisco NX-OS", "value": "cisco_nxos"},
-    {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
-    {"label": "Juniper JunOS", "value": "juniper_junos"},
-    {"label": "HP / H3C Comware", "value": "hp_comware"},
     {"label": "Raisecom ROS", "value": "raisecom_roap"},
-    {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},
-    {"label": "Linux / Cumulus", "value": "linux"},
-    {"label": "Generic SSH / Paramiko", "value": "generic_termserver"},
 ]
 
 
