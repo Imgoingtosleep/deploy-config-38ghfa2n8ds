@@ -13,73 +13,33 @@ from typing import Any, Dict
 
 from nornir.core.task import Task
 
-FAILED_RE = re.compile(
-    r"\b(error|failed|failure|invalid|incomplete|unrecognized|aborted|unsuccessful)\b",
-    re.IGNORECASE,
-)
+from app.core.driver_registry import DriverRegistry, FAILED_RE
 
 
 def _family(device_type: str) -> str:
-    dev = (device_type or "").lower()
-    if "huawei" in dev:
-        return "huawei"
-    if "juniper" in dev or "junos" in dev:
-        return "juniper"
-    if "aruba" in dev:
-        return "aruba"
-    if "cisco" in dev:
-        return "cisco"
-    return "other"
+    return DriverRegistry.get_family(device_type)
 
 
 def save_command(device_type: str) -> str:
     """The CLI command that saves the config on this driver"""
-    return {"huawei": "save", "juniper": "commit", "cisco": "write memory", "aruba": "write memory"}.get(
-        _family(device_type), "save (driver default)"
-    )
+    return DriverRegistry.get_save_command(device_type)
 
 
 def save_kwargs(device_type: str) -> Dict[str, Any]:
     """
     Arguments for Netmiko save_config():
-    - Huawei 'save' asks "Continue? [Y/N]" -> answered 'y' (Netmiko's Huawei driver waits for it)
-    - Cisco / Aruba 'write memory' does not ask; confirm=True there would type a stray 'y'
-      on the prompt, so it stays off
-    - other drivers (HP Comware 'save force', ...) keep Netmiko's own default
+    Looked up from the centralized DriverRegistry.
     """
-    fam = _family(device_type)
-    if fam == "huawei":
-        return {"cmd": "save", "confirm": True, "confirm_response": "y"}
-    if fam in ("cisco", "aruba"):
-        return {"cmd": "write memory", "confirm": False, "confirm_response": ""}
-    return {}
+    return DriverRegistry.get_save_kwargs(device_type)
 
 
 def _saved_ok(device_type: str, output: str) -> bool:
-    fam = _family(device_type)
-    if fam == "huawei":
-        # "Info: Save the configuration successfully." / "Configuration file had been saved successfully"
-        return bool(re.search(r"success", output, re.IGNORECASE))
-    if fam == "juniper":
-        return "commit complete" in output.lower()
-    if fam == "aruba":
-        return bool(re.search(r"success|\[OK\]", output, re.IGNORECASE))
-    if fam == "cisco":
-        # Cisco IOS / XE / NX-OS: "[OK]", "Copy complete", "N bytes copied"
-        return bool(re.search(r"\[OK\]|copy complete|bytes copied", output, re.IGNORECASE))
-    # Other drivers: accept any usual "done" wording
-    return bool(re.search(r"success|\[OK\]|complete|saved", output, re.IGNORECASE))
+    return DriverRegistry.check_save_output(device_type, output)["success"]
 
 
 def check_save_output(device_type: str, output: str) -> Dict[str, Any]:
     """{success, error} for what the device printed after the save command"""
-    output = output or ""
-    if _saved_ok(device_type, output):
-        return {"success": True, "error": None}
-    failed = FAILED_RE.search(output)
-    if failed:
-        return {"success": False, "error": f"Device refused the save ({failed.group(0)})"}
-    return {"success": False, "error": "Device did not confirm the save; startup-config may not be updated"}
+    return DriverRegistry.check_save_output(device_type, output)
 
 
 def _result(device_type: str, output: str) -> Dict[str, Any]:

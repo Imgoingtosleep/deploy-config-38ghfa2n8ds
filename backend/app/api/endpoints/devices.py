@@ -5,22 +5,24 @@ from app.services.netmiko_service import NetmikoService
 
 router = APIRouter()
 
+from app.core.driver_registry import DriverRegistry
+
 # SSH drivers only: a device on port 23 is connected with the telnet variant of its
 # driver automatically (huawei -> huawei_telnet), so telnet needs no entries of its own
-SUPPORTED_DEVICE_TYPES = [
-    {"label": "Auto Detect (Recommended)", "value": "autodetect"},
-    # Auto-detect could not name the vendor: LLDP tries every command profile in order
-    {"label": "Unknown (try every command profile)", "value": "unknown"},
-    {"label": "Huawei VRP", "value": "huawei"},
-    {"label": "Cisco IOS / IOS-XE", "value": "cisco_ios"},
-    {"label": "Raisecom ROS", "value": "raisecom_roap"},
-]
+SUPPORTED_DEVICE_TYPES = DriverRegistry.get_supported_device_types()
 
 
 @router.get("/types")
 def get_supported_device_types():
-    """Return supported Netmiko device drivers"""
-    return {"device_types": SUPPORTED_DEVICE_TYPES}
+    """Return supported Netmiko device drivers from the centralized DriverRegistry"""
+    return {"device_types": DriverRegistry.get_supported_device_types()}
+
+
+@router.get("/drivers")
+def get_all_drivers():
+    """Return full driver catalog with metadata from the centralized DriverRegistry"""
+    return {"drivers": [d.dict() for d in DriverRegistry.get_catalog().values()]}
+
 
 @router.get("/serial-ports")
 def get_available_serial_ports():

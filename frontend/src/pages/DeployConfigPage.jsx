@@ -59,6 +59,7 @@ import {
   deleteConfigTemplate,
   getHiddenBuiltinTemplates,
   hideBuiltinTemplate,
+  getSupportedDeviceTypes,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
@@ -277,11 +278,14 @@ const fillTemplateVariables = (config, values) =>
 
 // Same as backend services/save_config.py save_command(): run as the last command,
 // every confirmation it asks is answered with y / yes
-const saveCommandFor = (deviceType = '') => {
-  const t = deviceType.toLowerCase();
+const saveCommandFor = (deviceType = '', metaMap = {}) => {
+  const t = (deviceType || '').toLowerCase();
+  if (metaMap && metaMap[t]?.save_command) {
+    return metaMap[t].save_command;
+  }
   if (t.includes('huawei')) return 'save';
   if (t.includes('juniper') || t.includes('junos')) return 'commit';
-  if (t.includes('cisco') || t.includes('aruba')) return 'write memory';
+  if (t.includes('cisco') || t.includes('aruba') || t.includes('raisecom')) return 'write memory';
   return 'save (driver default)';
 };
 
@@ -402,11 +406,30 @@ export default function DeployConfigPage({
   const [scheduleRepeatUntil, setScheduleRepeatUntil] = useState('');
   const [schedules, setSchedules] = useState([]);
   const [scheduleLog, setScheduleLog] = useState(null); // { id, title, text }
+  const [deviceTypeMeta, setDeviceTypeMeta] = useState({});
+
+  useEffect(() => {
+    let isMounted = true;
+    getSupportedDeviceTypes()
+      .then((res) => {
+        if (isMounted && res?.device_types) {
+          const meta = {};
+          res.device_types.forEach((t) => {
+            if (t.value) meta[t.value.toLowerCase()] = t;
+          });
+          setDeviceTypeMeta(meta);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
   // The save command(s) appended as the last command when "Save to Startup" is on (one per vendor in the fleet)
-  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios')))];
-  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor)]) : [];
+  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios', deviceTypeMeta)))];
+  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)]) : [];
 
   // UI Navigation & View Modes
   const [activeTab, setActiveTab] = useState('editor'); // 'editor', 'builder', 'results', 'history'
@@ -440,17 +463,24 @@ export default function DeployConfigPage({
 
   const fileInputRef = useRef(null);
 
-  // Auto-detect vendor based on fleet device types
+  // Auto-detect vendor based on fleet device types or centralized metadata
   useEffect(() => {
     const primaryDevice = fleet?.[0];
     if (primaryDevice?.device_type) {
       const type = primaryDevice.device_type.toLowerCase();
+      const meta = deviceTypeMeta[type];
+      if (meta) {
+        if (meta.family) setActiveVendor(meta.family);
+        if (meta.default_pre_check) setPreCheckCmd(meta.default_pre_check);
+        if (meta.default_post_check) setPostCheckCmd(meta.default_post_check);
+        return;
+      }
       if (type.includes('huawei')) {
         setActiveVendor('huawei');
         setPreCheckCmd('display interface brief');
         setPostCheckCmd('display interface brief');
-      } else if (type.includes('cisco')) {
-        setActiveVendor('cisco_ios');
+      } else if (type.includes('cisco') || type.includes('raisecom')) {
+        setActiveVendor(type.includes('raisecom') ? 'raisecom_roap' : 'cisco_ios');
         setPreCheckCmd('show ip interface brief');
         setPostCheckCmd('show ip interface brief');
       } else if (type.includes('aruba') || type.includes('hp')) {
@@ -463,7 +493,7 @@ export default function DeployConfigPage({
         setPostCheckCmd('show interfaces terse');
       }
     }
-  }, [fleet]);
+  }, [fleet, deviceTypeMeta]);
 
   // Clean lines for analysis and execution
   const rawLines = configText.split('\n');
@@ -1307,7 +1337,7 @@ export default function DeployConfigPage({
                     <div>
                       <span className="option-name">Save to Startup-Config / NVRAM</span>
                       <p className="option-hint">
-                        Adds {(saveCommands.length ? saveCommands : [saveCommandFor(activeVendor)]).map((c) => `'${c}'`).join(' / ')} as the last command,
+                        Adds {(saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)]).map((c) => `'${c}'`).join(' / ')} as the last command,
                         (Huawei 'save' is confirmed with Y), and fails the device if it does not report the save
                       </p>
                     </div>

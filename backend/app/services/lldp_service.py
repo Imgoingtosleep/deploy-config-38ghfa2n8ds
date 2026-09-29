@@ -100,26 +100,15 @@ _MODEL_RE_MIKROTIK = re.compile(
 )
 
 
+from app.core.driver_registry import DriverRegistry
+
 # Netmiko driver to log in with for each command profile parser: an LLDP neighbor
 # has no device type of its own, so its driver is swept in command profile order
-PARSER_DRIVERS = {
-    "huawei": "huawei",
-    "cisco": "cisco_ios",
-    "raisecom": "raisecom_roap",
-    "aruba": "aruba_os",
-    "hp_comware": "hp_comware",
-    "juniper": "juniper_junos",
-    "mikrotik": "mikrotik_routeros",
-}
+PARSER_DRIVERS = DriverRegistry.get_parser_drivers()
 
 
 # Command profile parser for a driver the version output names (reverse of PARSER_DRIVERS)
-DRIVER_PARSERS = {
-    "huawei": "huawei",
-    "cisco_ios": "cisco",
-    "cisco_nxos": "cisco",
-    "raisecom_roap": "raisecom",
-}
+DRIVER_PARSERS = DriverRegistry.get_driver_parsers()
 
 
 def cli_rejected(text: str) -> bool:

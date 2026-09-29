@@ -21,34 +21,17 @@ DETECT_FAILURES = ("unreachable", "auth_failed", "cant_detect", "unknown")
 # 'unknown' is also a device type the user (or Detect Types) sets when the vendor cannot be
 # named: LLDP then tries every command profile; other features detect again, then use the default
 
+from app.core.driver_registry import DriverRegistry
+
 # Vendor names printed before / right after login, shared by the SSH and telnet probes
-_LOGIN_BANNER_SIGNATURES = [
-    ("huawei", r"Huawei Versatile Routing Platform|VRP \(R\) Software|Huawei Technologies|Quidway|CloudEngine", "Huawei VRP"),
-    ("cisco_nxos", r"Cisco Nexus|NX-OS", "Cisco NX-OS"),
-    ("cisco_ios", r"Cisco IOS Software|IOS-XE|Cisco Systems", "Cisco IOS"),
-    ("hp_comware", r"H3C Comware|HPE Comware|Comware Software|New H3C Technologies", "H3C Comware"),
-    ("aruba_os", r"ArubaOS|ProCurve", "Aruba OS"),
-    ("juniper_junos", r"JUNOS", "Juniper JunOS"),
-    ("mikrotik_routeros", r"MikroTik|RouterOS", "MikroTik RouterOS"),
-    ("raisecom_roap", r"Raisecom|ROS Software", "Raisecom ROS"),
-]
+_LOGIN_BANNER_SIGNATURES = DriverRegistry.get_login_banner_signatures()
 # Printed by Cisco IOS on telnet, but also by Cisco-style clones: decides which driver
 # logs in first, and names Cisco only when logging in cannot name the vendor
 _CISCO_TELNET_HINT = r"User Access Verification"
 
 # Vendor named outright in the output of a version command, in the order they are told
 # apart (NX-OS before IOS: its 'show version' also says "Cisco Systems")
-_VERSION_SIGNATURES = [
-    ("huawei", r"Huawei|VRP \(R\)|CloudEngine|Quidway"),
-    ("hp_comware", r"H3C|Comware"),
-    ("cisco_nxos", r"NX-OS|Nexus"),
-    ("raisecom_roap", r"Raisecom"),
-    ("cisco_ios", r"Cisco IOS Software|Cisco Internetwork Operating System|IOS \(tm\)|IOS-XE|Cisco Systems|"
-                  r"\bcisco (?:WS-|C\d|ISR|CISCO|Catalyst)"),
-    ("aruba_os", r"ArubaOS|ProCurve"),
-    ("juniper_junos", r"JUNOS"),
-    ("mikrotik_routeros", r"RouterOS|MikroTik"),
-]
+_VERSION_SIGNATURES = DriverRegistry.get_version_signatures()
 
 # Raisecom 'show version' without the company name: "Software Version: ROS_4.14.2211...",
 # product names ISCOM2924GF, RAX711, iTN201, RC002. Weak - a Cisco could be named "RAX1" -
@@ -64,15 +47,7 @@ _SHELL_PASSWORD_PROMPT = r"(?:^|\n)\s*password\s*:\s*$"
 _MORE_PROMPT = r"-+\s*more\s*-+|\(more\)|press any key"
 
 # Telnet driver for each SSH driver the detector can return
-_TELNET_DRIVERS = {
-    "huawei": "huawei_telnet",
-    "cisco_ios": "cisco_ios_telnet",
-    "cisco_nxos": "cisco_nxos_telnet",
-    "hp_comware": "hp_comware_telnet",
-    "aruba_os": "aruba_procurve_telnet",
-    "juniper_junos": "juniper_junos_telnet",
-    "raisecom_roap": "raisecom_telnet",
-}
+_TELNET_DRIVERS = DriverRegistry.get_telnet_map()
 
 _ALL_LOGINS_REJECTED = "every probe login was rejected"
 
@@ -930,15 +905,11 @@ class AutoDetectService:
 
         # Priority test sequence: (vendor_driver, probe_command). The output decides the
         # vendor, not the driver that logged in: Cisco and Raisecom drivers log in to each other
+        catalog = DriverRegistry.get_catalog()
         test_profiles = [
-            ("huawei", "display version"),
-            ("cisco_nxos", "show version"),
-            ("cisco_ios", "show version"),
-            ("aruba_os", "show version"),
-            ("hp_comware", "display version"),
-            ("juniper_junos", "show version"),
-            ("raisecom_roap", "show version"),
-            ("mikrotik_routeros", "/system resource print"),
+            (d.id, d.version_cmd)
+            for d in sorted(catalog.values(), key=lambda x: x.detect_order)
+            if d.is_driver and d.version_cmd and d.id != "linux"
         ]
         if prefer:
             test_profiles.sort(key=lambda p: p[0] != prefer)
