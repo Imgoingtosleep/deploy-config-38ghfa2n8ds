@@ -493,6 +493,22 @@ export const deleteCommandProfile = async (id) => {
   return response.data;
 };
 
+// 'custom' parser helpers: the regex is Python ((?P<name>...)), so the backend tests it
+export const testCustomRegex = async (output, pattern, defaultLocalPort = null) => {
+  const response = await apiClient.post('/command-profiles/test-regex', {
+    output,
+    pattern,
+    default_local_port: defaultLocalPort || null,
+  });
+  return response.data;
+};
+
+// Run one command as written (no vendor translation) on a fleet device: sample output for a regex
+export const getCommandSampleOutput = async (device, command, driver = null) => {
+  const response = await apiClient.post('/command-profiles/sample-output', { device, command, driver });
+  return response.data;
+};
+
 export const reorderCommandProfiles = async (orderedIds) => {
   const response = await apiClient.post('/command-profiles/reorder', { ordered_ids: orderedIds });
   return response.data;

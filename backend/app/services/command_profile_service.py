@@ -8,6 +8,7 @@ same session with the next profile (Cisco), so mixed-vendor subnets need one
 login per host only.
 """
 import os
+import re
 import json
 import uuid
 import threading
@@ -20,7 +21,10 @@ file_lock = threading.Lock()
 COMMAND_KEYS = ["pager_disable", "sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
 # Commands whose output can carry a user regex; 'pager_disable' prints nothing worth reading
 REGEX_KEYS = ["sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
-VALID_PARSERS = ["huawei", "cisco", "raisecom"]
+VALID_PARSERS = ["huawei", "cisco", "raisecom", "custom"]
+# Named groups a 'custom' parser regex reads a neighbor from; local_port is required
+CUSTOM_GROUPS = ["local_port", "remote_device", "remote_port", "remote_ip", "remote_model"]
+LLDP_REGEX_KEYS = ["lldp_brief", "lldp_detail", "lldp_full"]
 
 DEFAULT_PROFILES = [
     {
@@ -100,6 +104,8 @@ class CommandProfileService:
         if parser not in VALID_PARSERS:
             parser = "huawei"
         p["parser"] = parser
+        # Built-in parsers log in with their vendor's driver; only 'custom' names one
+        p["driver"] = (str(p.get("driver") or "").strip().lower() or "huawei") if parser == "custom" else ""
         p["name"] = (p.get("name") or "Unnamed Command Profile").strip()
         p["description"] = (p.get("description") or "").strip()
         p["enabled"] = bool(p.get("enabled", True))
@@ -122,6 +128,32 @@ class CommandProfileService:
             raw_rx = {}
         p["regexes"] = {k: str(raw_rx.get(k) or "").strip() for k in REGEX_KEYS}
         return p
+
+    @staticmethod
+    def custom_parser_problem(p: Dict[str, Any]) -> Optional[str]:
+        """Why a 'custom' parser profile could not read any neighbor, None when it can"""
+        if (p.get("parser") or "") != "custom":
+            return None
+        commands = p.get("commands") or {}
+        regexes = p.get("regexes") or {}
+        if not str(commands.get("lldp_brief") or "").strip():
+            return "The custom parser needs the LLDP neighbor list command (lldp_brief)"
+        for field in LLDP_REGEX_KEYS:
+            pattern = str(regexes.get(field) or "").strip()
+            if not pattern:
+                if field == "lldp_brief":
+                    return "The custom parser needs a regex for the LLDP neighbor list (lldp_brief)"
+                continue
+            try:
+                rx = re.compile(pattern)
+            except re.error as e:
+                return f"Invalid regex for '{field}': {e}"
+            # A per-port detail command ('{intf}') knows its port: the regex need not read it
+            per_port = field == "lldp_detail" and "{intf}" in str(commands.get("lldp_detail") or "")
+            if "local_port" not in rx.groupindex and not per_port:
+                return (f"The '{field}' regex needs a (?P<local_port>...) group; the others it can read are "
+                        f"{', '.join(CUSTOM_GROUPS[1:])}")
+        return None
 
     @classmethod
     def _load(cls) -> List[Dict[str, Any]]:
@@ -192,6 +224,7 @@ class CommandProfileService:
             "name": data.get("name"),
             "description": data.get("description"),
             "parser": data.get("parser"),
+            "driver": data.get("driver"),
             "priority": priority,
             "enabled": data.get("enabled", True),
             "commands": data.get("commands"),
@@ -209,7 +242,7 @@ class CommandProfileService:
         target = next((p for p in profiles if p.get("id") == profile_id), None)
         if not target:
             return None
-        for field in ["name", "description", "parser", "priority", "enabled"]:
+        for field in ["name", "description", "parser", "driver", "priority", "enabled"]:
             if field in data and data[field] is not None:
                 target[field] = data[field]
         if data.get("commands") is not None:

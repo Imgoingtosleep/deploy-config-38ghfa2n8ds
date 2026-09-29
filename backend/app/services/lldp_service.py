@@ -631,6 +631,53 @@ class LldpService:
         return results
 
     @classmethod
+    def parse_custom(cls, output: str, pattern: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        'custom' parser: every match of the command profile's regex is one neighbor, read
+        from its named groups (local_port, remote_device, remote_port, remote_ip,
+        remote_model). Case-insensitive, ^ / $ per line; '(?s)' in the pattern lets one
+        match span the several lines of a detail block. A match without a local port uses
+        default_local_port (the port a per-interface detail command was run for).
+        """
+        if not pattern or not output:
+            return []
+        try:
+            rx = re.compile(pattern, re.MULTILINE | re.IGNORECASE)
+        except re.error:
+            return []
+        rows: List[Dict[str, str]] = []
+        for m in rx.finditer(output):
+            groups = {k: (v or "").strip() for k, v in m.groupdict().items()}
+            local = groups.get("local_port") or default_local_port or ""
+            if not local:
+                continue
+            ip = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", groups.get("remote_ip", ""))
+            rows.append({
+                "local_port": local,
+                "remote_device": cls.short_hostname(groups.get("remote_device", "")),
+                "remote_port": groups.get("remote_port", ""),
+                "remote_ip": ip.group(0) if ip else "",
+                "remote_model": groups.get("remote_model", ""),
+            })
+        return rows
+
+    @staticmethod
+    def profile_driver(profile: Dict[str, Any]) -> str:
+        """Netmiko driver a command profile logs in with: its vendor's, or the one a 'custom' profile names"""
+        if profile.get("parser") == "custom":
+            return profile.get("driver") or "huawei"
+        return PARSER_DRIVERS.get(profile["parser"], profile["parser"])
+
+    @staticmethod
+    def profile_vendor(profile: Dict[str, Any]) -> str:
+        """Vendor a command profile is for, as the built-in parsers name it ('custom' when its
+        driver is none of theirs): what the version output is checked against in a sweep"""
+        if profile.get("parser") != "custom":
+            return profile["parser"]
+        from app.services.autodetect_service import AutoDetectService
+        return DRIVER_PARSERS.get(AutoDetectService.ssh_driver(profile.get("driver") or ""), "custom")
+
+    @classmethod
     def parse_detail(cls, output: str, parser: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
         if parser == "cisco":
             return cls.parse_lldp_detail_cisco(output, default_local_port=default_local_port)
@@ -693,6 +740,8 @@ class LldpService:
                     is_last_profile = prof_no == len(cmd_profiles)
                     cmds = cprof["commands"]
                     parser = cprof["parser"]
+                    is_custom = parser == "custom"
+                    vendor = cls.profile_vendor(cprof)
                     rxs = cprof.get("regexes") or {}
                     used_profile = cprof["name"]
 
@@ -713,6 +762,22 @@ class LldpService:
                         )
                         return kept
 
+                    def read_rows(raw: str, field: str, step: str, default_local_port: Optional[str] = None):
+                        """Neighbor rows of one LLDP command's output: the profile's own regex for
+                        'custom', otherwise the built-in parser after the optional line filter"""
+                        if is_custom:
+                            rows = cls.parse_custom(raw, rxs.get(field) or "", default_local_port)
+                            log_lines.append(f"{step}: custom regex for '{field}' matched {len(rows)} neighbor row(s)")
+                            return rows
+                        text = keep_lines(raw, field, step)
+                        if field == "lldp_brief":
+                            return cls.parse_lldp_brief(text, parser)
+                        return cls.parse_detail(text, parser, default_local_port=default_local_port)
+
+                    # A custom profile reads detail / full output only when it has a regex for it
+                    has_detail = bool(cmds.get("lldp_detail")) and (not is_custom or bool(rxs.get("lldp_detail")))
+                    has_full = bool(cmds.get("lldp_full")) and (not is_custom or bool(rxs.get("lldp_full")))
+
                     log_lines.append(
                         f"Step 0b: Command profile {prof_no}/{len(cmd_profiles)} [{cprof['name']}] (parser: {parser})"
                     )
@@ -727,6 +792,8 @@ class LldpService:
                     sysname_source = cmds.get("sysname") or "prompt"
                     cfg_sysname = ""
                     try:
+                        if not cmds.get("sysname"):
+                            raise LookupError("no sysname command")
                         sys_raw = NetmikoService.clean_cli_output(
                             net_connect.send_command(cmds["sysname"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
@@ -742,6 +809,8 @@ class LldpService:
                             # of config (e.g. 'ip domain-name lab.local') as the device name
                             m = re.search(r"^[ \t]*(?:sysname|hostname)[ \t]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
                             cfg_sysname = cls.short_hostname(m.group(1).strip().strip('"')) if m else ""
+                    except LookupError:
+                        pass
                     except Exception as e:
                         log_lines.append(f"Step 1: '{cmds.get('sysname')}' failed: {e}")
                     if cfg_sysname:
@@ -754,6 +823,8 @@ class LldpService:
 
                     ver_raw = ""
                     try:
+                        if not cmds.get("version"):
+                            raise LookupError("no version command")
                         ver_raw = NetmikoService.clean_cli_output(
                             net_connect.send_command(cmds["version"], read_timeout=settings.DEFAULT_TIMEOUT)
                         )
@@ -765,24 +836,26 @@ class LldpService:
                         else:
                             if rxs.get("version"):
                                 log_lines.append("Step 1b: regex for 'version' did not match, using the model rules")
-                            model = cls.extract_model(ver_raw, parser)
+                            model = cls.extract_model(ver_raw, vendor)
                             model_source = f"'{cmds['version']}'"
                         version_output = ver_raw
                         log_lines.append(f"Step 1b: Model [{model or 'unknown'}] ({cls.device_role(model)}) from {model_source}")
+                    except LookupError:
+                        pass
                     except Exception as e:
                         log_lines.append(f"Step 1b: '{cmds.get('version')}' failed: {e}")
 
                     if sweep_parsers:
                         from app.services.autodetect_service import match_version_output
                         named = DRIVER_PARSERS.get(match_version_output(ver_raw, sysname) or "")
-                        if named and named != parser and named in sweep_parsers:
+                        if named and named != vendor and named in sweep_parsers:
                             # The CLI took these commands, but the device says it is another
                             # vendor that has its own command profile: use that one instead
                             vendor_hint = named
                             rejected_profiles += 1
                             neighbors = []
                             log_lines.append(
-                                f"Step 1c: '{cmds['version']}' names a {named} device, not {parser}: "
+                                f"Step 1c: '{cmds['version']}' names a {named} device, not {vendor}: "
                                 f"skipping [{cprof['name']}] for the {named} command profile"
                             )
                             continue
@@ -791,7 +864,7 @@ class LldpService:
                         net_connect.send_command(cmds["lldp_brief"], read_timeout=settings.DEFAULT_TIMEOUT)
                     )
                     raw_parts.append(f"<{sysname}> {cmds['lldp_brief']}\n{brief_raw}")
-                    brief_rows = cls.parse_lldp_brief(keep_lines(brief_raw, "lldp_brief", "Step 2"), parser)
+                    brief_rows = read_rows(brief_raw, "lldp_brief", "Step 2")
                     log_lines.append(f"Step 2: '{cmds['lldp_brief']}' returned {len(brief_rows)} neighbor row(s)")
 
                     # Wrong vendor for this profile: the CLI rejected the LLDP command,
@@ -810,14 +883,14 @@ class LldpService:
                     # A detail command without '{intf}' prints every port: run it once and
                     # split the neighbors by local port instead of once per port
                     shared_detail: Optional[Dict[str, List[Dict[str, str]]]] = None
-                    if brief_rows and "{intf}" not in cmds["lldp_detail"]:
+                    if brief_rows and has_detail and "{intf}" not in cmds["lldp_detail"]:
                         shared_detail = {}
                         try:
                             detail_raw = NetmikoService.clean_cli_output(
                                 net_connect.send_command(cmds["lldp_detail"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
                             )
                             raw_parts.append(f"<{sysname}> {cmds['lldp_detail']}\n{detail_raw}")
-                            for r in cls.parse_detail(keep_lines(detail_raw, "lldp_detail", "Step 3"), parser):
+                            for r in read_rows(detail_raw, "lldp_detail", "Step 3"):
                                 shared_detail.setdefault(cls.intf_key(r["local_port"]), []).append(r)
                         except Exception as e:
                             log_lines.append(f"Step 3: '{cmds['lldp_detail']}' failed: {e}")
@@ -830,6 +903,9 @@ class LldpService:
                             details_by_intf[intf] = shared_detail.get(cls.intf_key(intf), [])
                             log_lines.append(f"Step 3: '{cmds['lldp_detail']}' [{intf}] -> {len(details_by_intf[intf])} neighbor(s)")
                             continue
+                        if not has_detail:
+                            details_by_intf[intf] = []
+                            continue
                         cmd = cmds["lldp_detail"].format(intf=intf) if "{intf}" in cmds["lldp_detail"] else cmds["lldp_detail"]
                         details: List[Dict[str, str]] = []
                         try:
@@ -837,9 +913,7 @@ class LldpService:
                                 net_connect.send_command(cmd, read_timeout=settings.DEFAULT_TIMEOUT)
                             )
                             raw_parts.append(f"<{sysname}> {cmd}\n{detail_raw}")
-                            details = cls.parse_detail(
-                                keep_lines(detail_raw, "lldp_detail", f"Step 3 [{intf}]"), parser, default_local_port=intf
-                            )
+                            details = read_rows(detail_raw, "lldp_detail", f"Step 3 [{intf}]", default_local_port=intf)
                         except Exception as e:
                             log_lines.append(f"Step 3: '{cmd}' failed: {e}")
                         details_by_intf[intf] = details
@@ -848,13 +922,13 @@ class LldpService:
                     # Step 4: ports without detail -> run the full LLDP detail command once
                     missing = [i for i in intf_order if not details_by_intf[i]]
                     same_as_detail = shared_detail is not None and cmds["lldp_full"] == cmds["lldp_detail"]
-                    if (missing or not brief_rows) and not same_as_detail:
+                    if (missing or not brief_rows) and has_full and not same_as_detail:
                         try:
                             full_raw = NetmikoService.clean_cli_output(
                                 net_connect.send_command(cmds["lldp_full"], read_timeout=settings.DEFAULT_TIMEOUT * 4)
                             )
                             raw_parts.append(f"<{sysname}> {cmds['lldp_full']}\n{full_raw}")
-                            full_rows = cls.parse_detail(keep_lines(full_raw, "lldp_full", "Step 4"), parser)
+                            full_rows = read_rows(full_raw, "lldp_full", "Step 4")
                             log_lines.append(
                                 f"Step 4: {len(missing)} port(s) without detail, '{cmds['lldp_full']}' returned {len(full_rows)} neighbor(s)"
                             )
@@ -884,7 +958,7 @@ class LldpService:
                                     "remote_device": r["remote_device"] or "N/A",
                                     "remote_port": r["remote_port"] or "N/A",
                                     "remote_ip": r.get("remote_ip", ""),
-                                    "remote_model": "",
+                                    "remote_model": r.get("remote_model", ""),
                                 }
                                 for r in brief_rows if r["local_port"] == intf
                             ]
@@ -944,8 +1018,9 @@ class LldpService:
 
         Known driver: that driver only, with the command profiles of its vendor ('cisco'
         matches cisco_ios / cisco_nxos, 'raisecom' raisecom_roap / raisecom_telnet, ...).
-        A driver no profile is written for gets every profile, cycled on its one session.
-        Unknown (driver None): one driver per profile parser, in command profile order.
+        A 'custom' parser profile belongs to the driver it names. A driver no profile is
+        written for gets every profile, cycled on its one session.
+        Unknown (driver None): one driver per profile, in command profile order.
         """
         from app.services.autodetect_service import AutoDetectService
 
@@ -953,13 +1028,18 @@ class LldpService:
             drv = driver.strip().lower()
             if telnet:
                 drv = AutoDetectService.telnet_driver(drv)
-            own = [p for p in profiles if p["parser"] in drv]
+            base = AutoDetectService.ssh_driver(drv)
+            own = [
+                p for p in profiles
+                if (AutoDetectService.ssh_driver(p.get("driver") or "") == base if p["parser"] == "custom"
+                    else p["parser"] in drv)
+            ]
             return [(drv, own or profiles)]
 
         order: List[str] = []
         by_driver: Dict[str, List[Dict[str, Any]]] = {}
         for prof in profiles:
-            drv = PARSER_DRIVERS.get(prof["parser"], prof["parser"])
+            drv = LldpService.profile_driver(prof)
             if telnet:
                 drv = AutoDetectService.telnet_driver(drv)
             if drv not in by_driver:
@@ -1062,7 +1142,7 @@ class LldpService:
         logs: List[str] = []
         result: Optional[Dict[str, Any]] = None
         # Unknown: the version output may name the vendor, so the sweep can go straight to it
-        sweep_parsers = {p["parser"] for p in profiles} if not driver else None
+        sweep_parsers = {cls.profile_vendor(p) for p in profiles} if not driver else None
         for attempt, (drv, drv_profiles) in enumerate(plan, 1):
             result = cls.collect_device(device, depth, driver=drv, cmd_profiles=drv_profiles, sweep_parsers=sweep_parsers)
             logs.append(result["log"])
@@ -1070,7 +1150,7 @@ class LldpService:
                 break
             hint = result.get("vendor_hint")
             if hint:
-                later = [i for i in range(attempt, len(plan)) if any(p["parser"] == hint for p in plan[i][1])]
+                later = [i for i in range(attempt, len(plan)) if any(cls.profile_vendor(p) == hint for p in plan[i][1])]
                 if later and later[0] != attempt:
                     plan.insert(attempt, plan.pop(later[0]))
             if attempt < len(plan):

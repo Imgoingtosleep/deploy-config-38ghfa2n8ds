@@ -22,7 +22,8 @@
       "lldp_brief": "",
       "lldp_detail": "",
       "lldp_full": ""
-    }
+    },
+    "driver": ""
   },
   {
     "id": "cmdprof-cisco",
@@ -47,7 +48,8 @@
       "lldp_brief": "",
       "lldp_detail": "",
       "lldp_full": ""
-    }
+    },
+    "driver": ""
   },
   {
     "id": "cmdprof-aa54807f",
@@ -72,6 +74,7 @@
       "lldp_full": ""
     },
     "created_at": "2026-09-24T06:31:38.963885+00:00",
-    "updated_at": "2026-09-24T08:19:59.035955+00:00"
+    "updated_at": "2026-09-24T08:19:59.035955+00:00",
+    "driver": ""
   }
 ]

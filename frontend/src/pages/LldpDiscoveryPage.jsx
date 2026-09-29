@@ -27,8 +27,10 @@ import {
   FlaskConical,
   RefreshCw,
   FileSpreadsheet,
+  Wand2,
 } from 'lucide-react';
 import {
+  getSupportedDeviceTypes,
   discoverLldp,
   exportLldpExcel,
   getCredentialProfiles,
@@ -47,6 +49,7 @@ import {
   downloadLldpTableTemplate,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import CustomRegexTester from '../components/CustomRegexTester';
 import ModelIconLegend from '../components/ModelIconLegend';
 import ModelRulesModal from '../components/ModelRulesModal';
 import { neighborsFromDoc, hostsFromDoc } from '../components/topologyModel';
@@ -83,11 +86,20 @@ const COMMAND_FIELDS = [
   ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor', 'keeps the wanted lines'],
 ];
 const REGEX_FIELDS = COMMAND_FIELDS.filter(([, , , rxPlaceholder]) => rxPlaceholder);
+// 'custom' parser: the LLDP regexes are the parser. Every match is one neighbor, read from
+// the named groups below; local_port is required.
+const CUSTOM_GROUPS = ['local_port', 'remote_device', 'remote_port', 'remote_ip', 'remote_model'];
+const CUSTOM_REGEX_PLACEHOLDERS = {
+  lldp_brief: 'required — e.g. ^(?P<local_port>\\S+)\\s+(?P<remote_device>\\S+)\\s+(?P<remote_port>\\S+)',
+  lldp_detail: 'optional — e.g. (?s)Port (?P<local_port>\\S+).*?Model: (?P<remote_model>\\S+)',
+  lldp_full: 'optional — same groups as the detail regex',
+};
 const blankCommandProfile = () => ({
   id: null,
   name: '',
   description: '',
   parser: 'huawei',
+  driver: 'huawei',
   enabled: true,
   commands: Object.fromEntries(COMMAND_FIELDS.map(([f]) => [f, ''])),
   regexes: Object.fromEntries(REGEX_FIELDS.map(([f]) => [f, ''])),
@@ -126,6 +138,10 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const [editingCmd, setEditingCmd] = useState(null);
   const [cmdError, setCmdError] = useState('');
   const [cmdSaving, setCmdSaving] = useState(false);
+  // Command field whose regex tester is open ('custom' parser)
+  const [rxTesterField, setRxTesterField] = useState(null);
+  // Drivers a 'custom' command profile can log in with (the Device Type list, less the modes)
+  const [loginDrivers, setLoginDrivers] = useState(['huawei', 'cisco_ios', 'raisecom_roap']);
 
   // Model rules: custom regex for the model / device type, and re-reading a result with them
   const [showRulesModal, setShowRulesModal] = useState(false); // false | true | { teach: sample }
@@ -197,6 +213,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   }, []);
 
   useEffect(() => {
+    getSupportedDeviceTypes()
+      .then((data) => {
+        const list = (data?.device_types || []).map((t) => t.value).filter((v) => v !== 'autodetect' && v !== 'unknown');
+        if (list.length) setLoginDrivers(list);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (mode !== 'subnet') return undefined;
     const targets = splitList(targetsText);
     if (targets.length === 0) {
@@ -255,6 +280,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         name: editingCmd.name.trim(),
         description: editingCmd.description || '',
         parser: editingCmd.parser || 'huawei',
+        driver: editingCmd.parser === 'custom' ? (editingCmd.driver || '').trim() : '',
         enabled: editingCmd.enabled !== false,
         commands: editingCmd.commands,
         regexes: editingCmd.regexes || {},
@@ -754,7 +780,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                   {p.name}
                   {p.enabled === false ? ' (disabled)' : ''}
                 </span>
-                <span className="lldp-prio-driver">{`${p.parser} · ${p.commands?.lldp_brief || '-'}`}</span>
+                <span className="lldp-prio-driver">
+                  {`${p.parser === 'custom' ? `custom (${p.driver})` : p.parser} · ${p.commands?.lldp_brief || '-'}`}
+                </span>
                 <button
                   type="button"
                   className="lldp-prio-move"
@@ -1240,7 +1268,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     <div className="lldp-cmd-item" key={p.id}>
                       <div className="lldp-cmd-item-main">
                         <span className="lldp-cmd-name">{p.name}</span>
-                        <span className="lldp-prio-badge">{p.parser}</span>
+                        <span className="lldp-prio-badge">{p.parser === 'custom' ? `custom · ${p.driver}` : p.parser}</span>
                         {p.enabled === false && <span className="lldp-prio-badge">disabled</span>}
                         <code className="lldp-cmd-preview">{p.commands?.lldp_brief || '-'}</code>
                       </div>
@@ -1299,8 +1327,25 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                       <option value="huawei">huawei — display lldp neighbor style</option>
                       <option value="cisco">cisco — show lldp neighbors style</option>
                       <option value="raisecom">raisecom — show lldp remote style</option>
+                      <option value="custom">custom — my own regex (named groups)</option>
                     </select>
                   </label>
+                  {editingCmd.parser === 'custom' && (
+                    <label className="lldp-field">
+                      <span>Login driver (Netmiko device type this profile logs in with)</span>
+                      <input
+                        list="lldp-login-drivers"
+                        value={editingCmd.driver || ''}
+                        onChange={(e) => setEditingCmd((prev) => ({ ...prev, driver: e.target.value }))}
+                        placeholder="e.g. huawei, cisco_ios, juniper_junos"
+                      />
+                      <datalist id="lldp-login-drivers">
+                        {loginDrivers.map((d) => (
+                          <option key={d} value={d} />
+                        ))}
+                      </datalist>
+                    </label>
+                  )}
                   <label className="lldp-toggle">
                     <input
                       type="checkbox"
@@ -1311,7 +1356,8 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                   </label>
 
                   {COMMAND_FIELDS.map(([field, label, placeholder, rxPlaceholder]) => (
-                    <label className="lldp-field" key={field}>
+                    <React.Fragment key={field}>
+                    <label className="lldp-field">
                       <span>{label}</span>
                       <input
                         className="lldp-cmd-input"
@@ -1336,18 +1382,64 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                                 regexes: { ...(prev.regexes || {}), [field]: e.target.value },
                               }))
                             }
-                            placeholder={`optional — ${rxPlaceholder}`}
+                            placeholder={
+                              editingCmd.parser === 'custom' && CUSTOM_REGEX_PLACEHOLDERS[field]
+                                ? CUSTOM_REGEX_PLACEHOLDERS[field]
+                                : `optional — ${rxPlaceholder}`
+                            }
                           />
+                          {editingCmd.parser === 'custom' && CUSTOM_REGEX_PLACEHOLDERS[field] && (
+                            <button
+                              type="button"
+                              className={`lldp-btn-secondary lldp-btn-mini lldp-rx-toggle ${rxTesterField === field ? 'active' : ''}`}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setRxTesterField((cur) => (cur === field ? null : field));
+                              }}
+                            >
+                              <Wand2 className="h-3.5 w-3.5" />
+                              {rxTesterField === field ? 'Close' : 'Build & test'}
+                            </button>
+                          )}
                         </div>
                       )}
                     </label>
+                    {editingCmd.parser === 'custom' && rxTesterField === field && CUSTOM_REGEX_PLACEHOLDERS[field] && (
+                      <CustomRegexTester
+                        command={editingCmd.commands?.[field] || ''}
+                        pattern={editingCmd.regexes?.[field] || ''}
+                        onUseRegex={(rx) =>
+                          setEditingCmd((prev) => ({ ...prev, regexes: { ...(prev.regexes || {}), [field]: rx } }))
+                        }
+                        fleet={fleet}
+                        driver={editingCmd.driver}
+                      />
+                    )}
+                    </React.Fragment>
                   ))}
+                  {editingCmd.parser === 'custom' ? (
+                    <span className="lldp-hint">
+                      Custom parser: the LLDP regexes read the neighbors. Every match is one neighbor, taken from the
+                      named groups {CUSTOM_GROUPS.map((g, i) => (
+                        <React.Fragment key={g}>
+                          {i > 0 && ', '}
+                          <code>{`(?P<${g}>…)`}</code>
+                        </React.Fragment>
+                      ))}{' '}
+                      — <code>local_port</code> is required, except in a per-port detail regex (a command with{' '}
+                      <code>{'{intf}'}</code> already knows its port). The neighbor list command and its regex are required; the
+                      detail commands run only when they have a regex, and fill in what the list lacks (e.g. the
+                      model). Start a pattern with <code>(?s)</code> to let one match span several lines. Empty
+                      commands are skipped: no sysname command means the name is read from the prompt.
+                    </span>
+                  ) : (
                   <span className="lldp-hint">
                     Leave a command empty to use the built-in default for the selected parser. A regex is optional:
                     with a capture group it reads the value itself (sysname, model), without one it keeps only the
                     matching lines before the parser runs. If it matches nothing, the built-in parsing is used and the
                     sweep log says so.
                   </span>
+                  )}
 
                   <div className="lldp-actions">
                     <button type="submit" className="lldp-btn-primary" disabled={cmdSaving}>
