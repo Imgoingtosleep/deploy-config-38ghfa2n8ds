@@ -306,11 +306,14 @@ export default function TroubleshootPage({
       runExecution(`traceroute ${target}`, {
         huawei: `tracert ${target}`,
         cisco_ios: `traceroute ${target}`,
+        fortinet: `execute traceroute ${target}`,
       });
     } else {
       const cmd = `ping ${target}`;
       setCustomCommand(cmd);
-      runExecution(cmd);
+      runExecution(cmd, {
+        fortinet: `execute ping ${target}`,
+      });
     }
   };
 
@@ -323,6 +326,7 @@ export default function TroubleshootPage({
     runExecution(`log filter ${kw}`, {
       huawei: `display logbuffer | include ${kw}`,
       cisco_ios: `show logging | include ${kw}`,
+      fortinet: `execute log display | grep ${kw}`,
     });
   };
 

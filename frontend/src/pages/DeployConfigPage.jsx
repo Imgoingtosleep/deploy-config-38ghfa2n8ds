@@ -249,6 +249,32 @@ const VENDOR_TEMPLATES = {
       config: `set interfaces irb unit 10 family inet address 192.168.10.1/24\nset vlans USERS_DATA l3-interface irb.10\nset routing-options static route 0.0.0.0/0 next-hop 192.168.99.1`,
     },
   ],
+  fortinet: [
+    {
+      category: 'Interface & IP Configuration',
+      title: 'Configure Port IP Address',
+      desc: 'Set static IP address and allow administrative access',
+      config: `config system interface\n    edit "port1"\n        set mode static\n        set ip {{IP_ADDRESS}} {{NETMASK}}\n        set allowaccess ping https ssh\n    next\nend`,
+    },
+    {
+      category: 'Routing',
+      title: 'Static Default Route',
+      desc: 'Configure static default route via gateway',
+      config: `config router static\n    edit 1\n        set dst 0.0.0.0 0.0.0.0\n        set gateway {{GATEWAY_IP}}\n        set device "port1"\n    next\nend`,
+    },
+    {
+      category: 'Firewall Policy',
+      title: 'IPv4 Allow Policy (LAN to WAN)',
+      desc: 'Basic allow policy with NAT enabled',
+      config: `config firewall policy\n    edit 0\n        set name "LAN_to_WAN"\n        set srcintf "port2"\n        set dstintf "port1"\n        set action accept\n        set srcaddr "all"\n        set dstaddr "all"\n        set schedule "always"\n        set service "ALL"\n        set nat enable\n    next\nend`,
+    },
+    {
+      category: 'System & Services',
+      title: 'Hostname & DNS Settings',
+      desc: 'Set device hostname and system DNS servers',
+      config: `config system global\n    set hostname {{HOSTNAME}}\nend\nconfig system dns\n    set primary 8.8.8.8\n    set secondary 1.1.1.1\nend`,
+    },
+  ],
 };
 
 const VENDOR_LABELS = {
@@ -256,6 +282,7 @@ const VENDOR_LABELS = {
   cisco_ios: 'Cisco IOS / XE',
   aruba_os: 'Aruba CX',
   juniper_junos: 'Juniper JunOS',
+  fortinet: 'Fortinet FortiGate',
 };
 
 // {{NAME}} in a template = a value asked for when the template is inserted
@@ -286,10 +313,11 @@ const saveCommandFor = (deviceType = '', metaMap = {}) => {
   if (t.includes('huawei')) return 'save';
   if (t.includes('juniper') || t.includes('junos')) return 'commit';
   if (t.includes('cisco') || t.includes('aruba') || t.includes('raisecom')) return 'write memory';
+  if (t.includes('fortinet') || t.includes('fortigate')) return 'auto-save (FortiOS)';
   return 'save (driver default)';
 };
 
-const SAVE_COMMAND_VENDOR = { save: 'Huawei', 'write memory': 'Cisco / Aruba', commit: 'Juniper', 'save (driver default)': 'other' };
+const SAVE_COMMAND_VENDOR = { save: 'Huawei', 'write memory': 'Cisco / Aruba', commit: 'Juniper', 'auto-save (FortiOS)': 'Fortinet', 'save (driver default)': 'other' };
 
 const EMPTY_TEMPLATE_DRAFT = { id: null, name: '', vendor: 'huawei', category: '', description: '', config: '' };
 
@@ -491,6 +519,10 @@ export default function DeployConfigPage({
         setActiveVendor('juniper_junos');
         setPreCheckCmd('show interfaces terse');
         setPostCheckCmd('show interfaces terse');
+      } else if (type.includes('fortinet') || type.includes('fortigate')) {
+        setActiveVendor('fortinet');
+        setPreCheckCmd('get system interface physical');
+        setPostCheckCmd('get system interface physical');
       }
     }
   }, [fleet, deviceTypeMeta]);
@@ -931,8 +963,16 @@ export default function DeployConfigPage({
   // GUI Builder Syntax Generator
   const generateBuilderConfig = (masked = false) => {
     const isHuawei = activeVendor === 'huawei';
+    const isFortinet = activeVendor === 'fortinet';
     if (builderTab === 'vlan') {
-      if (isHuawei) {
+      if (isFortinet) {
+        let out = `config system interface\n    edit "vlan${builderVlan.id}"\n        set vdom "root"\n        set type vlan\n        set vlanid ${builderVlan.id}\n        set description "${builderVlan.name}"`;
+        if (builderVlan.ip) {
+          out += `\n        set ip ${builderVlan.ip} ${builderVlan.mask}\n        set allowaccess ping https ssh`;
+        }
+        out += `\n    next\nend`;
+        return out;
+      } else if (isHuawei) {
         let out = `vlan ${builderVlan.id}\n description ${builderVlan.name}`;
         if (builderVlan.ip) {
           out += `\ninterface Vlanif${builderVlan.id}\n description ${builderVlan.name}\n ip address ${builderVlan.ip} ${builderVlan.mask}\n undo shutdown`;
@@ -946,7 +986,9 @@ export default function DeployConfigPage({
         return out;
       }
     } else if (builderTab === 'port') {
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config system interface\n    edit "${builderPort.port}"\n        set description "${builderPort.desc}"\n        set status up\n    next\nend`;
+      } else if (isHuawei) {
         if (builderPort.mode === 'access') {
           return `interface ${builderPort.port}\n description ${builderPort.desc}\n port link-type access\n port default vlan ${builderPort.vlan}${builderPort.portfast ? '\n stp edged-port enable' : ''}\n undo shutdown`;
         } else {
@@ -960,20 +1002,33 @@ export default function DeployConfigPage({
         }
       }
     } else if (builderTab === 'route') {
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config router static\n    edit 0\n        set dst ${builderRoute.dest} ${builderRoute.mask}\n        set gateway ${builderRoute.nexthop}${builderRoute.metric ? `\n        set distance ${builderRoute.metric}` : ''}\n    next\nend`;
+      } else if (isHuawei) {
         return `ip route-static ${builderRoute.dest} ${builderRoute.mask} ${builderRoute.nexthop}${builderRoute.metric ? ` preference ${builderRoute.metric}` : ''}`;
       } else {
         return `ip route ${builderRoute.dest} ${builderRoute.mask} ${builderRoute.nexthop}${builderRoute.metric ? ` ${builderRoute.metric}` : ''}`;
       }
     } else if (builderTab === 'services') {
-      if (isHuawei) {
+      if (isFortinet) {
+        let out = `config system global\n    set hostname ${builderServices.hostname}\nend`;
+        if (builderServices.ntp) {
+          out += `\nconfig system ntp\n    set type custom\n    config ntpserver\n        edit 1\n            set server "${builderServices.ntp}"\n        next\n    end\n    set status enable\nend`;
+        }
+        if (builderServices.syslog) {
+          out += `\nconfig log syslogd setting\n    set status enable\n    set server "${builderServices.syslog}"\nend`;
+        }
+        return out;
+      } else if (isHuawei) {
         return `sysname ${builderServices.hostname}\nntp-service unicast-server ${builderServices.ntp}\ninfo-center loghost ${builderServices.syslog}\nheader login information #\n${builderServices.banner}\n#`;
       } else {
         return `hostname ${builderServices.hostname}\nntp server ${builderServices.ntp}\nlogging host ${builderServices.syslog}\nbanner motd #\n${builderServices.banner}\n#`;
       }
     } else if (builderTab === 'user') {
       const pwd = masked ? '*****' : builderUser.password;
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config system admin\n    edit "${builderUser.username}"\n        set accprofile "super_admin"\n        set password ${pwd}\n    next\nend`;
+      } else if (isHuawei) {
         return `aaa\n local-user ${builderUser.username} password irreversible-cipher ${pwd}\n local-user ${builderUser.username} privilege level ${builderUser.priv}\n local-user ${builderUser.username} service-type ssh terminal`;
       } else {
         return `username ${builderUser.username} privilege ${builderUser.priv} secret ${pwd}\nline vty 0 4\n login local\n transport input ssh`;
@@ -1495,6 +1550,13 @@ export default function DeployConfigPage({
                 >
                   Juniper JunOS
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveVendor('fortinet')}
+                  className={`vendor-tab-btn ${activeVendor === 'fortinet' ? 'active' : ''}`}
+                >
+                  Fortinet FortiGate
+                </button>
               </div>
 
               {/* Search & Category Filter */}
@@ -1688,6 +1750,7 @@ export default function DeployConfigPage({
                 <option value="cisco_ios">Cisco IOS / XE</option>
                 <option value="aruba_os">Aruba OS-CX</option>
                 <option value="juniper_junos">Juniper JunOS</option>
+                <option value="fortinet">Fortinet FortiGate</option>
               </select>
             </div>
           </div>

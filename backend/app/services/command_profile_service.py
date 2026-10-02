@@ -21,7 +21,7 @@ file_lock = threading.Lock()
 COMMAND_KEYS = ["pager_disable", "sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
 # Commands whose output can carry a user regex; 'pager_disable' prints nothing worth reading
 REGEX_KEYS = ["sysname", "version", "lldp_brief", "lldp_detail", "lldp_full"]
-VALID_PARSERS = ["huawei", "cisco", "raisecom", "custom"]
+VALID_PARSERS = ["huawei", "cisco", "raisecom", "fortinet", "custom"]
 # Named groups a 'custom' parser regex reads a neighbor from; local_port is required
 CUSTOM_GROUPS = ["local_port", "remote_device", "remote_port", "remote_ip", "remote_model"]
 LLDP_REGEX_KEYS = ["lldp_brief", "lldp_detail", "lldp_full"]
@@ -82,6 +82,24 @@ DEFAULT_PROFILES = [
         },
         "created_at": "2026-09-24T00:00:00Z",
         "updated_at": "2026-09-24T00:00:00Z",
+    },
+    {
+        "id": "cmdprof-fortinet",
+        "name": "Fortinet FortiGate",
+        "description": "diagnose lldprx commands for Fortinet FortiOS (FortiGate)",
+        "parser": "fortinet",
+        "priority": 4,
+        "enabled": True,
+        "commands": {
+            "pager_disable": "config system console\nset output standard\nend",
+            "sysname": "get system status",
+            "version": "get system status",
+            "lldp_brief": "diagnose lldprx neighbor summary",
+            "lldp_detail": "diagnose lldprx neighbor details",
+            "lldp_full": "diagnose lldprx neighbor details",
+        },
+        "created_at": "2026-10-02T00:00:00Z",
+        "updated_at": "2026-10-02T00:00:00Z",
     },
 ]
 

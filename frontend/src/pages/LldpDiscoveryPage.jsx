@@ -141,7 +141,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   // Command field whose regex tester is open ('custom' parser)
   const [rxTesterField, setRxTesterField] = useState(null);
   // Drivers a 'custom' command profile can log in with (the Device Type list, less the modes)
-  const [loginDrivers, setLoginDrivers] = useState(['huawei', 'cisco_ios', 'raisecom_roap']);
+  const [loginDrivers, setLoginDrivers] = useState(['huawei', 'cisco_ios', 'raisecom_roap', 'fortinet']);
 
   // Model rules: custom regex for the model / device type, and re-reading a result with them
   const [showRulesModal, setShowRulesModal] = useState(false); // false | true | { teach: sample }
@@ -1327,6 +1327,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                       <option value="huawei">huawei — display lldp neighbor style</option>
                       <option value="cisco">cisco — show lldp neighbors style</option>
                       <option value="raisecom">raisecom — show lldp remote style</option>
+                      <option value="fortinet">fortinet — diagnose lldprx neighbor style</option>
                       <option value="custom">custom — my own regex (named groups)</option>
                     </select>
                   </label>

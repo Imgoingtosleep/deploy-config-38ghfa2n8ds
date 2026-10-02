@@ -21,6 +21,7 @@ class CommandTranslator:
             "aruba_os": "show version",
             "hp_comware": "display version",
             "mikrotik_routeros": "/system resource print",
+            "fortinet": "get system status",
         },
         {
             "id": "interface_brief",
@@ -35,6 +36,7 @@ class CommandTranslator:
             "aruba_os": "show interface brief",
             "hp_comware": "display interface brief",
             "mikrotik_routeros": "/interface print brief",
+            "fortinet": "get system interface physical",
         },
         {
             "id": "ip_interface_brief",
@@ -49,6 +51,7 @@ class CommandTranslator:
             "aruba_os": "show ip interface brief",
             "hp_comware": "display ip interface brief",
             "mikrotik_routeros": "/ip address print",
+            "fortinet": "get system interface",
         },
         {
             "id": "interface_desc",
@@ -63,6 +66,7 @@ class CommandTranslator:
             "aruba_os": "show interface custom",
             "hp_comware": "display interface description",
             "mikrotik_routeros": "/interface print",
+            "fortinet": "show system interface",
         },
         {
             "id": "running_config",
@@ -77,6 +81,7 @@ class CommandTranslator:
             "aruba_os": "show running-config",
             "hp_comware": "display current-configuration",
             "mikrotik_routeros": "/export",
+            "fortinet": "show full-configuration",
         },
         {
             "id": "routing_table",
@@ -91,6 +96,7 @@ class CommandTranslator:
             "aruba_os": "show ip route",
             "hp_comware": "display ip routing-table",
             "mikrotik_routeros": "/ip route print",
+            "fortinet": "get router info routing-table all",
         },
         {
             "id": "arp",
@@ -105,6 +111,7 @@ class CommandTranslator:
             "aruba_os": "show arp",
             "hp_comware": "display arp all",
             "mikrotik_routeros": "/ip arp print",
+            "fortinet": "get system arp",
         },
         {
             "id": "cpu",
@@ -119,6 +126,7 @@ class CommandTranslator:
             "aruba_os": "show cpu",
             "hp_comware": "display cpu-usage",
             "mikrotik_routeros": "/system resource print",
+            "fortinet": "get system performance status",
         },
         {
             "id": "memory",
@@ -133,6 +141,7 @@ class CommandTranslator:
             "aruba_os": "show memory",
             "hp_comware": "display memory",
             "mikrotik_routeros": "/system resource print",
+            "fortinet": "diagnose hardware sysinfo memory",
         },
         {
             "id": "device",
@@ -147,6 +156,7 @@ class CommandTranslator:
             "aruba_os": "show system",
             "hp_comware": "display device",
             "mikrotik_routeros": "/system routerboard print",
+            "fortinet": "get system status",
         },
         {
             "id": "environment",
@@ -161,6 +171,7 @@ class CommandTranslator:
             "aruba_os": "show system temperature",
             "hp_comware": "display environment",
             "mikrotik_routeros": "/system health print",
+            "fortinet": "execute sensor list",
         },
         {
             "id": "power",
@@ -174,6 +185,7 @@ class CommandTranslator:
             "aruba_os": "show system power-supply",
             "hp_comware": "display environment",
             "mikrotik_routeros": "/system health print",
+            "fortinet": "execute sensor list",
         },
         {
             "id": "fan",
@@ -187,6 +199,7 @@ class CommandTranslator:
             "aruba_os": "show system fan",
             "hp_comware": "display environment",
             "mikrotik_routeros": "/system health print",
+            "fortinet": "execute sensor list",
         },
         {
             "id": "lldp",
@@ -201,6 +214,7 @@ class CommandTranslator:
             "aruba_os": "show lldp info remote-device",
             "hp_comware": "display lldp neighbor list",
             "mikrotik_routeros": "/ip neighbor print",
+            "fortinet": "diagnose lldprx neighbor summary",
         },
         {
             "id": "transceiver",
@@ -215,6 +229,7 @@ class CommandTranslator:
             "aruba_os": "show interface transceiver",
             "hp_comware": "display transceiver diagnosis interface",
             "mikrotik_routeros": "/interface ethernet monitor [find] once",
+            "fortinet": "get system interface transceiver",
         },
         {
             "id": "logs",
@@ -229,6 +244,7 @@ class CommandTranslator:
             "aruba_os": "show logging -r | include 50",
             "hp_comware": "display logbuffer",
             "mikrotik_routeros": "/log print",
+            "fortinet": "execute log display",
         },
         {
             "id": "vlan",
@@ -242,6 +258,7 @@ class CommandTranslator:
             "aruba_os": "show vlan",
             "hp_comware": "display vlan",
             "mikrotik_routeros": "/interface vlan print",
+            "fortinet": "show system interface",
         },
         {
             "id": "mac",
@@ -256,6 +273,7 @@ class CommandTranslator:
             "aruba_os": "show mac-address",
             "hp_comware": "display mac-address",
             "mikrotik_routeros": "/interface bridge host print",
+            "fortinet": "diagnose ip arp list",
         },
         {
             "id": "clock",
@@ -269,6 +287,7 @@ class CommandTranslator:
             "aruba_os": "show time",
             "hp_comware": "display clock",
             "mikrotik_routeros": "/system clock print",
+            "fortinet": "execute time",
         },
         {
             "id": "ospf",
@@ -283,6 +302,7 @@ class CommandTranslator:
             "aruba_os": "show ip ospf neighbor",
             "hp_comware": "display ospf peer",
             "mikrotik_routeros": "/routing ospf neighbor print",
+            "fortinet": "get router info ospf neighbor",
         },
         {
             "id": "bgp",
@@ -296,6 +316,7 @@ class CommandTranslator:
             "aruba_os": "show ip bgp summary",
             "hp_comware": "display bgp peer",
             "mikrotik_routeros": "/routing bgp peer print",
+            "fortinet": "get router info bgp summary",
         },
         {
             "id": "vrrp",
@@ -309,6 +330,7 @@ class CommandTranslator:
             "aruba_os": "show vrrp",
             "hp_comware": "display vrrp brief",
             "mikrotik_routeros": "/interface vrrp print",
+            "fortinet": "get system ha status",
         },
         {
             "id": "stp",
@@ -322,6 +344,7 @@ class CommandTranslator:
             "aruba_os": "show spanning-tree",
             "hp_comware": "display stp brief",
             "mikrotik_routeros": "/interface bridge print",
+            "fortinet": "diagnose netlink brctl name host vlan1",
         },
         {
             "id": "eth_trunk",
@@ -337,6 +360,7 @@ class CommandTranslator:
             "aruba_os": "show lacp",
             "hp_comware": "display link-aggregation verbose",
             "mikrotik_routeros": "/interface bonding print",
+            "fortinet": "diagnose netlink aggregate name",
         },
         {
             "id": "bfd",
@@ -351,6 +375,7 @@ class CommandTranslator:
             "aruba_os": "show bfd",
             "hp_comware": "display bfd session all",
             "mikrotik_routeros": "/routing bfd session print",
+            "fortinet": "get router info bfd neighbor",
         },
         {
             "id": "ntp",
@@ -365,6 +390,7 @@ class CommandTranslator:
             "aruba_os": "show ntp status",
             "hp_comware": "display ntp status",
             "mikrotik_routeros": "/system ntp client print",
+            "fortinet": "diagnose sys ntp status",
         },
         {
             "id": "startup_config",
@@ -378,6 +404,7 @@ class CommandTranslator:
             "aruba_os": "show config status",
             "hp_comware": "display saved-configuration",
             "mikrotik_routeros": "/export file=backup",
+            "fortinet": "show full-configuration",
         },
         {
             "id": "dhcp_pool",
@@ -391,6 +418,7 @@ class CommandTranslator:
             "aruba_os": "show dhcp-server",
             "hp_comware": "display ip pool",
             "mikrotik_routeros": "/ip pool print",
+            "fortinet": "show system dhcp server",
         },
         {
             "id": "counters",
@@ -404,6 +432,7 @@ class CommandTranslator:
             "aruba_os": "show interface statistics",
             "hp_comware": "display interface counters",
             "mikrotik_routeros": "/interface print stats",
+            "fortinet": "diagnose netlink interface list",
         },
     ]
 
@@ -422,6 +451,8 @@ class CommandTranslator:
             return "hp_comware"
         if "mikrotik" in v or "routeros" in v:
             return "mikrotik_routeros"
+        if "fortinet" in v or "fortigate" in v or "fortios" in v:
+            return "fortinet"
         return "cisco_ios"
 
     @classmethod
@@ -443,8 +474,10 @@ class CommandTranslator:
         """Detect source vendor dialect from command prefix and syntax"""
         c = (command or "").strip()
         c_norm = cls._normalize_shorthand(c)
-        if c.startswith("/"):
+        if c.startswith("/") or c.startswith(":"):
             return "mikrotik_routeros"
+        if re.match(r"^(?:get|diagnose|diag|execute)\b", c, flags=re.I):
+            return "fortinet"
         if re.match(r"^display\b", c_norm, flags=re.I):
             return "huawei"
         if re.match(r"^show\b", c_norm, flags=re.I):
@@ -495,11 +528,16 @@ class CommandTranslator:
                 target_ip = re.sub(r"^tracert\s*", "", cmd_norm, flags=re.I).strip()
                 if tgt_grp == "mikrotik_routeros":
                     return f"/tool traceroute {target_ip}" if target_ip else "/tool traceroute"
+                if tgt_grp == "fortinet":
+                    return f"execute traceroute {target_ip}" if target_ip else "execute traceroute"
                 return f"traceroute {target_ip}" if target_ip else "traceroute"
 
-            if cmd_lower.startswith("ping") and tgt_grp == "mikrotik_routeros":
+            if cmd_lower.startswith("ping"):
                 target_ip = re.sub(r"^ping\s*", "", cmd_norm, flags=re.I).strip()
-                return f"/ping count=4 {target_ip}" if target_ip else "/ping"
+                if tgt_grp == "mikrotik_routeros":
+                    return f"/ping count=4 {target_ip}" if target_ip else "/ping"
+                if tgt_grp == "fortinet":
+                    return f"execute ping {target_ip}" if target_ip else "execute ping"
 
             # Target is Cisco IOS / NX-OS / Aruba
             if tgt_grp in ["cisco_ios", "cisco_nxos", "aruba_os"]:

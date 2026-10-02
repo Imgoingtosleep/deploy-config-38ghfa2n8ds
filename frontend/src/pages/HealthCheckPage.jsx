@@ -51,6 +51,7 @@ const DRIVER_LABELS = {
   aruba_os: 'Aruba',
   mikrotik_routeros: 'MikroTik',
   raisecom_roap: 'Raisecom',
+  fortinet: 'Fortinet FortiGate',
   linux: 'Linux',
   generic_termserver: 'Generic SSH',
 };
@@ -69,42 +70,42 @@ const CATEGORIES = [
 
 const COMMAND_CATALOG = {
   standard: [
-    { id: 'std-1', name: 'System Version & Uptime', cisco: 'show version', huawei: 'display version', juniper: 'show version' },
-    { id: 'std-2', name: 'IP Interfaces Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse' },
-    { id: 'std-3', name: 'Device Hardware Summary', cisco: 'show inventory', huawei: 'display device', juniper: 'show chassis hardware' },
-    { id: 'std-4', name: 'CPU & Routing Engine Status', cisco: 'show processes cpu', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine' },
-    { id: 'std-5', name: 'Neighbor Topology (LLDP/CDP)', cisco: 'show cdp neighbors', huawei: 'display lldp neighbor brief', juniper: 'show lldp neighbors' },
+    { id: 'std-1', name: 'System Version & Uptime', cisco: 'show version', huawei: 'display version', juniper: 'show version', fortinet: 'get system status' },
+    { id: 'std-2', name: 'IP Interfaces Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse', fortinet: 'get system interface physical' },
+    { id: 'std-3', name: 'Device Hardware Summary', cisco: 'show inventory', huawei: 'display device', juniper: 'show chassis hardware', fortinet: 'get hardware status' },
+    { id: 'std-4', name: 'CPU & Routing Engine Status', cisco: 'show processes cpu', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine', fortinet: 'get system performance status' },
+    { id: 'std-5', name: 'Neighbor Topology (LLDP/CDP)', cisco: 'show cdp neighbors', huawei: 'display lldp neighbor brief', juniper: 'show lldp neighbors', fortinet: 'diagnose lldprx neighbor summary' },
   ],
   interfaces: [
-    { id: 'int-1', name: 'Interface Brief Summary', cisco: 'show ip interface brief', huawei: 'display interface brief', juniper: 'show interfaces terse' },
-    { id: 'int-2', name: 'Port Status & Descriptions', cisco: 'show interfaces status', huawei: 'display ip interface brief', juniper: 'show interfaces descriptions' },
-    { id: 'int-3', name: 'Port Descriptions Detail', cisco: 'show interfaces description', huawei: 'display interface description', juniper: 'show interfaces descriptions' },
-    { id: 'int-4', name: 'Interface Error & Extensive Stats', cisco: 'show interfaces summary', huawei: 'display interface counters', juniper: 'show interfaces extensive' },
+    { id: 'int-1', name: 'Interface Brief Summary', cisco: 'show ip interface brief', huawei: 'display interface brief', juniper: 'show interfaces terse', fortinet: 'get system interface physical' },
+    { id: 'int-2', name: 'Port Status & Descriptions', cisco: 'show interfaces status', huawei: 'display ip interface brief', juniper: 'show interfaces descriptions', fortinet: 'get system interface' },
+    { id: 'int-3', name: 'Port Descriptions Detail', cisco: 'show interfaces description', huawei: 'display interface description', juniper: 'show interfaces descriptions', fortinet: 'show system interface' },
+    { id: 'int-4', name: 'Interface Error & Extensive Stats', cisco: 'show interfaces summary', huawei: 'display interface counters', juniper: 'show interfaces extensive', fortinet: 'diagnose hardware deviceinfo nic port1' },
   ],
   transceiver: [
-    { id: 'sfp-1', name: 'SFP/SFP+ Optical Diagnostics (Tx/Rx dBm)', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics' },
-    { id: 'sfp-2', name: 'Optical Module Details & Alarms', cisco: 'show interfaces transceiver detail', huawei: 'display transceiver verbose', juniper: 'show interfaces diagnostics optics' },
-    { id: 'sfp-3', name: 'Transceiver Overview', cisco: 'show interfaces status', huawei: 'display transceiver', juniper: 'show interfaces diagnostics optics' },
+    { id: 'sfp-1', name: 'SFP/SFP+ Optical Diagnostics (Tx/Rx dBm)', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics', fortinet: 'get hardware status' },
+    { id: 'sfp-2', name: 'Optical Module Details & Alarms', cisco: 'show interfaces transceiver detail', huawei: 'display transceiver verbose', juniper: 'show interfaces diagnostics optics', fortinet: 'get hardware status' },
+    { id: 'sfp-3', name: 'Transceiver Overview', cisco: 'show interfaces status', huawei: 'display transceiver', juniper: 'show interfaces diagnostics optics', fortinet: 'get hardware status' },
   ],
   environment: [
-    { id: 'env-1', name: 'Chassis Environment (Fan, Temp, Power)', cisco: 'show environment all', huawei: 'display temperature all', juniper: 'show chassis environment' },
-    { id: 'env-2', name: 'CPU & Routing Engine Utilization', cisco: 'show processes cpu sorted', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine' },
-    { id: 'env-3', name: 'Memory & System Storage', cisco: 'show processes memory', huawei: 'display memory-usage', juniper: 'show system storage' },
-    { id: 'env-4', name: 'Chassis Hardware Inventory', cisco: 'show power', huawei: 'display device', juniper: 'show chassis hardware' },
+    { id: 'env-1', name: 'Chassis Environment (Fan, Temp, Power)', cisco: 'show environment all', huawei: 'display temperature all', juniper: 'show chassis environment', fortinet: 'execute sensor list' },
+    { id: 'env-2', name: 'CPU & Routing Engine Utilization', cisco: 'show processes cpu sorted', huawei: 'display cpu-usage', juniper: 'show chassis routing-engine', fortinet: 'get system performance status' },
+    { id: 'env-3', name: 'Memory & System Storage', cisco: 'show processes memory', huawei: 'display memory-usage', juniper: 'show system storage', fortinet: 'diagnose hardware sysinfo memory' },
+    { id: 'env-4', name: 'Chassis Hardware Inventory', cisco: 'show power', huawei: 'display device', juniper: 'show chassis hardware', fortinet: 'get hardware status' },
   ],
   routing: [
-    { id: 'rt-1', name: 'IPv4 Routing Table', cisco: 'show ip route', huawei: 'display ip routing-table', juniper: 'show route' },
-    { id: 'rt-2', name: 'ARP Table Cache', cisco: 'show ip arp', huawei: 'display arp all', juniper: 'show arp' },
-    { id: 'rt-3', name: 'Route Summary & Protocols', cisco: 'show ip protocols', huawei: 'display ip routing-table verbose', juniper: 'show route summary' },
+    { id: 'rt-1', name: 'IPv4 Routing Table', cisco: 'show ip route', huawei: 'display ip routing-table', juniper: 'show route', fortinet: 'get router info routing-table all' },
+    { id: 'rt-2', name: 'ARP Table Cache', cisco: 'show ip arp', huawei: 'display arp all', juniper: 'show arp', fortinet: 'get system arp' },
+    { id: 'rt-3', name: 'Route Summary & Protocols', cisco: 'show ip protocols', huawei: 'display ip routing-table verbose', juniper: 'show route summary', fortinet: 'get router info routing-table summary' },
   ],
   logs: [
-    { id: 'log-1', name: 'Recent Log Buffer (Syslog)', cisco: 'show logging | last 50', huawei: 'display logbuffer', juniper: 'show log messages | last 50' },
-    { id: 'log-2', name: 'SNMP Trap / Chassis Messages', cisco: 'show logging', huawei: 'display trapbuffer', juniper: 'show log messages | match SNMP' },
+    { id: 'log-1', name: 'Recent Log Buffer (Syslog)', cisco: 'show logging | last 50', huawei: 'display logbuffer', juniper: 'show log messages | last 50', fortinet: 'execute log display' },
+    { id: 'log-2', name: 'SNMP Trap / Chassis Messages', cisco: 'show logging', huawei: 'display trapbuffer', juniper: 'show log messages | match SNMP', fortinet: 'execute log display' },
   ],
   custom: [
-    { id: 'cus-1', name: 'System Version', cisco: 'show version', huawei: 'display version', juniper: 'show version' },
-    { id: 'cus-2', name: 'IP Interface Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse' },
-    { id: 'cus-3', name: 'Optical Tx/Rx Power', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics' },
+    { id: 'cus-1', name: 'System Version', cisco: 'show version', huawei: 'display version', juniper: 'show version', fortinet: 'get system status' },
+    { id: 'cus-2', name: 'IP Interface Brief', cisco: 'show ip interface brief', huawei: 'display ip interface brief', juniper: 'show interfaces terse', fortinet: 'get system interface physical' },
+    { id: 'cus-3', name: 'Optical Tx/Rx Power', cisco: 'show interfaces transceiver', huawei: 'display transceiver diagnosis interface', juniper: 'show interfaces diagnostics optics', fortinet: 'get hardware status' },
   ],
 };
 
@@ -302,6 +303,7 @@ export default function HealthCheckPage({
     const nxosCmds = selected.map((c) => c.nxos || c.cisco || c.name);
     const arubaCmds = selected.map((c) => c.aruba || c.name);
     const mikrotikCmds = selected.map((c) => c.mikrotik || c.name);
+    const fortinetCmds = selected.map((c) => c.fortinet || c.name);
     const genericCmds = selected.map((c) => c.huawei || c.name);
 
     const commandRegexMap = {};
@@ -315,6 +317,7 @@ export default function HealthCheckPage({
         if (c.nxos && !commandRegexMap[c.nxos]) commandRegexMap[c.nxos] = reg;
         if (c.aruba && !commandRegexMap[c.aruba]) commandRegexMap[c.aruba] = reg;
         if (c.mikrotik && !commandRegexMap[c.mikrotik]) commandRegexMap[c.mikrotik] = reg;
+        if (c.fortinet && !commandRegexMap[c.fortinet]) commandRegexMap[c.fortinet] = reg;
         if (c.name && !commandRegexMap[c.name]) commandRegexMap[c.name] = reg;
       }
     });
@@ -330,6 +333,7 @@ export default function HealthCheckPage({
         aruba_os: arubaCmds,
         hp_comware: huaweiCmds,
         mikrotik_routeros: mikrotikCmds,
+        fortinet: fortinetCmds,
       },
       selectedCount: selected.length,
     };

@@ -13,6 +13,7 @@ const LEGACY_COLUMNS = [
   [['juniper_junos'], (r) => r.juniper || r.name],
   [['aruba_os'], (r) => r.aruba || r.name],
   [['mikrotik_routeros'], (r) => r.mikrotik || r.name],
+  [['fortinet'], (r) => r.fortinet || r.name],
 ];
 
 const clean = (sets) =>

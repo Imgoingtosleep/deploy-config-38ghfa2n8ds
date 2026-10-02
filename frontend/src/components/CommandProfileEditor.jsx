@@ -10,6 +10,7 @@ const FALLBACK_DRIVERS = [
   { label: 'Huawei VRP', value: 'huawei' },
   { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
   { label: 'Raisecom ROS', value: 'raisecom_roap' },
+  { label: 'Fortinet FortiGate', value: 'fortinet' },
 ];
 
 const blankSet = () => ({ drivers: [], text: '', regexes: {} });

@@ -62,6 +62,14 @@ def save_startup_config(conn: Any, device_type: str) -> Dict[str, Any]:
     try:
         if _family(device_type) == "juniper":
             output = conn.commit()
+        elif _family(device_type) == "fortinet":
+            # Fortinet FortiOS automatically commits and saves changes on exit/end
+            return {
+                "command": save_command(device_type),
+                "output": "FortiOS auto-saves configuration changes upon commit/exit.",
+                "success": True,
+                "error": None,
+            }
         else:
             output = conn.save_config(**save_kwargs(device_type))
         return _result(device_type, output or "")

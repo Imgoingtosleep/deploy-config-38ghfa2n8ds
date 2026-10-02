@@ -597,6 +597,10 @@ class AutoDetectService:
                 if "raisecom" in combined or "iscom" in combined:
                     return "raisecom_roap", f"Detected Raisecom from Web management port {port}"
 
+                # Fortinet Signatures
+                if "fortinet" in combined or "fortigate" in combined or "fortios" in combined:
+                    return "fortinet", f"Detected Fortinet from Web management port {port}"
+
             except Exception:
                 pass
             finally:
@@ -616,6 +620,8 @@ class AutoDetectService:
             s.connect((host, port))
             banner = s.recv(1024).decode("utf-8", errors="ignore").strip()
             b_lower = banner.lower()
+            if re.search(r"fortigate|fortinet|fortios", b_lower):
+                return "fortinet", f"Detected Fortinet from pre-auth SSH greeting: {banner}"
             if re.search(r"huawei|vrp|quidway", b_lower):
                 return "huawei", f"Detected Huawei from pre-auth SSH greeting: {banner}"
             if re.search(r"nx-os|nexus", b_lower):
@@ -759,6 +765,9 @@ class AutoDetectService:
                 if re.search(r"raisecom|roap", remote_ver):
                     client.close()
                     return "raisecom_roap", f"Detected from SSH server version: {remote_ver}"
+                if re.search(r"fortigate|fortinet|fortios", remote_ver):
+                    client.close()
+                    return "fortinet", f"Detected from SSH server version: {remote_ver}"
                 if re.search(r"ubuntu|debian|raspbian|centos|redhat|alma|rocky", remote_ver):
                     client.close()
                     return "linux", f"Detected from SSH server version: {remote_ver}"

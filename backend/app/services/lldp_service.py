@@ -49,10 +49,21 @@ _BRIEF_HEADER_ALIASES_RAISECOM = {
     "exptime": ["ExpiredTime", "Expired Time", "TTL"],
 }
 
+# Fortinet / FortiSwitch table header aliases
+_BRIEF_HEADER_ALIASES_FORTINET = {
+    "local": ["Portname", "Local Port", "Local Interface", "Local Intf", "Port"],
+    "chassis": ["Neighbor-Chassis-ID", "Chassis-ID", "ChassisId", "Chassis ID"],
+    "remote_intf": ["Neighbor-Port-ID", "Neighbor-Port", "Port-ID", "PortId", "Port ID", "Port Id"],
+    "port_desc": ["Neighbor-Port-Desc", "Port-Description", "Port Description", "Port Desc"],
+    "remote_dev": ["Neighbor-Device-Name", "Neighbor-Device", "Device-Name", "Device Name", "Device-name", "System Name", "System", "Device ID"],
+    "capabilities": ["System-Capabilities", "System Capabilities", "Capabilities", "Cap"],
+    "exptime": ["TTL", "Expire", "ExpiredTime", "Exptime"],
+}
+
 # The device parser rejected the command, so this command profile is the wrong vendor
-# ('% Unknown command.' is Raisecom ROS)
+# ('% Unknown command.' is Raisecom ROS, 'command parse error' is FortiOS)
 _CLI_REJECT_RE = re.compile(
-    r"unrecognized command|invalid input|% invalid|syntax error|wrong parameter|incomplete command|unknown command",
+    r"unrecognized command|invalid input|% invalid|syntax error|wrong parameter|incomplete command|unknown command|command parse error|unknown action",
     re.I,
 )
 
@@ -97,6 +108,25 @@ _MODEL_LINE_MIKROTIK = re.compile(r"^\s*(?:board-name|model)\s*:\s*(.+)$", re.MU
 _MODEL_RE_MIKROTIK = re.compile(
     r"(?<![\w-])((?:CCR|CRS|CSS|RB|hEX|hAP|NetMetal|PowerBox)\d{2,5}[A-Z0-9]*(?:-[A-Z0-9+]+)*)(?!\w)",
     re.I,
+)
+
+# Fortinet FortiGate / FortiOS model regexes
+_MODEL_LINE_FORTINET = re.compile(
+    r"^\s*(?:Model\s*name|Platform|Device\s*model|Model)\s*:\s*([A-Za-z0-9_+-]+)",
+    re.MULTILINE | re.IGNORECASE,
+)
+_MODEL_RE_FORTINET = re.compile(
+    r"(?<![\w-])((?:FortiGate|FortiWiFi|FortiSwitch|FortiAP|FortiAnalyzer|FortiManager|FortiProxy|FortiADC|FortiCarrier)"
+    r"(?:-[A-Za-z0-9]+)+(?:\s+v\d+.*)?|"
+    r"(?:FGT|FSW|FAP|FAZ|FMG|FWF)[-_]?[0-9]{2,4}[A-Za-z0-9_-]*|"
+    r"FG-(?:VM64|VM|[0-9]{2,4}[A-Za-z0-9_-]*))(?![\w(])",
+    re.I,
+)
+
+# FortiGate summary format: 1 port 24 mac AC:8F:F8:... chassis ... port '39714816' system 'UKHWU-...'
+_FORTINET_SUMMARY_RE = re.compile(
+    r"^\s*(?:\d+\s+)?(?:port\s*(\S+)|port\s+(\S+)|(\S+))\s+mac\s+([0-9a-fA-F:.-]+)\s+chassis\s+([0-9a-fA-F:.-]+)\s+port\s+['\"]?([^'\"\r\n]+?)['\"]?\s+system\s+['\"]?([^'\"\r\n]+?)['\"]?(?:\s+(?:mgmt|ip)\s+(\S+))?\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -160,6 +190,8 @@ class LldpService:
             return "mikrotik"
         if "raisecom" in t:
             return "raisecom"
+        if "fortinet" in t or "fortigate" in t or "fortios" in t or "fortiswitch" in t or "fortiap" in t or "fortiwifi" in t:
+            return "fortinet"
         if "huawei" in t or "vrp" in t:
             return "huawei"
         if "cisco" in t or "nx-os" in t or "ios-xe" in t:
@@ -168,6 +200,8 @@ class LldpService:
         # Whole words only - the substrings hit "microsoft", "syntax", "across"
         if re.search(r"(?<![a-z])ros(?![a-z])|\biscom\d|\brax\d", t):
             return "raisecom"
+        if re.search(r"\bfgt[-_]?\d|\bfsw[-_]?\d|\bfap[-_]?\d", t):
+            return "fortinet"
         return parser or "huawei"
 
     @staticmethod
@@ -241,6 +275,25 @@ class LldpService:
         cands = _MODEL_RE_RAISECOM.findall(text)
         return max(cands, key=len) if cands else ""
 
+    @staticmethod
+    def _extract_fortinet_model(text: str) -> str:
+        t = text or ""
+        # 1. 'Version: FortiGate-60F v7.2.5,...'
+        ver_m = re.search(r"^\s*Version:\s*([A-Za-z0-9_-]+)", t, re.MULTILINE | re.IGNORECASE)
+        if ver_m and "forti" in ver_m.group(1).lower():
+            return ver_m.group(1).strip()
+        # 2. 'Model name: FortiGate-60F'
+        m = _MODEL_LINE_FORTINET.search(t)
+        if m:
+            cand = m.group(1).strip()
+            if cand:
+                return cand
+        # 3. Model regex
+        cands = _MODEL_RE_FORTINET.findall(t)
+        if cands:
+            return max(cands, key=len).strip()
+        return ""
+
     # ---- Command profile regexes: run on one command's output before the parser sees it ----
     @staticmethod
     def brief_header(lines: List[str], parser: str = "huawei"):
@@ -248,6 +301,7 @@ class LldpService:
         aliases_map = {
             "cisco": _BRIEF_HEADER_ALIASES_CISCO,
             "raisecom": _BRIEF_HEADER_ALIASES_RAISECOM,
+            "fortinet": _BRIEF_HEADER_ALIASES_FORTINET,
         }.get(parser, _BRIEF_HEADER_ALIASES)
         for idx, line in enumerate(lines):
             found = []
@@ -330,6 +384,8 @@ class LldpService:
             return cls._extract_raisecom_model(text)
         if vendor == "cisco":
             return cls._extract_cisco_model(text)
+        if vendor == "fortinet":
+            return cls._extract_fortinet_model(text)
         if vendor == "huawei":
             hw = cls._extract_huawei_model(text)
             if hw:
@@ -339,6 +395,7 @@ class LldpService:
         for extractor in [
             cls._extract_huawei_model,
             cls._extract_cisco_model,
+            cls._extract_fortinet_model,
             cls._extract_juniper_model,
             cls._extract_aruba_model,
             cls._extract_raisecom_model,
@@ -386,10 +443,10 @@ class LldpService:
             return "unknown"
         m = model.upper().strip()
         # Firewalls
-        if m.startswith(("SRX", "USG", "ASA", "FTD", "FORTIGATE")):
+        if m.startswith(("SRX", "USG", "ASA", "FTD", "FORTIGATE", "FORTINET", "FORTIWIFI", "FGT", "FG-", "FWF")):
             return "firewall"
         # Wireless APs
-        if m.startswith(("AIR-", "AP-", "AIRENGINE")):
+        if m.startswith(("AIR-", "AP-", "AIRENGINE", "FORTIAP", "FAP")):
             return "wireless"
         # Routers
         if (
@@ -410,17 +467,50 @@ class LldpService:
             if not n.get("Remote Model"):
                 n["Remote Model"] = by_name.get(n.get("Remote Device"), "") or by_ip.get(n.get("Remote IP"), "")
 
-    @staticmethod
-    def parse_lldp_brief(output: str, parser: str = "huawei") -> List[Dict[str, str]]:
+    @classmethod
+    def parse_lldp_brief_fortinet(cls, output: str) -> List[Dict[str, str]]:
+        """
+        Parse FortiGate 'diagnose lldprx neighbor summary' (or 'diagnose lldp rx neighbor summary').
+        Matches lines like:
+          1 port 24 mac AC:8F:F8:4B:DA:0C chassis AC:8F:F8:4B:D9:7D port '39714816' system 'UKHWU-P10-PBL002'
+          2 port1 mac 00:0c:29:12:34:56 chassis 00:0c:29:12:34:56 port 'ge-0/0/0' system 'Core-Switch'
+        """
+        rows: List[Dict[str, str]] = []
+        for line in (output or "").splitlines():
+            line_str = line.strip()
+            if not line_str or line_str.startswith("#"):
+                continue
+            m = _FORTINET_SUMMARY_RE.match(line_str)
+            if m:
+                port_cand = m.group(1) or m.group(2) or m.group(3) or ""
+                local = f"port{port_cand}" if port_cand.isdigit() else port_cand
+                remote_dev = cls.short_hostname(m.group(7))
+                remote_port = (m.group(6) or "").strip()
+                remote_ip = m.group(8) or ""
+                rows.append({
+                    "local_port": local,
+                    "remote_device": remote_dev,
+                    "remote_port": remote_port,
+                    "remote_ip": remote_ip,
+                })
+        return rows
+
+    @classmethod
+    def parse_lldp_brief(cls, output: str, parser: str = "huawei") -> List[Dict[str, str]]:
         """
         Parse an LLDP neighbor table into rows of {local_port, remote_device,
         remote_port}. Column boundaries are taken from the header line, so both
         Huawei 'display lldp neighbor brief' and Cisco 'show lldp neighbors'
         work, as do column order differences between firmware versions.
         """
+        if parser == "fortinet":
+            f_rows = cls.parse_lldp_brief_fortinet(output)
+            if f_rows:
+                return f_rows
+
         rows: List[Dict[str, str]] = []
         lines = (output or "").splitlines()
-        header_idx, columns = LldpService.brief_header(lines, parser)
+        header_idx, columns = cls.brief_header(lines, parser)
         if header_idx is None:
             return rows
 
@@ -442,13 +532,13 @@ class LldpService:
                     continue
                 values = {key: parts[i] for i, (_, key) in enumerate(columns)}
                 local = values.get("local", "")
-            # Interface names like GE0/0/1, 10GE1/0/48, Eth-Trunk1, MEth0/0/1
+            # Interface names like GE0/0/1, 10GE1/0/48, Eth-Trunk1, MEth0/0/1, port1
             if not re.match(r"^(?=[\w\-]*[A-Za-z])[\w\-]+\d", local):
                 continue
             mgmt = re.search(r"\d{1,3}(?:\.\d{1,3}){3}", values.get("mgmt", ""))
             rows.append({
                 "local_port": local,
-                "remote_device": LldpService.short_hostname(values.get("remote_dev", "")),
+                "remote_device": cls.short_hostname(values.get("remote_dev", "")),
                 "remote_port": values.get("remote_intf", ""),
                 # Only tables with a management address column (Raisecom 'show lldp remote')
                 "remote_ip": mgmt.group(0) if mgmt else "",
@@ -470,16 +560,22 @@ class LldpService:
     @staticmethod
     def extract_mgmt_ipv4(text: str) -> str:
         """
-        First valid IPv4 from 'Management address[ value] : <value>' lines.
-        The value must be on the same line (an empty value must not pick up the
-        next line), and MAC / IPv6 management addresses are skipped.
+        First valid IPv4 from management address lines. Supports inline
+        'Management address[ value] : <value>' as well as indented 'IPv4: <value>' /
+        'IP: <value>' lines underneath Management-Address blocks.
         """
-        for m in re.finditer(r"^[ \t]*Management address(?:[ \t]+value)?[ \t]*:[ \t]*(\S*)", text or "", re.MULTILINE | re.IGNORECASE):
+        for m in re.finditer(r"^[ \t]*(?:Neighbor\s+)?(?:Management\s*address|Management\s*IP|MgtAddress)(?:[ \t]+value)?[ \t]*:[ \t]*(\S*)", text or "", re.MULTILINE | re.IGNORECASE):
             candidate = re.match(r"\d{1,3}(?:\.\d{1,3}){3}(?![\d.])", m.group(1))
             if not candidate:
                 continue
             try:
                 return str(ipaddress.IPv4Address(candidate.group(0)))
+            except ValueError:
+                continue
+        # Also check indented IPv4 / IP under Management Address headers (Fortinet / Cisco detail)
+        for m in re.finditer(r"^[ \t]*(?:IPv4|IP)\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])", text or "", re.MULTILINE | re.IGNORECASE):
+            try:
+                return str(ipaddress.IPv4Address(m.group(1)))
             except ValueError:
                 continue
         return ""
@@ -667,11 +763,73 @@ class LldpService:
         return DRIVER_PARSERS.get(AutoDetectService.ssh_driver(profile.get("driver") or ""), "custom")
 
     @classmethod
+    def parse_lldp_detail_fortinet(cls, output: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Parse FortiGate 'diagnose lldprx neighbor details' or 'diagnose lldp rx neighbor details'.
+        Handles dashed block format, double newline blocks, and summary-style details.
+        """
+        results: List[Dict[str, str]] = []
+        text = output or ""
+
+        # First check if output is separated by dashed lines
+        blocks = [b for b in re.split(r"^-{4,}\s*$", text, flags=re.MULTILINE) if b.strip()]
+        if not blocks or len(blocks) == 1:
+            p_blocks = [b for b in re.split(r"(?=^Port:\s*\S+)", text, flags=re.MULTILINE) if b.strip()]
+            if len(p_blocks) > 1:
+                blocks = p_blocks
+            else:
+                blocks = [b for b in re.split(r"\r?\n\s*\r?\n", text) if b.strip()]
+        if not blocks and default_local_port:
+            blocks = [text]
+
+        for block in blocks:
+            # If the block contains summary lines, parse them
+            summary_rows = cls.parse_lldp_brief_fortinet(block)
+            if summary_rows:
+                desc = re.search(
+                    r"^\s*(?:Neighbor\s+)?Sys(?:tem)?[- ]Desc(?:ription)?\s*:(.*?)(?=^\s*[A-Za-z][A-Za-z /()\-]{2,30}:|\Z)",
+                    block, re.MULTILINE | re.IGNORECASE | re.DOTALL,
+                )
+                mgmt = cls.extract_mgmt_ipv4(block)
+                for r in summary_rows:
+                    if desc:
+                        r["remote_description"] = desc.group(1).strip()
+                        r["remote_model"] = cls.extract_model(desc.group(1), "fortinet")
+                    if mgmt and not r.get("remote_ip"):
+                        r["remote_ip"] = mgmt
+                    results.append(r)
+                continue
+
+            sysname = re.search(r"^\s*(?:Neighbor\s+)?(?:Device[- ]Name|Sys(?:tem)?[- ]Name)\s*:(.*)$", block, re.MULTILINE | re.IGNORECASE)
+            port_id = re.search(r"^\s*(?:Neighbor\s+)?Port[- ](?:Id|ID)\s*:(.*)$", block, re.MULTILINE | re.IGNORECASE)
+            local = re.search(r"^\s*(?:Local\s+Port|Portname|Port)\s*:\s*(\S+)", block, re.MULTILINE | re.IGNORECASE)
+            local_port = local.group(1).strip() if local else (default_local_port or "")
+            if not local_port and not sysname and not port_id:
+                continue
+
+            remote_ip = cls.extract_mgmt_ipv4(block)
+            desc = re.search(
+                r"^\s*(?:Neighbor\s+)?Sys(?:tem)?[- ]Desc(?:ription)?\s*:(.*?)(?=^\s*[A-Za-z][A-Za-z /()\-]{2,30}:|\Z)",
+                block, re.MULTILINE | re.IGNORECASE | re.DOTALL,
+            )
+            results.append({
+                "local_port": local_port or default_local_port or "",
+                "remote_device": cls.short_hostname(sysname.group(1)) if sysname else "N/A",
+                "remote_port": port_id.group(1).strip() if port_id else "N/A",
+                "remote_ip": remote_ip,
+                "remote_model": cls.extract_model(desc.group(1), "fortinet") if desc else "",
+                "remote_description": desc.group(1).strip() if desc else "",
+            })
+        return results
+
+    @classmethod
     def parse_detail(cls, output: str, parser: str, default_local_port: Optional[str] = None) -> List[Dict[str, str]]:
         if parser == "cisco":
             return cls.parse_lldp_detail_cisco(output, default_local_port=default_local_port)
         if parser == "raisecom":
             return cls.parse_lldp_detail_raisecom(output, default_local_port=default_local_port)
+        if parser == "fortinet":
+            return cls.parse_lldp_detail_fortinet(output, default_local_port=default_local_port)
         return cls.parse_lldp_detail(output, default_local_port=default_local_port)
 
     @classmethod
@@ -796,7 +954,7 @@ class LldpService:
                                 log_lines.append("Step 1: regex for 'sysname' did not match, using the built-in pattern")
                             # [ \t] instead of \s: a bare 'hostname' line must not swallow the next line
                             # of config (e.g. 'ip domain-name lab.local') as the device name
-                            m = re.search(r"^[ \t]*(?:sysname|hostname)[ \t]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
+                            m = re.search(r"^[ \t]*(?:set\s+)?(?:sysname|hostname)[\s:]+(\S[^\r\n]*?)[ \t]*$", sys_raw, re.MULTILINE | re.IGNORECASE)
                             cfg_sysname = cls.short_hostname(m.group(1).strip().strip('"')) if m else ""
                     except LookupError:
                         pass
@@ -852,6 +1010,21 @@ class LldpService:
                     brief_raw = NetmikoService.clean_cli_output(
                         net_connect.send_command(cmds["lldp_brief"], read_timeout=settings.DEFAULT_TIMEOUT)
                     )
+                    if parser == "fortinet" and (cli_rejected(brief_raw) or "parse error" in brief_raw.lower()):
+                        alt_cmd = cmds["lldp_brief"].replace("lldprx", "lldp rx") if "lldprx" in cmds["lldp_brief"] else cmds["lldp_brief"].replace("lldp rx", "lldprx")
+                        try:
+                            alt_raw = NetmikoService.clean_cli_output(
+                                net_connect.send_command(alt_cmd, read_timeout=settings.DEFAULT_TIMEOUT)
+                            )
+                            if not cli_rejected(alt_raw) and "parse error" not in alt_raw.lower():
+                                brief_raw = alt_raw
+                                cmds["lldp_brief"] = alt_cmd
+                                if cmds.get("lldp_detail"):
+                                    cmds["lldp_detail"] = cmds["lldp_detail"].replace("lldprx", "lldp rx") if "lldprx" in alt_cmd else cmds["lldp_detail"].replace("lldp rx", "lldprx")
+                                if cmds.get("lldp_full"):
+                                    cmds["lldp_full"] = cmds["lldp_full"].replace("lldprx", "lldp rx") if "lldprx" in alt_cmd else cmds["lldp_full"].replace("lldp rx", "lldprx")
+                        except Exception:
+                            pass
                     raw_parts.append(f"<{sysname}> {cmds['lldp_brief']}\n{brief_raw}")
                     brief_rows = read_rows(brief_raw, "lldp_brief", "Step 2")
                     log_lines.append(f"Step 2: '{cmds['lldp_brief']}' returned {len(brief_rows)} neighbor row(s)")

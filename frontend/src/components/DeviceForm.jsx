@@ -131,6 +131,7 @@ export default function DeviceForm({
     { label: 'Huawei VRP', value: 'huawei' },
     { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
     { label: 'Raisecom ROS', value: 'raisecom_roap' },
+    { label: 'Fortinet FortiGate', value: 'fortinet' },
   ]);
 
   // Driver <option>s from the backend list. A driver that is not in the list (e.g. a

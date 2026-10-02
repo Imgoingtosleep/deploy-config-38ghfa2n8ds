@@ -215,6 +215,30 @@ _DEFAULT_CATALOG: List[Dict[str, Any]] = [
         "aliases": ["aruba", "aruba_os", "procurve"],
     },
     {
+        "id": "fortinet",
+        "name": "fortinet",
+        "label": "Fortinet FortiGate",
+        "netmiko_ssh": "fortinet",
+        "netmiko_telnet": None,
+        "family": "fortinet",
+        "is_driver": True,
+        "is_supported_option": True,
+        "ui_order": 65,
+        "save_command": "auto-save (FortiOS)",
+        "save_confirm": False,
+        "save_confirm_response": "",
+        "save_success_regex": r"success|\[OK\]|FortiOS",
+        "default_pre_check": "get system interface physical",
+        "default_post_check": "get system interface physical",
+        "pager_disable_cmd": "config system console\nset output standard\nend",
+        "version_cmd": "get system status",
+        "detect_banner_regex": r"FortiGate|Fortinet|FortiOS",
+        "detect_version_regex": r"FortiGate|Fortinet|FortiOS",
+        "detect_order": 45,
+        "lldp_parser": "fortinet",
+        "aliases": ["fortinet", "fortigate", "fortios", "fgt", "fortinet_ssh"],
+    },
+    {
         "id": "juniper_junos",
         "name": "juniper_junos",
         "label": "Juniper JunOS",
@@ -472,6 +496,8 @@ class DriverRegistry:
             return "cisco"
         if "raisecom" in drv:
             return "raisecom"
+        if "fortinet" in drv or "fortigate" in drv or "fortios" in drv:
+            return "fortinet"
         return "other"
 
     @classmethod
@@ -487,6 +513,7 @@ class DriverRegistry:
             "cisco": "write memory",
             "aruba": "write memory",
             "raisecom": "write memory",
+            "fortinet": "auto-save (FortiOS)",
         }.get(fam, "save (driver default)")
 
     @classmethod
@@ -495,7 +522,7 @@ class DriverRegistry:
         d = cls.get_driver(driver_name)
         if d:
             kwargs: Dict[str, Any] = {}
-            if d.save_command and d.save_command != "commit" and d.save_command != "save (driver default)":
+            if d.save_command and d.save_command != "commit" and not d.save_command.startswith("auto-save") and d.save_command != "save (driver default)":
                 kwargs["cmd"] = d.save_command
             if d.save_confirm:
                 kwargs["confirm"] = True
@@ -522,6 +549,8 @@ class DriverRegistry:
                 return {"success": True, "error": None}
         else:
             fam = cls.get_family(driver_name)
+            if fam == "fortinet":
+                return {"success": True, "error": None}
             if fam == "huawei" and re.search(r"success", output, re.IGNORECASE):
                 return {"success": True, "error": None}
             if fam == "juniper" and "commit complete" in output.lower():
