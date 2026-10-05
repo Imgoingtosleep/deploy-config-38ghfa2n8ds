@@ -50,8 +50,8 @@ NetAuto คือเครื่องมือจัดการอุปกร
 
 ดาวน์โหลดเวอร์ชันล่าสุดได้ที่หน้า Releases → **NetAuto for Windows (latest build)**
 
-- **หน้ารวม Releases:** [GitHub Releases: app-latest](https://github.com/Imgoingtosleep/deploy-config/releases/tag/app-latest)
-- **ดาวน์โหลดโปรแกรมโดยตรง:** [ดาวน์โหลด NetAuto.exe](https://github.com/Imgoingtosleep/deploy-config/releases/download/app-latest/NetAuto.exe)
+- **หน้ารวม Releases:** [GitHub Releases: app-latest](https://github.com/Imgoingtosleep/deploy-config-38ghfa2n8ds/releases/tag/app-latest)
+- **ดาวน์โหลดโปรแกรมโดยตรง:** [ดาวน์โหลด NetAuto.exe](https://github.com/Imgoingtosleep/deploy-config-38ghfa2n8ds/releases/download/app-latest/NetAuto.exe)
 
 > ไฟล์นี้ถูก build ใหม่อัตโนมัติทุกครั้งที่มีการ push อัปเดตขึ้น branch `download-application` ลิงก์ด้านบนจึงชี้ไปเวอร์ชันล่าสุดเสมอ
 
@@ -242,7 +242,7 @@ NetAuto คือเครื่องมือจัดการอุปกร
 
 **การอัปเดต**
 1. ปิดหน้าต่าง console สีดำของ NetAuto เดิม
-2. ดาวน์โหลด `NetAuto.exe` เวอร์ชันใหม่จากหน้า [Releases: app-latest](https://github.com/Imgoingtosleep/deploy-config/releases/tag/app-latest) มาแทนที่ไฟล์เดิม
+2. ดาวน์โหลด `NetAuto.exe` เวอร์ชันใหม่จากหน้า [Releases: app-latest](https://github.com/Imgoingtosleep/deploy-config-38ghfa2n8ds/releases/tag/app-latest) มาแทนที่ไฟล์เดิม
 3. ดับเบิลคลิกเปิดใช้งาน — ข้อมูลและการตั้งค่าทั้งหมดใน `%APPDATA%\NetAuto` จะยังคงอยู่ครบถ้วน
 
 **การถอนการติดตั้ง**
@@ -298,7 +298,7 @@ start "" "%~dp0NetAuto.exe"
 ## 10. สำหรับผู้พัฒนา: build เอง
 
 ### 1) Build อัตโนมัติผ่าน GitHub Actions (แนะนำ)
-เมื่อ push โค้ดขึ้น branch `download-application` ระบบ GitHub Actions จะทำการ build ไฟล์ `NetAuto.exe` บนเครื่อง Windows Server, รัน Smoke Test และอัปเดตไฟล์ใน [GitHub Release: app-latest](https://github.com/Imgoingtosleep/deploy-config/releases/tag/app-latest) ให้อัตโนมัติ:
+เมื่อ push โค้ดขึ้น branch `download-application` ระบบ GitHub Actions จะทำการ build ไฟล์ `NetAuto.exe` บนเครื่อง Windows Server, รัน Smoke Test และอัปเดตไฟล์ใน [GitHub Release: app-latest](https://github.com/Imgoingtosleep/deploy-config-38ghfa2n8ds/releases/tag/app-latest) ให้อัตโนมัติ:
 
 ```bash
 git checkout download-application
