@@ -22,6 +22,10 @@ import paramiko
 
 logger = logging.getLogger("uvicorn.error")
 
+# Suppress paramiko's internal transport thread from dumping raw tracebacks to stderr
+# when a remote device abruptly drops the connection or resets the TCP banner.
+logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
+
 # ---------------------------------------------------------------------------
 # 1. KEX (Key Exchange) preference order
 #    - group14-sha1 : most common on Huawei VRP V200R005+, Cisco IOS 15.x

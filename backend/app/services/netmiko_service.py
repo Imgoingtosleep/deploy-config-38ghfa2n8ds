@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 # Apply global SSH algorithm compatibility (KEX + public key preferences)
-from app.services.ssh_compat import file_lock, device_name_map  # noqa: F401
+from app.services.ssh_compat import file_lock, device_name_map, describe_kex_error  # noqa: F401
 import paramiko
 
 from netmiko import ConnectHandler
@@ -453,7 +453,9 @@ class NetmikoService:
                 return False, f"Device Type Mismatch on {target_name}: Netmiko attempted Cisco IOS setup command ('terminal width 511') on a non-Cisco device (e.g. Huawei VRP). Please select Huawei VRP or run Auto Detect.", "", None, [err_str], None
             return False, f"Connection timed out on {target_name}: {err_str}", "", None, [err_str], None
         except SSHException as e:
-            return False, f"SSH error: {str(e)}", "", None, [str(e)], None
+            err_str = str(e)
+            kex_reason = describe_kex_error(err_str)
+            return False, f"SSH error: {kex_reason or err_str}", "", None, [err_str], None
         except Exception as e:
             return False, f"Connection error: {str(e)}", "", None, [str(e)], None
 
