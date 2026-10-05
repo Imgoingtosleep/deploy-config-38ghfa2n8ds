@@ -107,5 +107,11 @@ def describe_kex_error(error_text: str):
         )
     if "no acceptable host key" in lower:
         return "SSH Host Key Mismatch: the device's host key type is not accepted by the backend (e.g. ssh-dss only)."
+    if "error reading ssh protocol banner" in lower or "10054" in lower or "forcibly closed" in lower or "connection reset" in lower:
+        return (
+            "SSH Connection Reset (Banner Drop): The device accepted the TCP connection but immediately closed it before sending the SSH banner. "
+            "For FortiGate / firewalls, this almost always means: 1) Your client IP is not in the administrator's 'trusted hosts' (trusthost), "
+            "2) SSH administrative access is disabled on this interface, 3) Admin SSH port was changed from 22, or 4) Max concurrent admin sessions reached."
+        )
     return None
 
