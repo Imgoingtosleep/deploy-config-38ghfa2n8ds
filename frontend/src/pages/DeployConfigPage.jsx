@@ -307,7 +307,10 @@ const fillTemplateVariables = (config, values) =>
 // every confirmation it asks is answered with y / yes
 const saveCommandFor = (deviceType = '', metaMap = {}) => {
   const t = (deviceType || '').toLowerCase();
-  if (metaMap && metaMap[t]?.save_command) {
+  if (t === 'autodetect' || t === 'unknown') {
+    return '';
+  }
+  if (metaMap && metaMap[t]?.save_command && metaMap[t]?.is_driver) {
     return metaMap[t].save_command;
   }
   if (t.includes('huawei')) return 'save';
@@ -456,8 +459,8 @@ export default function DeployConfigPage({
 
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
   // The save command(s) appended as the last command when "Save to Startup" is on (one per vendor in the fleet)
-  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios', deviceTypeMeta)))];
-  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)]) : [];
+  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios', deviceTypeMeta)).filter(Boolean))];
+  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)].filter(Boolean)) : [];
 
   // UI Navigation & View Modes
   const [activeTab, setActiveTab] = useState('editor'); // 'editor', 'builder', 'results', 'history'
@@ -496,9 +499,12 @@ export default function DeployConfigPage({
     const primaryDevice = fleet?.[0];
     if (primaryDevice?.device_type) {
       const type = primaryDevice.device_type.toLowerCase();
+      if (type === 'autodetect' || type === 'unknown') {
+        return;
+      }
       const meta = deviceTypeMeta[type];
       if (meta) {
-        if (meta.family) setActiveVendor(meta.family);
+        if (meta.family && meta.family !== 'other') setActiveVendor(meta.family);
         if (meta.default_pre_check) setPreCheckCmd(meta.default_pre_check);
         if (meta.default_post_check) setPostCheckCmd(meta.default_post_check);
         return;

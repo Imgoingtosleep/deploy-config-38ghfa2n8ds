@@ -143,7 +143,10 @@ def _run_probe_command(channel, command: str, timeout: float = 4.0) -> str:
         if re.search(_MORE_PROMPT, last, re.I):
             channel.send(" ")
             continue
-        if last and last != command and re.search(r"[>#\]]$", last):
+        if "to accept" in last.lower():
+            channel.send("a\r\n")
+            continue
+        if last and last != command and re.search(r"[>#\]\$\%]$", last):
             break
     return clean_ansi(buf)
 
@@ -413,6 +416,15 @@ class AutoDetectService:
             cls.set_cached_type(host, greeting_hint[0], port)
             return greeting_hint[0], f"{greeting_hint[1]} (logged in, no other vendor named)"
 
+        # Fallback Web management probe before giving up
+        try:
+            detected_web, reason_web = cls._probe_via_web(host, timeout=0.8)
+            if detected_web:
+                cls.set_cached_type(host, detected_web, port)
+                return detected_web, reason_web
+        except Exception:
+            pass
+
         if authed_cred:
             return "cant_detect", (
                 f"Logged in to {host}:{port} as {authed_cred.get('username')}, but the vendor could not be "
@@ -620,7 +632,7 @@ class AutoDetectService:
             s.connect((host, port))
             banner = s.recv(1024).decode("utf-8", errors="ignore").strip()
             b_lower = banner.lower()
-            if re.search(r"fortigate|fortinet|fortios", b_lower):
+            if re.search(r"fortigate|fortinet|fortios|fortissh", b_lower):
                 return "fortinet", f"Detected Fortinet from pre-auth SSH greeting: {banner}"
             if re.search(r"huawei|vrp|quidway", b_lower):
                 return "huawei", f"Detected Huawei from pre-auth SSH greeting: {banner}"
@@ -636,7 +648,7 @@ class AutoDetectService:
                 return "juniper_junos", f"Detected Juniper JunOS from pre-auth SSH greeting: {banner}"
             if re.search(r"mikrotik|routeros", b_lower):
                 return "mikrotik_routeros", f"Detected MikroTik from pre-auth SSH greeting: {banner}"
-            if re.search(r"raisecom|roap", b_lower):
+            if re.search(r"raisecom|roap|ros_\d", b_lower):
                 return "raisecom_roap", f"Detected Raisecom from pre-auth SSH greeting: {banner}"
             if re.search(r"ubuntu|debian|raspbian|centos|redhat|alma|rocky", b_lower):
                 return "linux", f"Detected Linux from pre-auth SSH greeting: {banner}"
@@ -765,7 +777,7 @@ class AutoDetectService:
                 if re.search(r"raisecom|roap", remote_ver):
                     client.close()
                     return "raisecom_roap", f"Detected from SSH server version: {remote_ver}"
-                if re.search(r"fortigate|fortinet|fortios", remote_ver):
+                if re.search(r"fortigate|fortinet|fortios|fortissh", remote_ver):
                     client.close()
                     return "fortinet", f"Detected from SSH server version: {remote_ver}"
                 if re.search(r"ubuntu|debian|raspbian|centos|redhat|alma|rocky", remote_ver):
@@ -787,6 +799,12 @@ class AutoDetectService:
             shell_login = bool(re.search(_SHELL_LOGIN_PROMPT, tail, re.I) or re.search(_SHELL_PASSWORD_PROMPT, tail, re.I))
             if shell_login:
                 initial_buffer += cls._shell_login(channel, initial_cleaned, username, password)
+                initial_cleaned = clean_ansi(initial_buffer)
+
+            # If FortiGate post-login disclaimer is shown ("Press 'a' to accept")
+            if "to accept" in initial_cleaned.lower():
+                channel.send("a\r\n")
+                initial_buffer += _read_channel_response(channel, timeout=1.5)
                 initial_cleaned = clean_ansi(initial_buffer)
 
             # Some switches (Huawei VRP with a default password, Comware) ask to change the
@@ -835,6 +853,14 @@ class AutoDetectService:
                 client.close()
                 return "linux", f"Detected Linux from prompt signature: {last_line}"
 
+            # Check FortiGate Prompt Signature: e.g. FortiGate # or FortiGate-VM64 # or FG-60E #
+            if re.search(r"\b(?:forti(?:gate|net|os)?|fg|fgt)[\w\.\-\(\)]*[>#\$]", last_line, re.I):
+                cmd_forti = _run_probe_command(channel, "get system status", timeout=3.0)
+                client.close()
+                if re.search(r"FortiGate|Fortinet|FortiOS", cmd_forti, re.I):
+                    return "fortinet", f"Detected Fortinet FortiGate from prompt signature: {last_line}"
+                return "fortinet", f"Detected Fortinet from hostname prompt: {last_line}"
+
             # Check Bracket Prompt Signature: <Hostname> or [Hostname] (Shared by Huawei VRP and HP/H3C Comware)
             # Exclude '@' to prevent colliding with MikroTik/Linux prompts
             if re.search(r"^<[^>]+>$", last_line) or re.search(r"^\[[^\]@]+\]$", last_line):
@@ -844,10 +870,10 @@ class AutoDetectService:
                     return "hp_comware", f"Confirmed HP/H3C Comware via 'display version' probe (Prompt: {last_line})"
                 return "huawei", f"Detected Huawei VRP from prompt signature: {last_line}"
 
-            # 4. If prompt looks like Cisco / Generic (`>` or `#`), run Dual Active Command Probing
-            if re.search(r"^[\w\.\-\(\)\/]+[>#]$", last_line):
+            # 4. If prompt looks like Cisco / Fortinet / Generic (`>`, `#`, or `$`), run Multi-Active Command Probing
+            if re.search(r"^[\w\.\-\(\)\/\s]+[>#\$]$", last_line):
                 # Probe 1: Send Huawei command `display version`
-                cmd_cleaned1 = _run_probe_command(channel, "display version", timeout=3.0)
+                cmd_cleaned1 = _run_probe_command(channel, "display version", timeout=2.5)
                 if re.search(r"Huawei|VRP|CloudEngine|Quidway", cmd_cleaned1, re.I):
                     client.close()
                     return "huawei", "Confirmed Huawei VRP via 'display version' probe"
@@ -856,19 +882,36 @@ class AutoDetectService:
                     return "hp_comware", "Confirmed HP/H3C Comware via 'display version' probe"
 
                 # Probe 2: Send Cisco command `show version`
-                cmd_cleaned2 = _run_probe_command(channel, "show version", timeout=4.0)
-                client.close()
+                cmd_cleaned2 = _run_probe_command(channel, "show version", timeout=3.0)
 
                 # Cisco and Raisecom share this CLI: the vendor must be named by the output.
                 # Cisco IOS always prints "Cisco IOS Software" / "Cisco Internetwork Operating
                 # System"; Raisecom prints "Raisecom" or at least its ROS_ version / model.
                 named = match_version_output(cmd_cleaned2, prompt_hostname(last_line))
                 if named == "raisecom_roap":
+                    client.close()
                     return named, "Confirmed Raisecom ROS via 'show version' probe"
                 if named == "cisco_ios":
+                    client.close()
                     return named, "Confirmed Cisco IOS via 'show version' probe"
                 if named:
+                    client.close()
                     return named, f"Confirmed {named} via 'show version' probe"
+
+                # Probe 3: Send Fortinet command `get system status`
+                cmd_cleaned3 = _run_probe_command(channel, "get system status", timeout=2.5)
+                if re.search(r"FortiGate|Fortinet|FortiOS", cmd_cleaned3, re.I):
+                    client.close()
+                    return "fortinet", "Confirmed Fortinet FortiGate via 'get system status' probe"
+
+                # Probe 4: Send MikroTik command `/system resource print`
+                cmd_cleaned4 = _run_probe_command(channel, "/system resource print", timeout=2.0)
+                if re.search(r"RouterOS|MikroTik", cmd_cleaned4, re.I):
+                    client.close()
+                    return "mikrotik_routeros", "Confirmed MikroTik RouterOS via '/system resource print' probe"
+
+                client.close()
+
                 if shell_login:
                     # Cisco-style CLI that asked Login:/Password: inside the SSH shell: Raisecom ROS
                     return "raisecom_roap", f"Cisco-style prompt '{last_line}' after a login inside the SSH shell (Raisecom ROS)"
@@ -878,7 +921,7 @@ class AutoDetectService:
                     return banner_hint[0], f"{banner_hint[1]} login banner, 'show version' named no other vendor"
                 if greeting_hint:
                     return greeting_hint[0], f"{greeting_hint[1]}, 'show version' named no other vendor"
-                if not re.search(r"command not found|invalid|unknown|syntax error", cmd_cleaned2, re.I):
+                if not re.search(r"command not found|invalid|unknown|syntax error|parse error", cmd_cleaned2, re.I):
                     return "cisco_ios", f"Prompt '{last_line}' matched standard Cisco CLI ('show version' named no vendor)"
 
             client.close()
@@ -920,6 +963,19 @@ class AutoDetectService:
             for d in sorted(catalog.values(), key=lambda x: x.detect_order)
             if d.is_driver and d.version_cmd and d.id != "linux"
         ]
+        if not prefer and getattr(device, "name", None):
+            n_lower = str(device.name).lower()
+            if re.search(r"forti|fg|fgt", n_lower):
+                prefer = "fortinet"
+            elif re.search(r"mikrotik|routeros", n_lower):
+                prefer = "mikrotik_routeros"
+            elif re.search(r"huawei|vrp", n_lower):
+                prefer = "huawei"
+            elif re.search(r"raisecom|roap", n_lower):
+                prefer = "raisecom_roap"
+            elif re.search(r"cisco|ios", n_lower):
+                prefer = "cisco_ios"
+
         if prefer:
             test_profiles.sort(key=lambda p: p[0] != prefer)
         if telnet:
@@ -936,7 +992,7 @@ class AutoDetectService:
                 "port": device.port or (23 if telnet else 22),
                 "username": device.username or "",
                 "password": device.password or "",
-                "timeout": 5,
+                "timeout": 3,
                 "fast_cli": False,
             }
             if device.secret:
@@ -945,7 +1001,7 @@ class AutoDetectService:
             attempts += 1
             try:
                 with open_connection(**params) as conn:
-                    out = conn.send_command(cmd, read_timeout=4)
+                    out = conn.send_command(cmd, read_timeout=3)
                     named = match_version_output(out, getattr(conn, "base_prompt", "") or "")
                     if named:
                         named = cls.telnet_driver(named) if telnet else named

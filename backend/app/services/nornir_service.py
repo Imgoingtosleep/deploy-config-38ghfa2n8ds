@@ -104,6 +104,8 @@ class NornirService:
             return "show configuration"
         elif "mikrotik" in dev:
             return "/export"
+        elif "fortinet" in dev or "fortigate" in dev or "fortios" in dev:
+            return "show full-configuration"
         else:
             return "show running-config"
 

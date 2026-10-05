@@ -77,7 +77,7 @@ class NetmikoService:
             m = re.match(r"(?:.*@)?([A-Za-z0-9_\-\.]+)[>#\]]", p)
             if m:
                 return m.group(1).strip()
-            m = re.match(r"^([A-Za-z0-9_\-\.]+)(?:\([^\)]+\))?[#>]", p)
+            m = re.match(r"^([A-Za-z0-9_\-\.]+)(?:\([^\)]+\))?[#>\$]", p)
             if m:
                 return m.group(1).strip()
 

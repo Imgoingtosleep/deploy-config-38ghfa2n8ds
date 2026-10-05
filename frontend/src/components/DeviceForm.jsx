@@ -597,15 +597,19 @@ export default function DeviceForm({
       const prio1 = (defProf?.credentials && defProf.credentials[0]) || defProf;
       const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
 
-      const enrichedDevices = validDevices.map((d) => ({
-        ...d,
-        username: d.username || prio1?.username || commonUser || '',
-        password: d.password || prio1?.password || commonPass || '',
-        secret: d.secret || prio1?.secret || '',
-        profile_id: d.profile_id || selectedProfileId || null,
-        credential_pool: d.credential_pool || (defProf?.credentials?.length > 0 ? defProf.credentials : null),
-        fallback_profile_ids: d.fallback_profile_ids || (pool.length > 0 ? pool : null),
-      }));
+      const enrichedDevices = validDevices.map((d) => {
+        const devProf = profiles.find((p) => p.id === d.profile_id) || defProf;
+        const devPrio1 = (devProf?.credentials && devProf.credentials[0]) || devProf;
+        return {
+          ...d,
+          username: d.username || devPrio1?.username || commonUser || '',
+          password: d.password || devPrio1?.password || commonPass || '',
+          secret: d.secret || devPrio1?.secret || '',
+          profile_id: d.profile_id || devProf?.id || selectedProfileId || null,
+          credential_pool: d.credential_pool || (devProf?.credentials?.length > 0 ? devProf.credentials : null),
+          fallback_profile_ids: d.fallback_profile_ids || (pool.length > 0 ? pool : null),
+        };
+      });
 
       const res = await detectFleetTypes(enrichedDevices);
       if (res && res.results) {

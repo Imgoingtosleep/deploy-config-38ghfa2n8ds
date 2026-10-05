@@ -187,6 +187,33 @@ class FortinetSupportTest(unittest.TestCase):
         self.assertEqual(fortinet_prof.get("parser"), "fortinet")
         self.assertEqual(fortinet_prof.get("commands", {}).get("lldp_brief"), "diagnose lldprx neighbor summary")
 
+    def test_autodetect_fortinet_version_signatures(self):
+        from app.services.autodetect_service import match_version_output
+        fortinet_sample = """
+Version: FortiGate-60E v6.4.5,build1828,210217 (GA)
+Virus-DB: 1.00000(2018-04-09 07:07)
+Hostname: FG-BRANCH-01
+Operation Mode: NAT
+Current virtual domain: root
+FortiOS x86-64: Yes
+"""
+        driver = match_version_output(fortinet_sample, hostname="FG-BRANCH-01")
+        self.assertEqual(driver, "fortinet")
+
+    def test_autodetect_fortinet_ssh_prompt(self):
+        from unittest.mock import patch
+        from app.services.autodetect_service import AutoDetectService
+        from app.schemas.device import DeviceCredentials
+
+        dev = DeviceCredentials(host="192.168.1.99", device_type="autodetect", username="admin", password="password")
+
+        # Mock SSH probe directly returning Fortinet
+        with patch.object(AutoDetectService, "_probe_raw_ssh_banner", return_value=(None, "")), \
+             patch.object(AutoDetectService, "_probe_via_ssh", return_value=("fortinet", "Confirmed Fortinet FortiGate via 'get system status' probe")):
+            detected, reason = AutoDetectService.detect_device_type(dev, force_refresh=True)
+            self.assertEqual(detected, "fortinet")
+            self.assertIn("Fortinet", reason)
+
 
 if __name__ == "__main__":
     unittest.main()
