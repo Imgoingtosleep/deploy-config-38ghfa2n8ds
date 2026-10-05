@@ -127,14 +127,24 @@ export default function DeviceForm({
 
   const [deviceTypes, setDeviceTypes] = useState([
     { label: 'Auto Detect (Recommended)', value: 'autodetect' },
-    { label: 'Huawei VRP (SSH)', value: 'huawei' },
-    { label: 'Huawei VRP (Telnet)', value: 'huawei_telnet' },
-    { label: 'Cisco IOS / IOS-XE (SSH)', value: 'cisco_ios' },
-    { label: 'Cisco IOS (Telnet)', value: 'cisco_ios_telnet' },
-    { label: 'HP / H3C Comware', value: 'hp_comware' },
-    { label: 'Aruba OS-CX', value: 'aruba_os' },
-    { label: 'Juniper JunOS', value: 'juniper_junos' },
+    { label: 'Unknown (try every command profile)', value: 'unknown' },
+    { label: 'Huawei VRP', value: 'huawei' },
+    { label: 'Cisco IOS / IOS-XE', value: 'cisco_ios' },
+    { label: 'Raisecom ROS', value: 'raisecom_roap' },
+    { label: 'Fortinet FortiGate', value: 'fortinet' },
   ]);
+
+  // Driver <option>s from the backend list. A driver that is not in the list (e.g. a
+  // detected juniper_junos_telnet) still gets its own option: a <select> whose value has
+  // no option shows the first one, "Auto Detect", although the device holds a driver.
+  const driverOptions = (current) => {
+    const list = current && !deviceTypes.some((t) => t.value === current)
+      ? [...deviceTypes, { label: current, value: current }]
+      : deviceTypes;
+    return list.map((t) => (
+      <option key={t.value} value={t.value}>{t.label}</option>
+    ));
+  };
 
   useEffect(() => {
     getSupportedDeviceTypes()
@@ -156,7 +166,6 @@ export default function DeviceForm({
         const def = data.find((p) => p.is_default) || data[0];
         if (def) {
           setSelectedProfileId((prev) => prev || def.id);
-          setCommonType(def.device_type || 'autodetect');
           const prio1 = (def.credentials && def.credentials[0]) || def;
           setCommonUser(prio1.username || '');
           setCommonPass(prio1.password || '');
@@ -174,10 +183,6 @@ export default function DeviceForm({
                     username: d.username || prio1.username || '',
                     password: d.password || prio1.password || '',
                     secret: d.secret !== undefined && d.secret !== '' ? d.secret : (prio1.secret || ''),
-                    device_type:
-                      d.device_type && d.device_type !== 'autodetect'
-                        ? d.device_type
-                        : (def.device_type || 'autodetect'),
                   }
             )
           );
@@ -213,14 +218,12 @@ export default function DeviceForm({
     if (!prof) return;
 
     const prio1 = (prof.credentials && prof.credentials[0]) || prof;
-    setCommonType(prof.device_type || commonType);
     setCommonUser(prio1.username || '');
     setCommonPass(prio1.password || '');
 
     setFleet((prev) =>
       prev.map((d) => ({
         ...d,
-        device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
         username: prio1.username || '',
         password: prio1.password || '',
         secret: prio1.secret !== undefined && prio1.secret !== '' ? prio1.secret : (d.secret || ''),
@@ -248,7 +251,6 @@ export default function DeviceForm({
         d.id === deviceId
           ? {
               ...d,
-              device_type: prof.device_type && prof.device_type !== 'autodetect' ? prof.device_type : d.device_type,
               username: prio1.username || '',
               password: prio1.password || '',
               secret: prio1.secret || '',
@@ -271,7 +273,6 @@ export default function DeviceForm({
         username: p1 ? p1.username : d.username,
         password: p1 ? p1.password : d.password,
         secret: p1 ? (p1.secret || '') : d.secret,
-        device_type: p1 && p1.device_type !== 'autodetect' ? p1.device_type : d.device_type,
         profile_id: p1 ? p1.id : d.profile_id,
         fallback_profile_ids: pList,
       }))
@@ -280,7 +281,6 @@ export default function DeviceForm({
     if (p1) {
       setCommonUser(p1.username || '');
       setCommonPass(p1.password || '');
-      setCommonType(p1.device_type || commonType);
     }
 
     setShowFleetPoolModal(false);
@@ -292,7 +292,6 @@ export default function DeviceForm({
       id: null,
       name: '',
       description: '',
-      device_type: 'huawei',
       port: 22,
       is_default: false,
       credentials: [
@@ -326,7 +325,6 @@ export default function DeviceForm({
       id: profile.id,
       name: profile.name || '',
       description: profile.description || '',
-      device_type: profile.device_type || 'autodetect',
       port: profile.port || 22,
       is_default: !!profile.is_default,
       credentials: creds.map((c, i) => ({
@@ -576,7 +574,7 @@ export default function DeviceForm({
         id: newId,
         host: '',
         port: defProf?.port || 22,
-        device_type: defProf?.device_type || commonType || 'autodetect',
+        device_type: commonType || 'autodetect',
         username: prio1?.username || commonUser,
         password: prio1?.password || commonPass,
         secret: prio1?.secret || '',
@@ -595,12 +593,45 @@ export default function DeviceForm({
     }
     setDetectingFleet(true);
     try {
-      const res = await detectFleetTypes(validDevices);
+      const defProf = profiles.find((p) => p.id === selectedProfileId) || profiles.find((p) => p.is_default);
+      const prio1 = (defProf?.credentials && defProf.credentials[0]) || defProf;
+      const pool = [fleetPrio1Id, fleetPrio2Id, fleetPrio3Id].filter(Boolean);
+
+      const enrichedDevices = validDevices.map((d) => {
+        const devProf = profiles.find((p) => p.id === d.profile_id) || defProf;
+        const devPrio1 = (devProf?.credentials && devProf.credentials[0]) || devProf;
+        return {
+          ...d,
+          username: d.username || devPrio1?.username || commonUser || '',
+          password: d.password || devPrio1?.password || commonPass || '',
+          secret: d.secret || devPrio1?.secret || '',
+          profile_id: d.profile_id || devProf?.id || selectedProfileId || null,
+          credential_pool: d.credential_pool || (devProf?.credentials?.length > 0 ? devProf.credentials : null),
+          fallback_profile_ids: d.fallback_profile_ids || (pool.length > 0 ? pool : null),
+        };
+      });
+
+      const res = await detectFleetTypes(enrichedDevices);
       if (res && res.results) {
         const map = {};
+        const unreachableList = [];
+        const authFailedList = [];
+        const cantDetectList = [];
         res.results.forEach((r) => {
-          if (r.id) map[r.id] = r.device_type;
-          else if (r.host) map[r.host] = r.device_type;
+          if (r.status === 'detected' && r.device_type) {
+            if (r.id) map[r.id] = r.device_type;
+            else if (r.host) map[r.host] = r.device_type;
+          } else if (r.status === 'unreachable') {
+            unreachableList.push(r.host);
+          } else if (r.status === 'auth_failed') {
+            authFailedList.push(r.host);
+          } else {
+            // cant_detect: reachable (often logged in) but no vendor could be named.
+            // The row becomes Unknown, which LLDP answers by trying every command profile
+            if (r.id) map[r.id] = 'unknown';
+            else if (r.host) map[r.host] = 'unknown';
+            cantDetectList.push(r.host);
+          }
         });
         setFleet((prev) =>
           prev.map((d) => {
@@ -608,6 +639,19 @@ export default function DeviceForm({
             return detected ? { ...d, device_type: detected } : d;
           })
         );
+        let msg = '';
+        if (unreachableList.length > 0) {
+          msg += `⚠️ Unreachable / Offline (${unreachableList.length}): ${unreachableList.slice(0, 5).join(', ')}${unreachableList.length > 5 ? '...' : ''}\n`;
+        }
+        if (authFailedList.length > 0) {
+          msg += `🔑 Authentication Failed (${authFailedList.length}): ${authFailedList.slice(0, 5).join(', ')}${authFailedList.length > 5 ? '...' : ''}\n`;
+        }
+        if (cantDetectList.length > 0) {
+          msg += `❓ Can't Detect (${cantDetectList.length}): ${cantDetectList.slice(0, 5).join(', ')}${cantDetectList.length > 5 ? '...' : ''} — reachable, but the vendor could not be identified: set to Unknown (LLDP tries every command profile), or pick the driver\n`;
+        }
+        if (msg) {
+          alert(msg.trim());
+        }
       }
     } catch (err) {
       console.error('Fleet type detection failed:', err);
@@ -704,7 +748,7 @@ export default function DeviceForm({
       name: d.name || d.hostname || '',
       host: d.host || '',
       port: d.port || prof?.port || 22,
-      device_type: d.device_type && d.device_type !== 'autodetect' ? d.device_type : (prof?.device_type || 'autodetect'),
+      device_type: d.device_type || 'autodetect',
       username: prio1?.username || '',
       password: prio1?.password || '',
       secret: prio1?.secret || '',
@@ -929,12 +973,7 @@ export default function DeviceForm({
               className="quick-select"
               title="Select device driver to apply to all devices in list"
             >
-              <option value="autodetect">Auto Detect (Recommended)</option>
-              <option value="huawei">Huawei (VRP)</option>
-              <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-              <option value="hp_comware">HP / H3C Comware</option>
-              <option value="aruba_os">Aruba OS</option>
-              <option value="juniper_junos">Juniper JunOS</option>
+              {driverOptions(commonType)}
             </select>
             <button
               type="button"
@@ -1078,12 +1117,7 @@ export default function DeviceForm({
                           onChange={(e) => updateFleetDevice(dev.id, 'device_type', e.target.value)}
                           className="fleet-select"
                         >
-                          <option value="autodetect">Auto Detect</option>
-                          <option value="huawei">Huawei (VRP)</option>
-                          <option value="cisco_ios">Cisco (IOS/IOS-XE)</option>
-                          <option value="hp_comware">HP / H3C Comware</option>
-                          <option value="aruba_os">Aruba OS</option>
-                          <option value="juniper_junos">Juniper JunOS</option>
+                          {driverOptions(dev.device_type)}
                         </select>
                       </td>
                       <td>
@@ -1256,7 +1290,6 @@ export default function DeviceForm({
                           )}
 
                           <div className="text-[11px] text-slate-400 flex items-center gap-3 mt-1 font-mono">
-                            <span>Driver: <strong className="text-slate-200">{p.device_type || 'autodetect'}</strong></span>
                             <span>Port: <strong className="text-slate-200">{p.port || 22}</strong></span>
                           </div>
 
@@ -1337,27 +1370,6 @@ export default function DeviceForm({
                     />
                   </div>
 
-                  {/* Device Driver */}
-                  <div className="form-group">
-                    <label className="form-label">Default Device Driver</label>
-                    <select
-                      value={editingProfile.device_type}
-                      onChange={(e) =>
-                        setEditingProfile((prev) => ({
-                          ...prev,
-                          device_type: e.target.value,
-                          port: e.target.value.includes('telnet') ? 23 : (prev.port || 22),
-                        }))
-                      }
-                      className="form-select"
-                    >
-                      {deviceTypes.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
 
                   {/* Port */}
                   <div className="form-group">
@@ -1741,7 +1753,7 @@ export default function DeviceForm({
                               <td className="font-mono text-sky-300">{d.name || '-'}</td>
                               <td className="font-mono font-semibold text-white">{d.host}</td>
                               <td className="text-sky-300 font-mono text-xs">{prof?.name || 'Default'}</td>
-                              <td className="text-slate-300">{d.device_type || prof?.device_type || 'autodetect'}</td>
+                              <td className="text-slate-300">{d.device_type || 'autodetect'}</td>
                               <td className="font-mono text-slate-400">{d.port || prof?.port || 22}</td>
                             </tr>
                           );
@@ -1859,9 +1871,7 @@ export default function DeviceForm({
                     onChange={(e) => setEditForm({ ...editForm, device_type: e.target.value })}
                     className="form-select"
                   >
-                    {deviceTypes.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
+                    {driverOptions(editForm.device_type)}
                   </select>
                 </div>
               </div>

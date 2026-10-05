@@ -32,7 +32,7 @@ Invoke-Checked "pip install" { & $py -m pip install --upgrade pip }
 Invoke-Checked "pip install requirements" { & $py -m pip install -r (Join-Path $backend "requirements.txt") pyinstaller }
 
 # 3. One-file .exe. Credential profiles are NOT bundled: the .exe starts with none.
-$dataFiles = "command_profiles.json", "model_rules.json", "playbooks.json", "templates.json"
+$dataFiles = "command_profiles.json", "config_templates_hidden.json", "drivers.json", "model_rules.json", "playbooks.json", "templates.json"
 $pyiArgs = @(
     "--noconfirm", "--clean", "--onefile", "--console",
     "--name", "NetAuto",

@@ -88,6 +88,9 @@ class BatchHealthCheckRequest(BaseModel):
     commands: Optional[List[str]] = Field(default_factory=list, description="Optional custom list of CLI commands to execute across fleet")
     command_regexes: Optional[Union[Dict[str, Any], List[Optional[str]]]] = Field(default_factory=dict, description="Optional regex pattern per command")
     vendor_commands: Optional[Dict[str, List[str]]] = Field(default_factory=dict, description="Optional vendor-specific command lists")
+    command_sets: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Commands per driver [{drivers, commands, regexes}]; each device runs the set of its driver, as written"
+    )
     suite_name: Optional[str] = Field(None, description="Optional custom test suite/playbook name")
     num_workers: Optional[int] = Field(None, ge=1, le=100, description="Nornir concurrent workers count (min 1, max 100)")
 

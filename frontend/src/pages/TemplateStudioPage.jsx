@@ -378,6 +378,7 @@ export default function TemplateStudioPage({ device, userRole }) {
                   >
                     <option value="huawei">Huawei VRP</option>
                     <option value="cisco_ios">Cisco IOS / XE</option>
+                    <option value="fortinet">Fortinet FortiGate</option>
                     <option value="all">All Vendors</option>
                   </select>
                 </div>

@@ -98,4 +98,9 @@ netmiko.log
 # Private Guides & Local Documentation
 NETWORK_SETUP_GUIDE.md
 NETWORK_SETUP_GUIDE*
+networksetup.md
 
+
+# Scheduled deploys (may hold device passwords when no Credential Profile is used)
+backend/app/data/scheduled_deploys.json
+backend/app/data/scheduled_deploys.json.tmp

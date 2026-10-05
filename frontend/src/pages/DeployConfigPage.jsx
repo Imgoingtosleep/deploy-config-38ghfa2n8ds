@@ -34,10 +34,32 @@ import {
   HardDrive,
   RefreshCw,
   Plus,
+  Pencil,
+  Trash2,
+  Save,
+  CopyPlus,
+  Braces,
+  Lock,
+  CalendarClock,
+  Play,
+  Ban,
 } from 'lucide-react';
 import {
   submitDeployJob,
   submitBackupJob,
+  scheduleDeployJob,
+  getDeploySchedules,
+  cancelDeploySchedule,
+  runDeployScheduleNow,
+  deleteDeploySchedule,
+  getDeployScheduleLog,
+  getConfigTemplates,
+  createConfigTemplate,
+  updateConfigTemplate,
+  deleteConfigTemplate,
+  getHiddenBuiltinTemplates,
+  hideBuiltinTemplate,
+  getSupportedDeviceTypes,
 } from '../services/api';
 import TerminalOutput, { maskSensitiveCli } from '../components/TerminalOutput';
 import AsyncJobModal from '../components/AsyncJobModal';
@@ -227,7 +249,80 @@ const VENDOR_TEMPLATES = {
       config: `set interfaces irb unit 10 family inet address 192.168.10.1/24\nset vlans USERS_DATA l3-interface irb.10\nset routing-options static route 0.0.0.0/0 next-hop 192.168.99.1`,
     },
   ],
+  fortinet: [
+    {
+      category: 'Interface & IP Configuration',
+      title: 'Configure Port IP Address',
+      desc: 'Set static IP address and allow administrative access',
+      config: `config system interface\n    edit "port1"\n        set mode static\n        set ip {{IP_ADDRESS}} {{NETMASK}}\n        set allowaccess ping https ssh\n    next\nend`,
+    },
+    {
+      category: 'Routing',
+      title: 'Static Default Route',
+      desc: 'Configure static default route via gateway',
+      config: `config router static\n    edit 1\n        set dst 0.0.0.0 0.0.0.0\n        set gateway {{GATEWAY_IP}}\n        set device "port1"\n    next\nend`,
+    },
+    {
+      category: 'Firewall Policy',
+      title: 'IPv4 Allow Policy (LAN to WAN)',
+      desc: 'Basic allow policy with NAT enabled',
+      config: `config firewall policy\n    edit 0\n        set name "LAN_to_WAN"\n        set srcintf "port2"\n        set dstintf "port1"\n        set action accept\n        set srcaddr "all"\n        set dstaddr "all"\n        set schedule "always"\n        set service "ALL"\n        set nat enable\n    next\nend`,
+    },
+    {
+      category: 'System & Services',
+      title: 'Hostname & DNS Settings',
+      desc: 'Set device hostname and system DNS servers',
+      config: `config system global\n    set hostname {{HOSTNAME}}\nend\nconfig system dns\n    set primary 8.8.8.8\n    set secondary 1.1.1.1\nend`,
+    },
+  ],
 };
+
+const VENDOR_LABELS = {
+  huawei: 'Huawei VRP',
+  cisco_ios: 'Cisco IOS / XE',
+  aruba_os: 'Aruba CX',
+  juniper_junos: 'Juniper JunOS',
+  fortinet: 'Fortinet FortiGate',
+};
+
+// {{NAME}} in a template = a value asked for when the template is inserted
+const TEMPLATE_VAR_RE = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+const templateVariables = (config) => {
+  const names = [];
+  for (const m of config.matchAll(TEMPLATE_VAR_RE)) {
+    if (!names.includes(m[1])) names.push(m[1]);
+  }
+  return names;
+};
+
+// Empty values keep their {{NAME}} so they can still be filled with Replace Var later
+const fillTemplateVariables = (config, values) =>
+  config.replace(TEMPLATE_VAR_RE, (whole, name) => {
+    const v = values[name];
+    return v !== undefined && v !== '' ? v : whole;
+  });
+
+// Same as backend services/save_config.py save_command(): run as the last command,
+// every confirmation it asks is answered with y / yes
+const saveCommandFor = (deviceType = '', metaMap = {}) => {
+  const t = (deviceType || '').toLowerCase();
+  if (t === 'autodetect' || t === 'unknown') {
+    return '';
+  }
+  if (metaMap && metaMap[t]?.save_command && metaMap[t]?.is_driver) {
+    return metaMap[t].save_command;
+  }
+  if (t.includes('huawei')) return 'save';
+  if (t.includes('juniper') || t.includes('junos')) return 'commit';
+  if (t.includes('cisco') || t.includes('aruba') || t.includes('raisecom')) return 'write memory';
+  if (t.includes('fortinet') || t.includes('fortigate')) return 'auto-save (FortiOS)';
+  return 'save (driver default)';
+};
+
+const SAVE_COMMAND_VENDOR = { save: 'Huawei', 'write memory': 'Cisco / Aruba', commit: 'Juniper', 'auto-save (FortiOS)': 'Fortinet', 'save (driver default)': 'other' };
+
+const EMPTY_TEMPLATE_DRAFT = { id: null, name: '', vendor: 'huawei', category: '', description: '', config: '' };
 
 // Dangerous command detection rules for safety linting
 const CRITICAL_KEYWORDS = [
@@ -249,6 +344,48 @@ const WARNING_KEYWORDS = [
   'no service password-encryption',
 ];
 
+// <input type="datetime-local"> value in the browser's own timezone
+const toLocalInput = (date) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const nextFullHour = () => {
+  const d = new Date();
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  return d;
+};
+
+const formatScheduleTime = (iso) => (iso ? new Date(iso).toLocaleString() : '-');
+
+// 0=Monday .. 6=Sunday, the order the backend expects
+const WEEKDAYS = [
+  { value: 0, label: 'Mon' },
+  { value: 1, label: 'Tue' },
+  { value: 2, label: 'Wed' },
+  { value: 3, label: 'Thu' },
+  { value: 4, label: 'Fri' },
+  { value: 5, label: 'Sat' },
+  { value: 6, label: 'Sun' },
+];
+
+const REPEAT_MODES = [
+  { value: 'once', label: 'Once' },
+  { value: 'hourly', label: 'Every N hours' },
+  { value: 'daily', label: 'Every N days' },
+  { value: 'weekly', label: 'Weekly on days' },
+];
+
+const SCHEDULE_STATUS_STYLE = {
+  scheduled: 'scheduled',
+  running: 'running',
+  completed: 'success',
+  cancelled: 'muted',
+  missed: 'failed',
+  interrupted: 'failed',
+  failed: 'failed',
+};
+
 export default function DeployConfigPage({
   fleet = [],
   nornirWorkers = 10,
@@ -259,6 +396,15 @@ export default function DeployConfigPage({
   const [activeVendor, setActiveVendor] = useState('huawei');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [templateSearch, setTemplateSearch] = useState('');
+  const [templateSource, setTemplateSource] = useState('all'); // 'all', 'custom', 'builtin'
+
+  // User-made templates (backend /config-templates)
+  const [customTemplates, setCustomTemplates] = useState([]);
+  const [hiddenBuiltins, setHiddenBuiltins] = useState([]); // '<vendor>:<title>' of deleted built-ins
+  const [templateDraft, setTemplateDraft] = useState(null); // EMPTY_TEMPLATE_DRAFT shape while the editor modal is open
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateDraftError, setTemplateDraftError] = useState('');
+  const [pendingInsert, setPendingInsert] = useState(null); // { tpl, replace, values } while asking for {{variables}}
 
   // Deploy Options
   const [saveConfig, setSaveConfig] = useState(true);
@@ -278,7 +424,43 @@ export default function DeployConfigPage({
   const [successMessage, setSuccessMessage] = useState('');
   const [activeAsyncJob, setActiveAsyncJob] = useState(null); // { id: string, title: string }
 
+  // Scheduled deploy
+  const [deployMode, setDeployMode] = useState('now'); // 'now' | 'schedule'
+  const [scheduleRunAt, setScheduleRunAt] = useState(() => toLocalInput(nextFullHour()));
+  const [scheduleDeadline, setScheduleDeadline] = useState('');
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  // Repeat rule: 'once' | 'hourly' (every N hours) | 'daily' (every N days) | 'weekly' (chosen weekdays)
+  const [scheduleRepeat, setScheduleRepeat] = useState('once');
+  const [scheduleInterval, setScheduleInterval] = useState(1);
+  const [scheduleWeekdays, setScheduleWeekdays] = useState([]); // 0=Monday .. 6=Sunday
+  const [scheduleCount, setScheduleCount] = useState(''); // total runs, '' = until cancelled
+  const [scheduleRepeatUntil, setScheduleRepeatUntil] = useState('');
+  const [schedules, setSchedules] = useState([]);
+  const [scheduleLog, setScheduleLog] = useState(null); // { id, title, text }
+  const [deviceTypeMeta, setDeviceTypeMeta] = useState({});
+
+  useEffect(() => {
+    let isMounted = true;
+    getSupportedDeviceTypes()
+      .then((res) => {
+        if (isMounted && res?.device_types) {
+          const meta = {};
+          res.device_types.forEach((t) => {
+            if (t.value) meta[t.value.toLowerCase()] = t;
+          });
+          setDeviceTypeMeta(meta);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const validFleet = fleet.filter((d) => d.host && d.host.trim() !== '');
+  // The save command(s) appended as the last command when "Save to Startup" is on (one per vendor in the fleet)
+  const saveCommands = [...new Set(validFleet.map((d) => saveCommandFor(d.device_type || 'cisco_ios', deviceTypeMeta)).filter(Boolean))];
+  const finalSaveCommands = saveConfig ? (saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)].filter(Boolean)) : [];
 
   // UI Navigation & View Modes
   const [activeTab, setActiveTab] = useState('editor'); // 'editor', 'builder', 'results', 'history'
@@ -312,17 +494,27 @@ export default function DeployConfigPage({
 
   const fileInputRef = useRef(null);
 
-  // Auto-detect vendor based on fleet device types
+  // Auto-detect vendor based on fleet device types or centralized metadata
   useEffect(() => {
     const primaryDevice = fleet?.[0];
     if (primaryDevice?.device_type) {
       const type = primaryDevice.device_type.toLowerCase();
+      if (type === 'autodetect' || type === 'unknown') {
+        return;
+      }
+      const meta = deviceTypeMeta[type];
+      if (meta) {
+        if (meta.family && meta.family !== 'other') setActiveVendor(meta.family);
+        if (meta.default_pre_check) setPreCheckCmd(meta.default_pre_check);
+        if (meta.default_post_check) setPostCheckCmd(meta.default_post_check);
+        return;
+      }
       if (type.includes('huawei')) {
         setActiveVendor('huawei');
         setPreCheckCmd('display interface brief');
         setPostCheckCmd('display interface brief');
-      } else if (type.includes('cisco')) {
-        setActiveVendor('cisco_ios');
+      } else if (type.includes('cisco') || type.includes('raisecom')) {
+        setActiveVendor(type.includes('raisecom') ? 'raisecom_roap' : 'cisco_ios');
         setPreCheckCmd('show ip interface brief');
         setPostCheckCmd('show ip interface brief');
       } else if (type.includes('aruba') || type.includes('hp')) {
@@ -333,9 +525,13 @@ export default function DeployConfigPage({
         setActiveVendor('juniper_junos');
         setPreCheckCmd('show interfaces terse');
         setPostCheckCmd('show interfaces terse');
+      } else if (type.includes('fortinet') || type.includes('fortigate')) {
+        setActiveVendor('fortinet');
+        setPreCheckCmd('get system interface physical');
+        setPostCheckCmd('get system interface physical');
       }
     }
-  }, [fleet]);
+  }, [fleet, deviceTypeMeta]);
 
   // Clean lines for analysis and execution
   const rawLines = configText.split('\n');
@@ -375,25 +571,126 @@ export default function DeployConfigPage({
     return { criticals, warnings, hasHighRisk: criticals.length > 0 };
   })();
 
-  // Filter templates
-  const currentTemplates = VENDOR_TEMPLATES[activeVendor] || VENDOR_TEMPLATES['huawei'];
+  useEffect(() => {
+    getConfigTemplates()
+      .then(setCustomTemplates)
+      .catch((err) => console.error('Failed to load config templates', err));
+    getHiddenBuiltinTemplates()
+      .then(setHiddenBuiltins)
+      .catch((err) => console.error('Failed to load deleted built-in templates', err));
+  }, []);
+
+  // Filter templates: user-made ones first, then the built-in catalog
+  const vendorCustomTemplates = customTemplates
+    .filter((t) => t.vendor === activeVendor)
+    .map((t) => ({ ...t, title: t.name, desc: t.description, custom: true }));
+  const builtinTemplates = (VENDOR_TEMPLATES[activeVendor] || VENDOR_TEMPLATES['huawei'])
+    .map((t) => ({ ...t, builtinKey: `${activeVendor}:${t.title}` }))
+    .filter((t) => !hiddenBuiltins.includes(t.builtinKey));
+  const currentTemplates = [
+    ...(templateSource !== 'builtin' ? vendorCustomTemplates : []),
+    ...(templateSource !== 'custom' ? builtinTemplates : []),
+  ];
   const templateCategories = ['All', ...new Set(currentTemplates.map((t) => t.category))];
+  const categoryFilter = templateCategories.includes(selectedCategory) ? selectedCategory : 'All';
   const filteredTemplates = currentTemplates.filter((t) => {
-    const matchCat = selectedCategory === 'All' || t.category === selectedCategory;
+    const matchCat = categoryFilter === 'All' || t.category === categoryFilter;
+    const q = templateSearch.toLowerCase();
     const matchSearch =
-      templateSearch === '' ||
-      t.title.toLowerCase().includes(templateSearch.toLowerCase()) ||
-      t.desc.toLowerCase().includes(templateSearch.toLowerCase()) ||
-      t.config.toLowerCase().includes(templateSearch.toLowerCase());
+      q === '' ||
+      t.title.toLowerCase().includes(q) ||
+      (t.desc || '').toLowerCase().includes(q) ||
+      t.config.toLowerCase().includes(q);
     return matchCat && matchSearch;
   });
+  const allCategories = [
+    ...new Set([
+      ...customTemplates.map((t) => t.category),
+      ...Object.values(VENDOR_TEMPLATES).flat().map((t) => t.category),
+    ]),
+  ].filter(Boolean);
 
-  // Handle template insertion
-  const handleInsertTemplate = (templateConfig, replace = false) => {
+  const writeToEditor = (text, replace) => {
     if (replace || configText.trim() === '') {
-      setConfigText(templateConfig);
+      setConfigText(text);
     } else {
-      setConfigText((prev) => `${prev.trim()}\n\n${templateConfig}`);
+      setConfigText((prev) => `${prev.trim()}\n\n${text}`);
+    }
+  };
+
+  // Handle template insertion: templates with {{variables}} ask for values first
+  const handleInsertTemplate = (tpl, replace = false) => {
+    const vars = templateVariables(tpl.config);
+    if (vars.length === 0) {
+      writeToEditor(tpl.config, replace);
+      return;
+    }
+    setPendingInsert({ tpl, replace, vars, values: Object.fromEntries(vars.map((v) => [v, ''])) });
+  };
+
+  const handleConfirmInsert = (keepPlaceholders = false) => {
+    if (!pendingInsert) return;
+    const text = keepPlaceholders
+      ? pendingInsert.tpl.config
+      : fillTemplateVariables(pendingInsert.tpl.config, pendingInsert.values);
+    writeToEditor(text, pendingInsert.replace);
+    setPendingInsert(null);
+  };
+
+  const openTemplateEditor = (draft) => {
+    setTemplateDraftError('');
+    setTemplateDraft({ ...EMPTY_TEMPLATE_DRAFT, vendor: activeVendor, ...draft });
+  };
+
+  const handleSaveTemplate = async () => {
+    if (!templateDraft) return;
+    const { id, name, vendor, category, description, config } = templateDraft;
+    if (!name.trim()) {
+      setTemplateDraftError('Template name is required.');
+      return;
+    }
+    if (!config.trim()) {
+      setTemplateDraftError('Template config is empty.');
+      return;
+    }
+    setTemplateSaving(true);
+    setTemplateDraftError('');
+    try {
+      const payload = { name, vendor, category, description, config };
+      if (id) {
+        const saved = await updateConfigTemplate(id, payload);
+        setCustomTemplates((prev) => prev.map((t) => (t.id === id ? saved : t)));
+      } else {
+        const saved = await createConfigTemplate(payload);
+        setCustomTemplates((prev) => [saved, ...prev]);
+      }
+      // Show the saved template where the user will look for it
+      setActiveVendor(vendor);
+      setTemplateSource((s) => (s === 'builtin' ? 'all' : s));
+      setTemplateDraft(null);
+      setSuccessMessage(`Template "${name.trim()}" saved.`);
+    } catch (err) {
+      setTemplateDraftError(err.response?.data?.detail || err.message || 'Failed to save template');
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl) => {
+    if (tpl.custom) {
+      if (!window.confirm(`Delete template "${tpl.title}"?`)) return;
+    } else if (!window.confirm(`Delete default template "${tpl.title}"?\nThis cannot be undone.`)) {
+      return;
+    }
+    try {
+      if (tpl.custom) {
+        await deleteConfigTemplate(tpl.id);
+        setCustomTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
+      } else {
+        setHiddenBuiltins(await hideBuiltinTemplate(tpl.builtinKey));
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to delete template');
     }
   };
 
@@ -434,10 +731,181 @@ export default function DeployConfigPage({
       return;
     }
 
-    // Route to Background Async Job with live progress stream & modal
+    // Route to Background Async Job with live progress stream & modal, or to the scheduler
     setDeploying(false);
-    handleLaunchAsyncFleetDeploy();
+    if (deployMode === 'schedule') {
+      handleScheduleDeploy();
+    } else {
+      handleLaunchAsyncFleetDeploy();
+    }
   };
+
+  const buildPayloadDevices = () =>
+    validFleet.map((d) => ({
+      name: d.name || '',
+      host: d.host.trim(),
+      port: parseInt(d.port, 10) || 22,
+      device_type: d.device_type || 'cisco_ios',
+      username: d.username || '',
+      password: d.password || '',
+      secret: d.secret || '',
+      connection_mode: 'network',
+      profile_id: d.profile_id || null,
+      credential_pool: d.credential_pool || null,
+      fallback_profile_ids: d.fallback_profile_ids || null,
+    }));
+
+  const checkCommandLists = () => ({
+    preCmds: enablePreCheck && preCheckCmd.trim() ? preCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [],
+    postCmds: enablePostCheck && postCheckCmd.trim() ? postCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [],
+  });
+
+  // Scheduled deploy: times are picked in this browser's timezone and sent as UTC
+  const scheduleInputError = (() => {
+    if (deployMode !== 'schedule') return '';
+    const runAt = new Date(scheduleRunAt);
+    if (!scheduleRunAt || Number.isNaN(runAt.getTime())) return 'Pick a start time';
+    if (runAt.getTime() < Date.now() - 60000) return 'Start time is in the past';
+    if (scheduleRepeat === 'once' && scheduleDeadline) {
+      const deadline = new Date(scheduleDeadline);
+      if (Number.isNaN(deadline.getTime()) || deadline <= runAt) return 'Deadline must be after the start time';
+    }
+    if (scheduleRepeat !== 'once') {
+      if (!(scheduleInterval >= 1)) return 'Repeat every must be 1 or more';
+      if (scheduleRepeat === 'weekly' && scheduleWeekdays.length === 0) return 'Pick at least one weekday';
+      if (scheduleCount !== '' && !(Number(scheduleCount) >= 1)) return 'Number of runs must be 1 or more';
+      if (scheduleRepeatUntil) {
+        const until = new Date(scheduleRepeatUntil);
+        if (Number.isNaN(until.getTime()) || until <= runAt) return 'Repeat until must be after the start time';
+      }
+    }
+    return '';
+  })();
+
+  const loadSchedules = async () => {
+    try {
+      setSchedules(await getDeploySchedules());
+    } catch (err) {
+      console.error('Failed to load scheduled deploys', err);
+    }
+  };
+
+  const handleScheduleDeploy = async () => {
+    if (validFleet.length === 0) {
+      setErrorMessage('Please add at least one device IP address in Target Device above.');
+      return;
+    }
+    if (validCommands.length === 0) {
+      setErrorMessage('Please enter configuration commands to deploy.');
+      return;
+    }
+    if (scheduleInputError) {
+      setErrorMessage(scheduleInputError);
+      return;
+    }
+    const { preCmds, postCmds } = checkCommandLists();
+    try {
+      setDeploying(true);
+      const item = await scheduleDeployJob(
+        buildPayloadDevices(),
+        validCommands,
+        saveConfig,
+        preCmds,
+        postCmds,
+        enableBackup,
+        nornirWorkers,
+        {
+          runAt: new Date(scheduleRunAt),
+          deadline: scheduleRepeat === 'once' && scheduleDeadline ? new Date(scheduleDeadline) : null,
+          title: scheduleTitle.trim(),
+          repeat: scheduleRepeat,
+          interval: Number(scheduleInterval) || 1,
+          weekdays: scheduleRepeat === 'weekly' ? scheduleWeekdays : [],
+          occurrences: scheduleRepeat !== 'once' && scheduleCount !== '' ? Number(scheduleCount) : null,
+          repeatUntil: scheduleRepeat !== 'once' && scheduleRepeatUntil ? new Date(scheduleRepeatUntil) : null,
+        }
+      );
+      setSuccessMessage(
+        `Scheduled "${item.title}" for ${formatScheduleTime(item.run_at)}`
+          + (item.repeat !== 'once' ? ` (${item.repeat_label})` : '')
+      );
+      setScheduleTitle('');
+      await loadSchedules();
+      setActiveTab('scheduled');
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setErrorMessage(
+        (Array.isArray(detail) ? detail.map((d) => d.msg).join('; ') : detail) || err.message || 'Failed to schedule deploy'
+      );
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const handleScheduleAction = async (action, item) => {
+    try {
+      if (action === 'cancel') {
+        if (!window.confirm(`Cancel "${item.title}"?`)) return;
+        await cancelDeploySchedule(item.id);
+      } else if (action === 'run') {
+        if (!window.confirm(`Start "${item.title}" now on ${item.device_count} devices?`)) return;
+        const res = await runDeployScheduleNow(item.id);
+        if (res.job_id) setActiveAsyncJob({ id: res.job_id, title: `Scheduled Deploy: ${res.title}` });
+      } else if (action === 'delete') {
+        await deleteDeploySchedule(item.id);
+      }
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Schedule action failed');
+    }
+    loadSchedules();
+  };
+
+  const openScheduleLog = async (item) => {
+    try {
+      const text = await getDeployScheduleLog(item.id);
+      setScheduleLog({ id: item.id, title: item.title, text });
+    } catch (err) {
+      setErrorMessage(err.response?.data?.detail || err.message || 'Failed to load log');
+    }
+  };
+
+  const downloadScheduleLog = () => {
+    const blob = new Blob([scheduleLog.text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${scheduleLog.id}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const hasActiveSchedule = schedules.some((s) => s.status === 'scheduled' || s.status === 'running');
+
+  useEffect(() => {
+    loadSchedules();
+  }, []);
+
+  // Refresh while something is waiting or running, or while the tab is open
+  useEffect(() => {
+    if (!hasActiveSchedule && activeTab !== 'scheduled') return undefined;
+    const timer = setInterval(loadSchedules, 10000);
+    return () => clearInterval(timer);
+  }, [hasActiveSchedule, activeTab]);
+
+  // Live log while its schedule is running
+  const logScheduleStatus = scheduleLog && schedules.find((s) => s.id === scheduleLog.id)?.status;
+  useEffect(() => {
+    if (!scheduleLog || (logScheduleStatus !== 'running' && logScheduleStatus !== 'scheduled')) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const text = await getDeployScheduleLog(scheduleLog.id);
+        setScheduleLog((cur) => (cur && cur.id === scheduleLog.id ? { ...cur, text } : cur));
+      } catch (err) {
+        /* keep the last text */
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [scheduleLog?.id, logScheduleStatus]);
 
   // Launch Massive Fleet Background Job (10,000+ Scale with live SSE Progress Stream & Pagination)
   const handleLaunchAsyncFleetDeploy = async () => {
@@ -450,24 +918,11 @@ export default function DeployConfigPage({
       return;
     }
 
-    const preCmds = enablePreCheck && preCheckCmd.trim() ? preCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
-    const postCmds = enablePostCheck && postCheckCmd.trim() ? postCheckCmd.split('\n').map((c) => c.trim()).filter(Boolean) : [];
+    const { preCmds, postCmds } = checkCommandLists();
 
     try {
       setDeploying(true);
-      const payloadDevices = validFleet.map((d) => ({
-        name: d.name || '',
-        host: d.host.trim(),
-        port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'cisco_ios',
-        username: d.username || '',
-        password: d.password || '',
-        secret: d.secret || '',
-        connection_mode: 'network',
-        profile_id: d.profile_id || null,
-        credential_pool: d.credential_pool || null,
-        fallback_profile_ids: d.fallback_profile_ids || null,
-      }));
+      const payloadDevices = buildPayloadDevices();
 
       const res = await submitDeployJob(
         payloadDevices,
@@ -497,19 +952,7 @@ export default function DeployConfigPage({
     }
     try {
       setBackingUp(true);
-      const payloadDevices = validFleet.map((d) => ({
-        name: d.name || '',
-        host: d.host.trim(),
-        port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'cisco_ios',
-        username: d.username || '',
-        password: d.password || '',
-        secret: d.secret || '',
-        connection_mode: 'network',
-        profile_id: d.profile_id || null,
-        credential_pool: d.credential_pool || null,
-        fallback_profile_ids: d.fallback_profile_ids || null,
-      }));
+      const payloadDevices = buildPayloadDevices();
       const res = await submitBackupJob(payloadDevices, nornirWorkers);
       setShowBackupModal(false);
       setActiveAsyncJob({
@@ -526,8 +969,16 @@ export default function DeployConfigPage({
   // GUI Builder Syntax Generator
   const generateBuilderConfig = (masked = false) => {
     const isHuawei = activeVendor === 'huawei';
+    const isFortinet = activeVendor === 'fortinet';
     if (builderTab === 'vlan') {
-      if (isHuawei) {
+      if (isFortinet) {
+        let out = `config system interface\n    edit "vlan${builderVlan.id}"\n        set vdom "root"\n        set type vlan\n        set vlanid ${builderVlan.id}\n        set description "${builderVlan.name}"`;
+        if (builderVlan.ip) {
+          out += `\n        set ip ${builderVlan.ip} ${builderVlan.mask}\n        set allowaccess ping https ssh`;
+        }
+        out += `\n    next\nend`;
+        return out;
+      } else if (isHuawei) {
         let out = `vlan ${builderVlan.id}\n description ${builderVlan.name}`;
         if (builderVlan.ip) {
           out += `\ninterface Vlanif${builderVlan.id}\n description ${builderVlan.name}\n ip address ${builderVlan.ip} ${builderVlan.mask}\n undo shutdown`;
@@ -541,7 +992,9 @@ export default function DeployConfigPage({
         return out;
       }
     } else if (builderTab === 'port') {
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config system interface\n    edit "${builderPort.port}"\n        set description "${builderPort.desc}"\n        set status up\n    next\nend`;
+      } else if (isHuawei) {
         if (builderPort.mode === 'access') {
           return `interface ${builderPort.port}\n description ${builderPort.desc}\n port link-type access\n port default vlan ${builderPort.vlan}${builderPort.portfast ? '\n stp edged-port enable' : ''}\n undo shutdown`;
         } else {
@@ -555,20 +1008,33 @@ export default function DeployConfigPage({
         }
       }
     } else if (builderTab === 'route') {
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config router static\n    edit 0\n        set dst ${builderRoute.dest} ${builderRoute.mask}\n        set gateway ${builderRoute.nexthop}${builderRoute.metric ? `\n        set distance ${builderRoute.metric}` : ''}\n    next\nend`;
+      } else if (isHuawei) {
         return `ip route-static ${builderRoute.dest} ${builderRoute.mask} ${builderRoute.nexthop}${builderRoute.metric ? ` preference ${builderRoute.metric}` : ''}`;
       } else {
         return `ip route ${builderRoute.dest} ${builderRoute.mask} ${builderRoute.nexthop}${builderRoute.metric ? ` ${builderRoute.metric}` : ''}`;
       }
     } else if (builderTab === 'services') {
-      if (isHuawei) {
+      if (isFortinet) {
+        let out = `config system global\n    set hostname ${builderServices.hostname}\nend`;
+        if (builderServices.ntp) {
+          out += `\nconfig system ntp\n    set type custom\n    config ntpserver\n        edit 1\n            set server "${builderServices.ntp}"\n        next\n    end\n    set status enable\nend`;
+        }
+        if (builderServices.syslog) {
+          out += `\nconfig log syslogd setting\n    set status enable\n    set server "${builderServices.syslog}"\nend`;
+        }
+        return out;
+      } else if (isHuawei) {
         return `sysname ${builderServices.hostname}\nntp-service unicast-server ${builderServices.ntp}\ninfo-center loghost ${builderServices.syslog}\nheader login information #\n${builderServices.banner}\n#`;
       } else {
         return `hostname ${builderServices.hostname}\nntp server ${builderServices.ntp}\nlogging host ${builderServices.syslog}\nbanner motd #\n${builderServices.banner}\n#`;
       }
     } else if (builderTab === 'user') {
       const pwd = masked ? '*****' : builderUser.password;
-      if (isHuawei) {
+      if (isFortinet) {
+        return `config system admin\n    edit "${builderUser.username}"\n        set accprofile "super_admin"\n        set password ${pwd}\n    next\nend`;
+      } else if (isHuawei) {
         return `aaa\n local-user ${builderUser.username} password irreversible-cipher ${pwd}\n local-user ${builderUser.username} privilege level ${builderUser.priv}\n local-user ${builderUser.username} service-type ssh terminal`;
       } else {
         return `username ${builderUser.username} privilege ${builderUser.priv} secret ${pwd}\nline vty 0 4\n login local\n transport input ssh`;
@@ -725,6 +1191,19 @@ export default function DeployConfigPage({
             <History className="h-4 w-4 text-sky-400" />
             <span>History ({deployHistory.length})</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('scheduled')}
+            className={`deploy-tab-btn ${activeTab === 'scheduled' ? 'active' : ''}`}
+          >
+            <CalendarClock className="h-4 w-4 text-violet-400" />
+            <span>Scheduled</span>
+            {hasActiveSchedule && (
+              <span className="counter-pill">
+                {schedules.filter((s) => s.status === 'scheduled' || s.status === 'running').length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -780,6 +1259,17 @@ export default function DeployConfigPage({
                   >
                     {copiedScript ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
                     <span>{copiedScript ? 'Copied' : 'Copy'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openTemplateEditor({ config: configText.trim() })}
+                    disabled={validCommands.length === 0}
+                    className="btn-editor-tool"
+                    title="Save the current script as a reusable template"
+                  >
+                    <Save className="h-3.5 w-3.5 text-indigo-400" />
+                    <span>Save as Template</span>
                   </button>
 
                   <button
@@ -849,6 +1339,19 @@ export default function DeployConfigPage({
                 />
               </div>
 
+              {finalSaveCommands.length > 0 && validCommands.length > 0 && (
+                <div className="save-final-row">
+                  <Lock className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span>Last command (added by Save to Startup):</span>
+                  {finalSaveCommands.map((c) => (
+                    <code key={c} className="font-mono">
+                      {c}
+                      {c === 'save' && <span className="save-final-confirm">→ Y</span>}
+                    </code>
+                  ))}
+                </div>
+              )}
+
               {/* Safety & Risk Lint Warning Box */}
               {riskAnalysis.hasHighRisk && (
                 <div className="risk-banner critical">
@@ -894,7 +1397,10 @@ export default function DeployConfigPage({
                     />
                     <div>
                       <span className="option-name">Save to Startup-Config / NVRAM</span>
-                      <p className="option-hint">Executes 'write memory' or 'save' after deployment</p>
+                      <p className="option-hint">
+                        Adds {(saveCommands.length ? saveCommands : [saveCommandFor(activeVendor, deviceTypeMeta)]).map((c) => `'${c}'`).join(' / ')} as the last command,
+                        (Huawei 'save' is confirmed with Y), and fails the device if it does not report the save
+                      </p>
                     </div>
                   </label>
 
@@ -970,7 +1476,7 @@ export default function DeployConfigPage({
                     <span>
                       {validCommands.length === 0
                         ? 'Add commands above to proceed'
-                        : `Ready to push ${validCommands.length} command(s) across ${validFleet.length} device(s)`}
+                        : `Ready to push ${validCommands.length} command(s)${finalSaveCommands.length ? ' + save' : ''} across ${validFleet.length} device(s)`}
                     </span>
                   </div>
 
@@ -1007,8 +1513,17 @@ export default function DeployConfigPage({
               <div className="card-header-flex">
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-indigo-400" />
-                  <h3 className="card-title">Verified Template Snippets</h3>
+                  <h3 className="card-title">Config Templates</h3>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => openTemplateEditor({})}
+                  className="btn-template-new"
+                  title="Create a new config template"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>New Template</span>
+                </button>
               </div>
 
               {/* Vendor Switcher */}
@@ -1041,6 +1556,13 @@ export default function DeployConfigPage({
                 >
                   Juniper JunOS
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveVendor('fortinet')}
+                  className={`vendor-tab-btn ${activeVendor === 'fortinet' ? 'active' : ''}`}
+                >
+                  Fortinet FortiGate
+                </button>
               </div>
 
               {/* Search & Category Filter */}
@@ -1061,13 +1583,30 @@ export default function DeployConfigPage({
                   )}
                 </div>
 
+                <div className="template-source-tabs">
+                  {[
+                    ['all', 'All'],
+                    ['custom', `My Templates (${vendorCustomTemplates.length})`],
+                    ['builtin', 'Built-in'],
+                  ].map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setTemplateSource(key)}
+                      className={`template-source-btn ${templateSource === key ? 'active' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="category-pills">
                   {templateCategories.map((cat) => (
                     <button
                       key={cat}
                       type="button"
                       onClick={() => setSelectedCategory(cat)}
-                      className={`cat-pill ${selectedCategory === cat ? 'active' : ''}`}
+                      className={`cat-pill ${categoryFilter === cat ? 'active' : ''}`}
                     >
                       {cat}
                     </button>
@@ -1079,21 +1618,91 @@ export default function DeployConfigPage({
               <div className="templates-scroll-list">
                 {filteredTemplates.length === 0 ? (
                   <div className="no-templates">
-                    <p className="text-xs text-slate-500">No template snippets found matching your search.</p>
+                    {templateSource === 'custom' && !templateSearch ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <p className="text-xs text-slate-500">
+                          No {VENDOR_LABELS[activeVendor]} templates yet. Create one, or save the script in the editor as a template.
+                        </p>
+                        <button type="button" onClick={() => openTemplateEditor({})} className="btn-template-new">
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>New Template</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">No template snippets found matching your search.</p>
+                    )}
                   </div>
                 ) : (
                   filteredTemplates.map((tpl, idx) => (
-                    <div key={idx} className="template-snippet-item">
+                    <div key={tpl.id || `builtin-${idx}`} className={`template-snippet-item ${tpl.custom ? 'custom' : ''}`}>
                       <div className="snippet-header">
-                        <div>
-                          <span className="snippet-category">{tpl.category}</span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="snippet-category">{tpl.category}</span>
+                            {tpl.custom && <span className="snippet-custom-badge">My Template</span>}
+                          </div>
                           <h4 className="snippet-title">{tpl.title}</h4>
-                          <p className="snippet-desc">{tpl.desc}</p>
+                          {tpl.desc && <p className="snippet-desc">{tpl.desc}</p>}
+                          {templateVariables(tpl.config).length > 0 && (
+                            <div className="snippet-vars">
+                              <Braces className="h-3 w-3" />
+                              {templateVariables(tpl.config).map((v) => (
+                                <span key={v} className="snippet-var-chip font-mono">{v}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                         <div className="snippet-actions">
+                          {tpl.custom ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => openTemplateEditor(tpl)}
+                                className="btn-snippet-icon"
+                                title="Edit template"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTemplate(tpl)}
+                                className="btn-snippet-icon danger"
+                                title="Delete template"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openTemplateEditor({
+                                  name: `${tpl.title} (copy)`,
+                                  vendor: activeVendor,
+                                  category: tpl.category,
+                                  description: tpl.desc,
+                                  config: tpl.config,
+                                })
+                              }
+                              className="btn-snippet-icon"
+                              title="Save a copy to My Templates to customize it"
+                            >
+                              <CopyPlus className="h-3 w-3" />
+                            </button>
+                          )}
+                          {!tpl.custom && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTemplate(tpl)}
+                              className="btn-snippet-icon danger"
+                              title="Delete default template"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => handleInsertTemplate(tpl.config, false)}
+                            onClick={() => handleInsertTemplate(tpl, false)}
                             className="btn-snippet-append"
                             title="Append to bottom of editor"
                           >
@@ -1102,7 +1711,7 @@ export default function DeployConfigPage({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleInsertTemplate(tpl.config, true)}
+                            onClick={() => handleInsertTemplate(tpl, true)}
                             className="btn-snippet-replace"
                             title="Replace editor content"
                           >
@@ -1147,6 +1756,7 @@ export default function DeployConfigPage({
                 <option value="cisco_ios">Cisco IOS / XE</option>
                 <option value="aruba_os">Aruba OS-CX</option>
                 <option value="juniper_junos">Juniper JunOS</option>
+                <option value="fortinet">Fortinet FortiGate</option>
               </select>
             </div>
           </div>
@@ -1972,6 +2582,185 @@ export default function DeployConfigPage({
         </div>
       )}
 
+      {/* TAB 5: SCHEDULED DEPLOYS */}
+      {activeTab === 'scheduled' && (
+        <div className="deploy-card">
+          <div className="card-header-flex">
+            <div className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-violet-400" />
+              <h3 className="card-title">Scheduled Deployments</h3>
+            </div>
+            <button type="button" onClick={loadSchedules} className="btn-history-view">
+              <RefreshCw className="h-3 w-3 inline mr-1" />
+              Refresh
+            </button>
+          </div>
+          <p className="text-xs text-slate-500 mb-2">
+            Times are shown in this browser&apos;s timezone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). The
+            backend starts each deploy on its own clock, so this page can be closed.
+          </p>
+
+          {schedules.length === 0 ? (
+            <div className="no-templates py-8">
+              <CalendarClock className="h-8 w-8 text-slate-600 mb-2" />
+              <p className="text-xs text-slate-500">
+                No scheduled deploys. Choose &quot;Schedule&quot; in the deploy confirmation to add one.
+              </p>
+            </div>
+          ) : (
+            <div className="history-table-wrapper">
+              <table className="history-table schedule-table">
+                <thead>
+                  <tr>
+                    <th>Next Run</th>
+                    <th>Repeat</th>
+                    <th>Title</th>
+                    <th>Devices</th>
+                    <th>Commands</th>
+                    <th>Status</th>
+                    <th>Result</th>
+                    <th className="text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {schedules.map((item) => (
+                    <tr key={item.id}>
+                      <td className="font-mono text-xs text-slate-300">
+                        {formatScheduleTime(item.run_at)}
+                        {item.deadline && (
+                          <div className="text-slate-500">until {formatScheduleTime(item.deadline)}</div>
+                        )}
+                      </td>
+                      <td className="text-xs text-slate-300">
+                        {item.repeat && item.repeat !== 'once' ? (
+                          <>
+                            <div className="text-violet-300">{item.repeat_label}</div>
+                            <div className="text-slate-500">
+                              run {item.run_count || 0}
+                              {item.occurrences ? `/${item.occurrences}` : ''} done
+                              {item.missed_count ? `, ${item.missed_count} missed` : ''}
+                            </div>
+                            {item.repeat_until && (
+                              <div className="text-slate-500">until {formatScheduleTime(item.repeat_until)}</div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-slate-500">once</span>
+                        )}
+                      </td>
+                      <td className="text-xs text-white">
+                        {item.title}
+                        {item.stores_passwords && (
+                          <div className="schedule-warn" title="Devices without a Credential Profile keep their password in scheduled_deploys.json until the run">
+                            <Lock className="h-3 w-3 inline mr-1" />
+                            password stored on server
+                          </div>
+                        )}
+                        {item.error && <div className="text-rose-400">{item.error}</div>}
+                      </td>
+                      <td className="font-mono text-xs text-slate-300">{item.device_count}</td>
+                      <td className="font-mono text-xs text-indigo-300">{item.command_count}</td>
+                      <td>
+                        <span
+                          className={`status-pill ${
+                            item.status === 'completed' && item.summary?.failed > 0
+                              ? 'failed'
+                              : SCHEDULE_STATUS_STYLE[item.status] || 'muted'
+                          }`}
+                        >
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="font-mono text-xs text-slate-400">
+                        {item.summary
+                          ? `${item.summary.success} ok / ${item.summary.failed} failed`
+                          : item.started_at
+                            ? `started ${formatScheduleTime(item.started_at)}`
+                            : '-'}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        <button type="button" onClick={() => openScheduleLog(item)} className="btn-history-view mr-2">
+                          <FileText className="h-3 w-3 inline mr-1" />
+                          Log
+                        </button>
+                        {item.job_id && item.status === 'running' && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveAsyncJob({ id: item.job_id, title: `Scheduled Deploy: ${item.title}` })}
+                            className="btn-history-view mr-2"
+                          >
+                            <Eye className="h-3 w-3 inline mr-1" />
+                            Progress
+                          </button>
+                        )}
+                        {item.status === 'scheduled' && (
+                          <button
+                            type="button"
+                            onClick={() => handleScheduleAction('run', item)}
+                            className="btn-history-restore mr-2"
+                            title={
+                              item.repeat && item.repeat !== 'once'
+                                ? 'Run this occurrence now; the series continues from the next slot'
+                                : 'Start now instead of waiting'
+                            }
+                          >
+                            <Play className="h-3 w-3 inline mr-1" />
+                            Run Now
+                          </button>
+                        )}
+                        {(item.status === 'scheduled' || item.status === 'running') && (
+                          <button type="button" onClick={() => handleScheduleAction('cancel', item)} className="btn-schedule-danger">
+                            <Ban className="h-3 w-3 inline mr-1" />
+                            Cancel
+                          </button>
+                        )}
+                        {item.status !== 'scheduled' && item.status !== 'running' && (
+                          <button type="button" onClick={() => handleScheduleAction('delete', item)} className="btn-schedule-danger">
+                            <Trash2 className="h-3 w-3 inline mr-1" />
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SCHEDULE LOG MODAL */}
+      {scheduleLog && (
+        <div className="modal-backdrop">
+          <div className="confirm-modal-box schedule-log-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-violet-400" />
+                <h3 className="confirm-modal-title">Deploy Log: {scheduleLog.title}</h3>
+              </div>
+              <button onClick={() => setScheduleLog(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+            <div className="confirm-modal-body">
+              <div className="schedule-log-legend font-mono">time | device | ip | action | status | detail</div>
+              <pre className="schedule-log-text">{scheduleLog.text || 'No log lines yet.'}</pre>
+            </div>
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => openScheduleLog(scheduleLog)} className="btn-secondary">
+                <RefreshCw className="h-4 w-4" />
+                <span>Refresh</span>
+              </button>
+              <button type="button" onClick={downloadScheduleLog} className="btn-secondary">
+                <Download className="h-4 w-4" />
+                <span>Download .log</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CONFIRMATION MODAL */}
       {showConfirmModal && (
         <div className="modal-backdrop">
@@ -2012,7 +2801,7 @@ export default function DeployConfigPage({
                 <div className="confirm-stat-card">
                   <span className="confirm-stat-label">NVRAM Save</span>
                   <span className="confirm-stat-val font-mono">
-                    {saveConfig ? 'Enabled (write mem)' : 'Disabled'}
+                    {saveConfig ? `${finalSaveCommands.join(' / ')} + Y` : 'Disabled'}
                   </span>
                 </div>
               </div>
@@ -2027,11 +2816,160 @@ export default function DeployConfigPage({
                 </div>
               )}
 
+              {/* Deploy now or at a scheduled time */}
+              <div className="schedule-picker">
+                <div className="schedule-mode-toggle">
+                  <button
+                    type="button"
+                    className={deployMode === 'now' ? 'active' : ''}
+                    onClick={() => setDeployMode('now')}
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Deploy now
+                  </button>
+                  <button
+                    type="button"
+                    className={deployMode === 'schedule' ? 'active' : ''}
+                    onClick={() => setDeployMode('schedule')}
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    Schedule
+                  </button>
+                </div>
+                {deployMode === 'schedule' && (
+                  <div className="schedule-fields">
+                    <div>
+                      <label className="form-label">Start at *</label>
+                      <input
+                        type="datetime-local"
+                        value={scheduleRunAt}
+                        onChange={(e) => setScheduleRunAt(e.target.value)}
+                        className="form-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="form-label">Repeat *</label>
+                      <select
+                        value={scheduleRepeat}
+                        onChange={(e) => setScheduleRepeat(e.target.value)}
+                        className="form-input"
+                      >
+                        {REPEAT_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>
+                            {m.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {scheduleRepeat === 'once' && (
+                      <div>
+                        <label className="form-label">Do not start after (optional)</label>
+                        <input
+                          type="datetime-local"
+                          value={scheduleDeadline}
+                          onChange={(e) => setScheduleDeadline(e.target.value)}
+                          className="form-input"
+                        />
+                      </div>
+                    )}
+
+                    {(scheduleRepeat === 'hourly' || scheduleRepeat === 'daily') && (
+                      <div>
+                        <label className="form-label">
+                          Every * {scheduleRepeat === 'hourly' ? '(hours)' : '(days)'}
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max={scheduleRepeat === 'hourly' ? 168 : 365}
+                          value={scheduleInterval}
+                          onChange={(e) => setScheduleInterval(e.target.value === '' ? '' : Number(e.target.value))}
+                          className="form-input"
+                        />
+                      </div>
+                    )}
+
+                    {scheduleRepeat === 'weekly' && (
+                      <div className="schedule-field-wide">
+                        <label className="form-label">On these days *</label>
+                        <div className="schedule-weekdays">
+                          {WEEKDAYS.map((d) => (
+                            <button
+                              key={d.value}
+                              type="button"
+                              className={scheduleWeekdays.includes(d.value) ? 'active' : ''}
+                              onClick={() =>
+                                setScheduleWeekdays((cur) =>
+                                  cur.includes(d.value) ? cur.filter((v) => v !== d.value) : [...cur, d.value].sort()
+                                )
+                              }
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {scheduleRepeat !== 'once' && (
+                      <>
+                        <div>
+                          <label className="form-label">How many times (blank = until cancelled)</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={scheduleCount}
+                            onChange={(e) => setScheduleCount(e.target.value)}
+                            placeholder="e.g. 4"
+                            className="form-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="form-label">Repeat until (optional)</label>
+                          <input
+                            type="datetime-local"
+                            value={scheduleRepeatUntil}
+                            onChange={(e) => setScheduleRepeatUntil(e.target.value)}
+                            className="form-input"
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    <div className="schedule-field-wide">
+                      <label className="form-label">Title (optional)</label>
+                      <input
+                        type="text"
+                        value={scheduleTitle}
+                        onChange={(e) => setScheduleTitle(e.target.value)}
+                        placeholder="e.g. Add VLAN 100 on access switches"
+                        className="form-input"
+                      />
+                    </div>
+                    <p className="schedule-hint schedule-field-wide">
+                      Timezone: {Intl.DateTimeFormat().resolvedOptions().timeZone}. A run that cannot start within 15
+                      minutes of its time (e.g. the backend was down) is marked missed instead of running late; a
+                      repeating schedule then waits for its next turn.
+                      {scheduleRepeat === 'weekly'
+                        && ' The first run moves to the first chosen weekday at the start time you picked.'}
+                      {scheduleRepeat !== 'once'
+                        && ' Cancel stops the whole series; every run appends to the same log.'}
+                      {!enableBackup && ' Tip: enable "Backup before deploy" for unattended runs.'}
+                    </p>
+                    {scheduleInputError && (
+                      <p className="text-xs text-rose-400 schedule-field-wide">{scheduleInputError}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Command List Preview */}
               <div className="confirm-cmd-preview">
                 <div className="text-xs font-semibold text-slate-400 mb-1.5 flex justify-between">
                   <span>Commands to be executed sequentially:</span>
-                  <span>{validCommands.length} items</span>
+                  <span>{validCommands.length + (finalSaveCommands.length ? 1 : 0)} items</span>
                 </div>
                 <div className="confirm-cmd-list font-mono">
                   {validCommands.map((cmd, i) => (
@@ -2040,6 +2978,19 @@ export default function DeployConfigPage({
                       <span className="text-emerald-300">{maskSensitiveCli(cmd)}</span>
                     </div>
                   ))}
+                  {finalSaveCommands.length > 0 && (
+                    <div className="confirm-cmd-row confirm-cmd-save">
+                      <span className="text-slate-500 w-6">{validCommands.length + 1}.</span>
+                      <span className="text-amber-300">
+                        {finalSaveCommands
+                          .map((c) => (finalSaveCommands.length > 1 ? `${c} (${SAVE_COMMAND_VENDOR[c]})` : c))
+                          .join('  |  ')}
+                      </span>
+                      {finalSaveCommands.includes('save') && (
+                        <span className="save-final-confirm">Huawei confirm → Y</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2057,9 +3008,10 @@ export default function DeployConfigPage({
                 type="button"
                 onClick={handleConfirmDeploy}
                 className="btn-deploy-confirm"
+                disabled={deployMode === 'schedule' && !!scheduleInputError}
               >
-                <Send className="h-4 w-4" />
-                <span>Confirm & Push Configuration</span>
+                {deployMode === 'schedule' ? <CalendarClock className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                <span>{deployMode === 'schedule' ? 'Confirm & Schedule Deploy' : 'Confirm & Push Configuration'}</span>
               </button>
             </div>
           </div>
@@ -2067,6 +3019,174 @@ export default function DeployConfigPage({
       )}
 
       {/* VARIABLE REPLACER MODAL */}
+      {templateDraft && (
+        <div className="modal-backdrop">
+          <div className="template-modal-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-indigo-400" />
+                <h3 className="confirm-modal-title">{templateDraft.id ? 'Edit Config Template' : 'New Config Template'}</h3>
+              </div>
+              <button onClick={() => setTemplateDraft(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+
+            <div className="template-modal-body">
+              <div className="template-form-grid">
+                <div className="template-form-wide">
+                  <label className="form-label">Template Name *</label>
+                  <input
+                    type="text"
+                    value={templateDraft.name}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, name: e.target.value }))}
+                    placeholder="e.g. Branch switch baseline"
+                    className="form-input"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="form-label">Vendor *</label>
+                  <select
+                    value={templateDraft.vendor}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, vendor: e.target.value }))}
+                    className="form-input"
+                  >
+                    {Object.entries(VENDOR_LABELS).map(([key, label]) => (
+                      <option key={key} value={key}>{label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Category</label>
+                  <input
+                    type="text"
+                    list="config-template-categories"
+                    value={templateDraft.category}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, category: e.target.value }))}
+                    placeholder="My Templates"
+                    className="form-input"
+                  />
+                  <datalist id="config-template-categories">
+                    {allCategories.map((c) => (
+                      <option key={c} value={c} />
+                    ))}
+                  </datalist>
+                </div>
+                <div className="template-form-wide">
+                  <label className="form-label">Description</label>
+                  <input
+                    type="text"
+                    value={templateDraft.description}
+                    onChange={(e) => setTemplateDraft((d) => ({ ...d, description: e.target.value }))}
+                    placeholder="What this template configures"
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="form-label">Config *</label>
+                <textarea
+                  value={templateDraft.config}
+                  onChange={(e) => setTemplateDraft((d) => ({ ...d, config: e.target.value }))}
+                  placeholder={`vlan {{VLAN_ID}}\n description {{VLAN_NAME}}`}
+                  className="template-config-textarea font-mono"
+                  spellCheck="false"
+                  rows={12}
+                />
+                <p className="template-hint">
+                  Use <code>{'{{NAME}}'}</code> for values that change per use (e.g. <code>{'{{VLAN_ID}}'}</code>). You will be asked for them when inserting the template.
+                </p>
+                {templateVariables(templateDraft.config).length > 0 && (
+                  <div className="snippet-vars mt-2">
+                    <Braces className="h-3 w-3" />
+                    <span className="text-[11px] text-slate-400">Variables:</span>
+                    {templateVariables(templateDraft.config).map((v) => (
+                      <span key={v} className="snippet-var-chip font-mono">{v}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {templateDraftError && (
+                <div className="alert-box error">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  <span className="flex-1">{templateDraftError}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => setTemplateDraft(null)} className="btn-secondary">
+                Cancel
+              </button>
+              <button type="button" onClick={handleSaveTemplate} disabled={templateSaving} className="btn-primary">
+                {templateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                <span>{templateDraft.id ? 'Save Changes' : 'Save Template'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingInsert && (
+        <div className="modal-backdrop">
+          <div className="variable-modal-box">
+            <div className="confirm-modal-header">
+              <div className="flex items-center gap-2">
+                <Braces className="h-4 w-4 text-amber-400" />
+                <h3 className="confirm-modal-title">Fill Template Variables — {pendingInsert.tpl.title}</h3>
+              </div>
+              <button onClick={() => setPendingInsert(null)} className="modal-close-btn">
+                ×
+              </button>
+            </div>
+
+            <form
+              className="p-4 flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmInsert(false);
+              }}
+            >
+              {pendingInsert.vars.map((v, i) => (
+                <div key={v}>
+                  <label className="form-label font-mono">{v}</label>
+                  <input
+                    type="text"
+                    value={pendingInsert.values[v]}
+                    onChange={(e) =>
+                      setPendingInsert((p) => ({ ...p, values: { ...p.values, [v]: e.target.value } }))
+                    }
+                    placeholder={`{{${v}}}`}
+                    className="form-input font-mono"
+                    autoFocus={i === 0}
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="form-label">Preview</label>
+                <pre className="snippet-code font-mono template-preview">
+                  {fillTemplateVariables(pendingInsert.tpl.config, pendingInsert.values)}
+                </pre>
+              </div>
+              <p className="text-[11px] text-slate-500">Empty fields keep their {'{{NAME}}'} placeholder.</p>
+              <button type="submit" hidden />
+            </form>
+
+            <div className="confirm-modal-footer">
+              <button type="button" onClick={() => handleConfirmInsert(true)} className="btn-secondary">
+                Insert with Placeholders
+              </button>
+              <button type="button" onClick={() => handleConfirmInsert(false)} className="btn-primary">
+                {pendingInsert.replace ? 'Replace Editor' : 'Append to Editor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showVariableModal && (
         <div className="modal-backdrop">
           <div className="variable-modal-box">

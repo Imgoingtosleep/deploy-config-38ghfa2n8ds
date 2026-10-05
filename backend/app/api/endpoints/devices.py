@@ -5,27 +5,24 @@ from app.services.netmiko_service import NetmikoService
 
 router = APIRouter()
 
-SUPPORTED_DEVICE_TYPES = [
-    {"label": "Auto Detect (Recommended)", "value": "autodetect"},
-    {"label": "Huawei VRP (SSH)", "value": "huawei"},
-    {"label": "Huawei VRP (Telnet)", "value": "huawei_telnet"},
-    {"label": "Cisco IOS / IOS-XE (SSH)", "value": "cisco_ios"},
-    {"label": "Cisco IOS (Telnet - No Auth / Simple Pass)", "value": "cisco_ios_telnet"},
-    {"label": "Cisco NX-OS", "value": "cisco_nxos"},
-    {"label": "Aruba OS-CX / ProCurve", "value": "aruba_os"},
-    {"label": "Juniper JunOS", "value": "juniper_junos"},
-    {"label": "HP / H3C Comware", "value": "hp_comware"},
-    {"label": "MikroTik RouterOS", "value": "mikrotik_routeros"},
-    {"label": "Linux / Cumulus", "value": "linux"},
-    {"label": "Generic Telnet (No Auth / Lab Switch)", "value": "generic_termserver_telnet"},
-    {"label": "Generic SSH / Paramiko", "value": "generic_termserver"},
-]
+from app.core.driver_registry import DriverRegistry
+
+# SSH drivers only: a device on port 23 is connected with the telnet variant of its
+# driver automatically (huawei -> huawei_telnet), so telnet needs no entries of its own
+SUPPORTED_DEVICE_TYPES = DriverRegistry.get_supported_device_types()
 
 
 @router.get("/types")
 def get_supported_device_types():
-    """Return supported Netmiko device drivers"""
-    return {"device_types": SUPPORTED_DEVICE_TYPES}
+    """Return supported Netmiko device drivers from the centralized DriverRegistry"""
+    return {"device_types": DriverRegistry.get_supported_device_types()}
+
+
+@router.get("/drivers")
+def get_all_drivers():
+    """Return full driver catalog with metadata from the centralized DriverRegistry"""
+    return {"drivers": [d.dict() for d in DriverRegistry.get_catalog().values()]}
+
 
 @router.get("/serial-ports")
 def get_available_serial_ports():
@@ -63,15 +60,25 @@ def test_connection(device: DeviceCredentials):
 
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
-from app.services.autodetect_service import AutoDetectService
+from app.services.autodetect_service import AutoDetectService, is_driver
+
+
+def _detect_status(detected_type: str) -> str:
+    """'detected', or the failure itself: unreachable / auth_failed / cant_detect"""
+    if is_driver(detected_type):
+        return "detected"
+    return "cant_detect" if detected_type == "unknown" else detected_type
+
 
 @router.post("/detect-type")
 def detect_single_device_type(device: DeviceCredentials):
     """Auto-detect vendor/driver type for a single network device"""
-    detected_type, reason = AutoDetectService.detect_device_type(device)
+    detected_type, reason = AutoDetectService.detect_device_type(device, force_refresh=True)
+    status = _detect_status(detected_type)
     return {
         "host": device.host,
         "device_type": detected_type,
+        "status": status,
         "reason": reason,
         "authenticated_username": getattr(device, "username", None),
     }
@@ -86,12 +93,14 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
     results = [None] * len(devices)
 
     def _probe_dev(dev: DeviceCredentials, index: int):
-        d_type, reason = AutoDetectService.detect_device_type(dev)
+        d_type, reason = AutoDetectService.detect_device_type(dev, force_refresh=True)
         dev_id = getattr(dev, "id", None) or f"dev-{index+1}"
+        status = _detect_status(d_type)
         return {
             "id": dev_id,
             "host": dev.host,
             "device_type": d_type,
+            "status": status,
             "reason": reason,
             "authenticated_username": getattr(dev, "username", None),
         }
@@ -108,7 +117,8 @@ def detect_fleet_types(devices: List[DeviceCredentials]):
                 results[idx] = {
                     "id": dev_id,
                     "host": devices[idx].host,
-                    "device_type": "huawei",
+                    "device_type": "unreachable",
+                    "status": "unreachable",
                     "reason": f"Probe error: {str(e)}",
                 }
 

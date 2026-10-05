@@ -18,6 +18,8 @@ APP_NAME = "NetAuto"
 # not in this list: an .exe handed to someone else must not carry logins.
 DEFAULT_DATA_FILES = [
     "command_profiles.json",
+    "config_templates_hidden.json",
+    "drivers.json",
     "model_rules.json",
     "playbooks.json",
     "templates.json",

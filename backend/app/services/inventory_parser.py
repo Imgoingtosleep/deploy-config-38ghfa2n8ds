@@ -7,41 +7,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import openpyxl
 
-# Normalization maps for device types/vendors
-DEVICE_TYPE_MAP = {
-    "auto": "autodetect",
-    "autodetect": "autodetect",
-    "huawei": "huawei",
-    "vrp": "huawei",
+from app.core.driver_registry import DriverRegistry
 
-    "quidway": "huawei",
-    "cloudengine": "huawei",
-    "huawei_vrp": "huawei",
-    "huawei_telnet": "huawei_telnet",
-    "cisco": "cisco_ios",
-    "cisco_ios": "cisco_ios",
-    "ios": "cisco_ios",
-    "ios-xe": "cisco_ios",
-    "ios_xe": "cisco_ios",
-    "cisco_xe": "cisco_ios",
-    "cisco_telnet": "cisco_ios_telnet",
-    "cisco_ios_telnet": "cisco_ios_telnet",
-    "cisco_nxos": "cisco_nxos",
-    "nxos": "cisco_nxos",
-    "hp": "hp_comware",
-    "h3c": "hp_comware",
-    "comware": "hp_comware",
-    "hp_comware": "hp_comware",
-    "aruba": "aruba_os",
-    "aruba_os": "aruba_os",
-    "procurve": "aruba_os",
-    "juniper": "juniper_junos",
-    "junos": "juniper_junos",
-    "juniper_junos": "juniper_junos",
-    "mikrotik": "mikrotik_routeros",
-    "routeros": "mikrotik_routeros",
-    "linux": "linux",
-}
+# Normalization maps for device types/vendors from centralized DriverRegistry
+DEVICE_TYPE_MAP = DriverRegistry.get_alias_map()
+
 
 def normalize_key(k: Any) -> str:
     """Normalize dictionary keys or column headers"""
@@ -51,13 +21,10 @@ def normalize_key(k: Any) -> str:
     clean = re.sub(r"[\s_\-]+", "_", clean)
     return clean
 
+
 def normalize_device_type(raw_type: Optional[str], default_type: str = "huawei") -> str:
     """Map human or vendor strings to Netmiko device_type"""
-    if not raw_type:
-        return default_type
-    val = str(raw_type).strip().lower()
-    val_clean = re.sub(r"[\s_\-]+", "_", val)
-    return DEVICE_TYPE_MAP.get(val_clean, val)
+    return DriverRegistry.normalize_driver_alias(raw_type, default_type)
 
 def clean_host_and_port(raw_host: Any, default_port: int = 22) -> Tuple[str, int]:
     """Extract and sanitize host/IP and port (e.g. 192.168.1.1:2222 -> host: 192.168.1.1, port: 2222)"""

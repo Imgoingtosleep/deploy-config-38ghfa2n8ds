@@ -104,8 +104,13 @@ def normalize_topology(nodes: Dict[str, Dict[str, Any]], links: List[Dict[str, A
         degree[link["target"]] = degree.get(link["target"], 0) + 1
     for node in nodes.values():
         hint = node.get("role") if node.get("role") in _ROLES else "unknown"
-        # A device type chosen in the editor / draw.io shape wins; otherwise guess it from the model
-        node["role"] = hint if hint != "unknown" else LldpService.device_role(node.get("model", ""))
+        # A device type chosen in the editor / draw.io shape wins; otherwise guess it from the model.
+        # Exports save every device's type, so only a type the model would not give counts as chosen.
+        info = LldpService.device_role_info(node.get("model", ""))
+        if hint != "unknown" and hint != info["role"]:
+            node["role"], node["role_source"], node["role_rule"] = hint, "diagram", ""
+        else:
+            node["role"], node["role_source"], node["role_rule"] = info["role"], info["source"], info["rule_name"]
         node["degree"] = degree.get(node["id"], 0)
 
     order = {role: i for i, role in enumerate(_ROLES)}

@@ -8,7 +8,7 @@ import uuid
 import math
 import threading
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Callable
 
 from app.schemas.device import DeviceCredentials
 from app.schemas.command import (
@@ -21,6 +21,7 @@ from app.schemas.command import (
 from app.services.nornir_service import NornirService
 from app.services.netmiko_service import NetmikoService
 from app.core.config import settings
+from app.services.ssh_compat import describe_kex_error
 
 class JobRecord:
     def __init__(self, job_id: str, job_type: str, devices: List[DeviceCredentials], payload: Dict[str, Any] = None):
@@ -39,6 +40,8 @@ class JobRecord:
         self.error: Optional[str] = None
         self.cancel_requested = False
         self.created_at = datetime.now().isoformat()
+        # Per-device step callback (device, action, status, detail), used by scheduled deploy logs
+        self.on_event: Optional[Callable[[DeviceCredentials, str, str, str], None]] = None
 
 class JobService:
     _jobs: Dict[str, JobRecord] = {}
@@ -98,6 +101,7 @@ class JobService:
         post_check_commands: List[str] = None,
         backup_before_deploy: bool = False,
         num_workers: Optional[int] = None,
+        on_event: Optional[Callable[[DeviceCredentials, str, str, str], None]] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
         workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
@@ -114,6 +118,7 @@ class JobService:
                 "num_workers": workers_val,
             }
         )
+        job.on_event = on_event
         with cls._lock:
             cls._jobs[job_id] = job
 
@@ -162,6 +167,7 @@ class JobService:
         vendor_commands: Dict[str, List[str]] = None,
         suite_name: str = None,
         num_workers: Optional[int] = None,
+        command_sets: Optional[List[Dict[str, Any]]] = None,
     ) -> JobSubmitResponse:
         job_id = str(uuid.uuid4())
         workers_val = max(1, min(int(num_workers or getattr(settings, "DEFAULT_NUM_WORKERS", 10)), 100))
@@ -174,6 +180,7 @@ class JobService:
                 "commands": commands or [],
                 "command_regexes": command_regexes or {},
                 "vendor_commands": vendor_commands or {},
+                "command_sets": command_sets or None,
                 "suite_name": suite_name or check_type.capitalize(),
                 "num_workers": workers_val,
             }
@@ -385,6 +392,7 @@ class JobService:
                     post_check_commands=job.payload.get("post_check_commands", []),
                     backup_before_deploy=job.payload.get("backup_before_deploy", False),
                     num_workers=chunk_size,
+                    on_event=job.on_event,
                 )
                 with cls._lock:
                     job.results.extend(batch_res.results)
@@ -392,6 +400,12 @@ class JobService:
                     job.success_count += batch_res.success_count
                     job.failed_count += batch_res.failed_count
             except Exception as e:
+                if job.on_event:
+                    for dev in chunk:
+                        try:
+                            job.on_event(dev, "ERROR", "failed", f"Batch deploy error: {e}")
+                        except Exception:
+                            pass
                 with cls._lock:
                     for dev in chunk:
                         job.results.append(AdvancedDeployResponse(
@@ -482,6 +496,7 @@ class JobService:
         commands = job.payload.get("commands", [])
         command_regexes = job.payload.get("command_regexes", {})
         vendor_commands = job.payload.get("vendor_commands", {})
+        command_sets = job.payload.get("command_sets")
         suite_name = job.payload.get("suite_name", check_type.capitalize())
 
         for i in range(0, len(devices), chunk_size):
@@ -502,6 +517,7 @@ class JobService:
                         commands,
                         vendor_commands,
                         command_regexes,
+                        command_sets,
                     ): idx
                     for idx, dev in enumerate(chunk)
                 }
@@ -687,6 +703,10 @@ class JobService:
         err_str = str(raw_error).strip()
         out_str = str(raw_output).strip()
         combined = f"{err_str} {out_str}".lower()
+
+        kex_reason = describe_kex_error(err_str)
+        if kex_reason:
+            return kex_reason
 
         # 1. SSH Channel Error (Unable to open channel / VTY exhausted / Channel allocation failed)
         if "unable to open channel" in combined or "channel closed" in combined or "channel request failed" in combined or "administratively prohibited" in combined:

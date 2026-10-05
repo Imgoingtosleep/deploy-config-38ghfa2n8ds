@@ -1,0 +1,320 @@
+{
+  "format": "lldp-topology",
+  "version": 1,
+  "exported_at": "2026-09-21T00:00:00Z",
+  "topology": {
+    "nodes": [
+      {
+        "id": "ISP-GW",
+        "hostname": "ISP-GW",
+        "ip": "",
+        "model": "",
+        "role": "cloud",
+        "discovered": false,
+        "manual": false,
+        "x": 640,
+        "y": 40
+      },
+      {
+        "id": "EDGE-FW-01",
+        "hostname": "EDGE-FW-01",
+        "ip": "10.10.0.254",
+        "model": "FortiGate-100F",
+        "role": "firewall",
+        "discovered": false,
+        "manual": false,
+        "x": 640,
+        "y": 170
+      },
+      {
+        "id": "CORE-SW-01",
+        "hostname": "CORE-SW-01",
+        "ip": "10.10.0.1",
+        "model": "CE6881-48S6CQ",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 500,
+        "y": 310
+      },
+      {
+        "id": "CORE-SW-02",
+        "hostname": "CORE-SW-02",
+        "ip": "10.10.0.2",
+        "model": "CE6881-48S6CQ",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 780,
+        "y": 310
+      },
+      {
+        "id": "DIST-SW-A",
+        "hostname": "DIST-SW-A",
+        "ip": "10.10.0.11",
+        "model": "S5735-S48T4X",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 360,
+        "y": 460
+      },
+      {
+        "id": "DIST-SW-B",
+        "hostname": "DIST-SW-B",
+        "ip": "10.10.0.12",
+        "model": "C9300-48P",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 920,
+        "y": 460
+      },
+      {
+        "id": "ACC-SW-A1",
+        "hostname": "ACC-SW-A1",
+        "ip": "10.10.0.21",
+        "model": "S5735-L24T4X",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 240,
+        "y": 610
+      },
+      {
+        "id": "ACC-SW-A2",
+        "hostname": "ACC-SW-A2",
+        "ip": "10.10.0.22",
+        "model": "S5735-L24T4X",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 480,
+        "y": 610
+      },
+      {
+        "id": "ACC-SW-B1",
+        "hostname": "ACC-SW-B1",
+        "ip": "10.10.0.23",
+        "model": "WS-C2960X-48TS-L",
+        "role": "switch",
+        "discovered": true,
+        "manual": false,
+        "x": 920,
+        "y": 610
+      },
+      {
+        "id": "AP-A1-01",
+        "hostname": "AP-A1-01",
+        "ip": "10.10.50.11",
+        "model": "AirEngine5761-11",
+        "role": "wireless",
+        "discovered": false,
+        "manual": false,
+        "x": 240,
+        "y": 750
+      },
+      {
+        "id": "SRV-APP-01",
+        "hostname": "SRV-APP-01",
+        "ip": "10.10.60.10",
+        "model": "",
+        "role": "server",
+        "discovered": false,
+        "manual": false,
+        "x": 1060,
+        "y": 750
+      }
+    ],
+    "links": [
+      {
+        "source": "ISP-GW",
+        "target": "EDGE-FW-01",
+        "source_port": "",
+        "target_port": "port1",
+        "confirmed": false,
+        "manual": true
+      },
+      {
+        "source": "EDGE-FW-01",
+        "target": "CORE-SW-01",
+        "source_port": "port2",
+        "target_port": "10GE1/0/48",
+        "confirmed": false,
+        "manual": true
+      },
+      {
+        "source": "EDGE-FW-01",
+        "target": "CORE-SW-02",
+        "source_port": "port3",
+        "target_port": "10GE1/0/48",
+        "confirmed": false,
+        "manual": true
+      },
+      {
+        "source": "CORE-SW-01",
+        "target": "CORE-SW-02",
+        "source_port": "40GE1/0/1",
+        "target_port": "40GE1/0/1",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "CORE-SW-01",
+        "target": "DIST-SW-A",
+        "source_port": "10GE1/0/1",
+        "target_port": "XGigabitEthernet0/0/1",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "CORE-SW-02",
+        "target": "DIST-SW-B",
+        "source_port": "10GE1/0/2",
+        "target_port": "Te1/1/1",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "DIST-SW-A",
+        "target": "ACC-SW-A1",
+        "source_port": "GigabitEthernet0/0/1",
+        "target_port": "XGigabitEthernet0/0/1",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "DIST-SW-A",
+        "target": "ACC-SW-A2",
+        "source_port": "GigabitEthernet0/0/2",
+        "target_port": "XGigabitEthernet0/0/1",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "DIST-SW-B",
+        "target": "ACC-SW-B1",
+        "source_port": "Gi1/0/1",
+        "target_port": "Gi1/0/49",
+        "confirmed": true,
+        "manual": false
+      },
+      {
+        "source": "ACC-SW-A1",
+        "target": "AP-A1-01",
+        "source_port": "GigabitEthernet0/0/10",
+        "target_port": "GE0/0/0",
+        "confirmed": false,
+        "manual": false
+      },
+      {
+        "source": "ACC-SW-B1",
+        "target": "SRV-APP-01",
+        "source_port": "Gi1/0/10",
+        "target_port": "eth0",
+        "confirmed": false,
+        "manual": true
+      }
+    ]
+  },
+  "neighbors": [],
+  "annotations": {
+    "zones": [
+      {
+        "id": "z-edge",
+        "text": "Internet Edge",
+        "color": "#f97316",
+        "x": 540,
+        "y": -20,
+        "w": 200,
+        "h": 250,
+        "anchor": "EDGE-FW-01"
+      },
+      {
+        "id": "z-core",
+        "text": "Core / DC",
+        "color": "#6366f1",
+        "x": 420,
+        "y": 255,
+        "w": 440,
+        "h": 120,
+        "anchor": "CORE-SW-01"
+      },
+      {
+        "id": "z-bldg-a",
+        "text": "Building A",
+        "color": "#22c55e",
+        "x": 160,
+        "y": 405,
+        "w": 420,
+        "h": 420,
+        "anchor": "DIST-SW-A"
+      },
+      {
+        "id": "z-bldg-b",
+        "text": "Building B",
+        "color": "#06b6d4",
+        "x": 840,
+        "y": 405,
+        "w": 300,
+        "h": 420,
+        "anchor": "DIST-SW-B"
+      }
+    ],
+    "flows": [
+      {
+        "id": "f-user",
+        "name": "Wi-Fi user to Internet",
+        "label": "VLAN 50",
+        "color": "#f59e0b",
+        "direction": "forward",
+        "animated": true,
+        "hops": [
+          "AP-A1-01",
+          "ACC-SW-A1",
+          "DIST-SW-A",
+          "CORE-SW-01",
+          "EDGE-FW-01",
+          "ISP-GW"
+        ]
+      },
+      {
+        "id": "f-app",
+        "name": "App traffic",
+        "label": "TCP 443",
+        "color": "#ec4899",
+        "direction": "both",
+        "animated": true,
+        "hops": [
+          "ACC-SW-A2",
+          "DIST-SW-A",
+          "CORE-SW-01",
+          "CORE-SW-02",
+          "DIST-SW-B",
+          "ACC-SW-B1",
+          "SRV-APP-01"
+        ]
+      }
+    ],
+    "notes": [
+      {
+        "id": "t-lag",
+        "text": "2x40G peer-link",
+        "color": "#a5b4fc",
+        "size": 12,
+        "x": 585,
+        "y": 330,
+        "anchor": "CORE-SW-01"
+      },
+      {
+        "id": "t-vlan",
+        "text": "VLAN 10 Users\nVLAN 50 Wi-Fi",
+        "color": "#86efac",
+        "size": 12,
+        "x": 180,
+        "y": 440,
+        "anchor": "DIST-SW-A"
+      }
+    ]
+  }
+}

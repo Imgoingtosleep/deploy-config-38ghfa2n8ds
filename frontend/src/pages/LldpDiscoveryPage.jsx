@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Server,
   Network,
@@ -26,8 +27,10 @@ import {
   FlaskConical,
   RefreshCw,
   FileSpreadsheet,
+  Wand2,
 } from 'lucide-react';
 import {
+  getSupportedDeviceTypes,
   discoverLldp,
   exportLldpExcel,
   getCredentialProfiles,
@@ -35,6 +38,7 @@ import {
   createCommandProfile,
   updateCommandProfile,
   deleteCommandProfile,
+  reorderCommandProfiles,
   previewScanTargets,
   submitLldpSubnetScan,
   getLldpSubnetScan,
@@ -45,6 +49,7 @@ import {
   downloadLldpTableTemplate,
 } from '../services/api';
 import LldpTopology from '../components/LldpTopology';
+import CustomRegexTester from '../components/CustomRegexTester';
 import ModelIconLegend from '../components/ModelIconLegend';
 import ModelRulesModal from '../components/ModelRulesModal';
 import { neighborsFromDoc, hostsFromDoc } from '../components/topologyModel';
@@ -64,28 +69,40 @@ const NEIGHBOR_COLUMNS = [
 const SCAN_STATUSES = [
   { key: 'SUCCESS', label: 'Success', tone: 'ok' },
   { key: 'NO_LLDP', label: 'No LLDP', tone: 'warn' },
-  { key: 'DUPLICATE', label: 'Duplicate', tone: 'muted' },
   { key: 'AUTH_FAILED', label: 'Auth Failed', tone: 'fail' },
   { key: 'FAILED', label: 'Failed', tone: 'fail' },
   { key: 'UNREACHABLE', label: 'Unreachable', tone: 'muted' },
 ];
 const POLL_MS = 1500;
-// Editable command set of a command profile: [field, label, placeholder]
+// Editable command set of a command profile: [field, label, command placeholder, regex placeholder]
+// A field without a regex placeholder takes no regex: 'pager_disable' prints nothing to read.
+// A pattern with a capture group reads the value, one without keeps only the matching lines.
 const COMMAND_FIELDS = [
-  ['pager_disable', 'Disable paging', 'screen-length 0 temporary'],
-  ['sysname', 'Sysname / hostname', 'display current-configuration | include sysname'],
-  ['version', 'Version (used for the model)', 'display version'],
-  ['lldp_brief', 'LLDP neighbor list', 'display lldp neighbor brief'],
-  ['lldp_detail', 'LLDP detail per port — {intf} = local port', 'display lldp neighbor interface {intf}'],
-  ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor'],
+  ['pager_disable', 'Disable paging', 'screen-length 0 temporary', ''],
+  ['sysname', 'Sysname / hostname', 'display current-configuration | include sysname', 'reads the name, e.g. ^\\s*sysname\\s+(\\S+)'],
+  ['version', 'Version (used for the model)', 'display version', 'reads the model, e.g. (S\\d{4}\\S*)'],
+  ['lldp_brief', 'LLDP neighbor list', 'display lldp neighbor brief', 'keeps the neighbor rows, e.g. ^(GE|XGE|Eth)'],
+  ['lldp_detail', 'LLDP detail per port — {intf} = local port', 'display lldp neighbor interface {intf}', 'keeps the wanted lines'],
+  ['lldp_full', 'LLDP detail, all ports', 'display lldp neighbor', 'keeps the wanted lines'],
 ];
+const REGEX_FIELDS = COMMAND_FIELDS.filter(([, , , rxPlaceholder]) => rxPlaceholder);
+// 'custom' parser: the LLDP regexes are the parser. Every match is one neighbor, read from
+// the named groups below; local_port is required.
+const CUSTOM_GROUPS = ['local_port', 'remote_device', 'remote_port', 'remote_ip', 'remote_model'];
+const CUSTOM_REGEX_PLACEHOLDERS = {
+  lldp_brief: 'required — e.g. ^(?P<local_port>\\S+)\\s+(?P<remote_device>\\S+)\\s+(?P<remote_port>\\S+)',
+  lldp_detail: 'optional — e.g. (?s)Port (?P<local_port>\\S+).*?Model: (?P<remote_model>\\S+)',
+  lldp_full: 'optional — same groups as the detail regex',
+};
 const blankCommandProfile = () => ({
   id: null,
   name: '',
   description: '',
   parser: 'huawei',
+  driver: 'huawei',
   enabled: true,
   commands: Object.fromEntries(COMMAND_FIELDS.map(([f]) => [f, ''])),
+  regexes: Object.fromEntries(REGEX_FIELDS.map(([f]) => [f, ''])),
 });
 
 const splitList = (text) => text.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
@@ -117,11 +134,14 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
 
   // Command profiles: which CLI commands to run (independent of the SSH login)
   const [cmdProfiles, setCmdProfiles] = useState(null);
-  const [cmdPool, setCmdPool] = useState(['', '']);
   const [showCmdModal, setShowCmdModal] = useState(false);
   const [editingCmd, setEditingCmd] = useState(null);
   const [cmdError, setCmdError] = useState('');
   const [cmdSaving, setCmdSaving] = useState(false);
+  // Command field whose regex tester is open ('custom' parser)
+  const [rxTesterField, setRxTesterField] = useState(null);
+  // Drivers a 'custom' command profile can log in with (the Device Type list, less the modes)
+  const [loginDrivers, setLoginDrivers] = useState(['huawei', 'cisco_ios', 'raisecom_roap', 'fortinet']);
 
   // Model rules: custom regex for the model / device type, and re-reading a result with them
   const [showRulesModal, setShowRulesModal] = useState(false); // false | true | { teach: sample }
@@ -192,15 +212,14 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
       .catch(() => setCmdProfiles([]));
   }, []);
 
-  // Seed the command order once from the saved priorities (Huawei, then Cisco)
   useEffect(() => {
-    if (!cmdProfiles || cmdProfiles.length === 0) return;
-    setCmdPool((prev) => {
-      if (prev.some(Boolean)) return prev;
-      const enabled = cmdProfiles.filter((p) => p.enabled !== false);
-      return [enabled[0]?.id || '', enabled[1]?.id || ''];
-    });
-  }, [cmdProfiles]);
+    getSupportedDeviceTypes()
+      .then((data) => {
+        const list = (data?.device_types || []).map((t) => t.value).filter((v) => v !== 'autodetect' && v !== 'unknown');
+        if (list.length) setLoginDrivers(list);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (mode !== 'subnet') return undefined;
@@ -224,16 +243,22 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
   const credentialSource = validFleet.find((d) => d.profile_id) || fleet.find((d) => d.profile_id) || null;
   const credentialProfile = (profiles || []).find((p) => p.id === credentialSource?.profile_id) || null;
 
-  const cmdProfileById = (id) => (cmdProfiles || []).find((p) => p.id === id);
-  const cmdPoolIds = [...new Set(cmdPool.filter(Boolean))];
-  const cmdPoolProfiles = cmdPoolIds.map(cmdProfileById).filter(Boolean);
-  const setCmdPrio = (index, value) =>
-    setCmdPool((prev) => prev.map((id, i) => (i === index ? value : id)));
-  // One priority slot per command profile at most: more would only repeat a profile
-  const maxCmdPrio = Math.max(2, (cmdProfiles || []).length);
-  const addCmdPrio = () => setCmdPool((prev) => (prev.length >= maxCmdPrio ? prev : [...prev, '']));
-  const removeCmdPrio = (index) =>
-    setCmdPool((prev) => (prev.length <= 2 ? prev : prev.filter((_, i) => i !== index)));
+  // One order for every command profile: it is only used for devices whose driver is
+  // Unknown (the sweep). A device with a driver runs the profile of its own vendor.
+  const orderedCmdProfiles = cmdProfiles || [];
+  const sweepProfiles = orderedCmdProfiles.filter((p) => p.enabled !== false);
+  const moveCmdProfile = async (index, delta) => {
+    const ids = orderedCmdProfiles.map((p) => p.id);
+    const to = index + delta;
+    if (to < 0 || to >= ids.length) return;
+    [ids[index], ids[to]] = [ids[to], ids[index]];
+    try {
+      await reorderCommandProfiles(ids);
+      await loadCmdProfiles();
+    } catch (err) {
+      setErrorMessage(errMsg(err, 'Failed to reorder command profiles'));
+    }
+  };
 
   const loadCmdProfiles = async () => {
     const data = await getCommandProfiles();
@@ -255,15 +280,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         name: editingCmd.name.trim(),
         description: editingCmd.description || '',
         parser: editingCmd.parser || 'huawei',
+        driver: editingCmd.parser === 'custom' ? (editingCmd.driver || '').trim() : '',
         enabled: editingCmd.enabled !== false,
         commands: editingCmd.commands,
+        regexes: editingCmd.regexes || {},
       };
-      const saved = editingCmd.id
+      await (editingCmd.id
         ? await updateCommandProfile(editingCmd.id, payload)
-        : await createCommandProfile(payload);
+        : createCommandProfile(payload));
       await loadCmdProfiles();
-      // A brand new profile is not in the order yet: put it in the first free slot
-      setCmdPool((prev) => (prev.includes(saved.id) ? prev : prev.map((id, i) => (!id && !prev.slice(0, i).some((x) => !x) ? saved.id : id))));
       setEditingCmd(null);
     } catch (err) {
       setCmdError(errMsg(err, 'Failed to save command profile'));
@@ -278,7 +303,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     try {
       await deleteCommandProfile(prof.id);
       await loadCmdProfiles();
-      setCmdPool((prev) => prev.map((id) => (id === prof.id ? '' : id)));
     } catch (err) {
       setCmdError(errMsg(err, 'Failed to delete command profile'));
     }
@@ -303,7 +327,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         name: d.name || '',
         host: d.host.trim(),
         port: parseInt(d.port, 10) || 22,
-        device_type: d.device_type || 'huawei',
+        device_type: d.device_type || 'autodetect',
         username: d.username || '',
         password: d.password || '',
         secret: d.secret || '',
@@ -319,7 +343,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         enableTcpScan: enableTcpScanSeed,
         scanWorkers,
         tcpTimeout,
-        commandProfileIds: cmdPoolIds,
       });
       setReport(data);
     } catch (err) {
@@ -363,7 +386,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
       const payload = {
         targets,
         exclude: splitList(excludeText),
-        device_type: 'huawei',
         recursive,
         max_depth: maxDepth,
         num_workers: nornirWorkers,
@@ -371,7 +393,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         scan_workers: scanWorkers,
         tcp_timeout: tcpTimeout,
       };
-      if (cmdPoolIds.length) payload.command_profile_ids = cmdPoolIds;
       if (credentialSource) {
         // Same SSH credentials as the fleet: whatever the Credential Profile
         // selector above applied. Without one the backend uses its default profile.
@@ -379,7 +400,6 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
         if (credentialSource.fallback_profile_ids?.length) {
           payload.fallback_profile_ids = credentialSource.fallback_profile_ids;
         }
-        payload.device_type = credentialProfile?.device_type || credentialSource.device_type || 'autodetect';
         payload.port = parseInt(credentialSource.port, 10) || credentialProfile?.port || 22;
       }
       const job = await submitLldpSubnetScan(payload);
@@ -585,6 +605,8 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
     const q = search.trim().toLowerCase();
     return report.hosts.filter(
       (h) =>
+        // A device found on two IPs is one row: the other IP shows as '+IP' on it
+        !h.same_device_as &&
         !(isScanReport && hideUnreachable && h.status === 'UNREACHABLE') &&
         (!q || [h.hostname, h.ip, h.status, h.detail].some((v) => String(v || '').toLowerCase().includes(q)))
     );
@@ -719,15 +741,15 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           </>
         )}
 
-        {/* Which CLI commands to run: P1 first, next profile when the device rejects them */}
+        {/* Which CLI commands to run: the driver decides; the order is only for Unknown devices */}
         <div className="lldp-prio-pool">
           <div className="lldp-prio-head">
             <span>
               <Terminal className="h-3.5 w-3.5" style={{ display: 'inline', marginRight: '0.35rem' }} />
-              Command Profile Priority
-              {cmdPoolProfiles.length ? ` (${cmdPoolProfiles.map((p) => p.name).join(' → ')})` : ''}
+              Command Profiles
+              {sweepProfiles.length ? ` (Unknown: ${sweepProfiles.map((p) => p.name).join(' → ')})` : ''}
             </span>
-            <div className="lldp-prio-head-actions">
+          <div className="lldp-prio-head-actions">
               <button
                 className="lldp-btn-secondary lldp-btn-mini"
                 onClick={() => setShowRulesModal(true)}
@@ -751,56 +773,43 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
           </div>
 
           <div className="lldp-prio-rows">
-            {cmdPool.map((id, i) => {
-              const prof = cmdProfileById(id);
-              return (
-                <label className="lldp-prio-row" key={i}>
-                  <span className={`lldp-prio-badge p${i + 1}`}>C{i + 1}</span>
-                  <select value={id} onChange={(e) => setCmdPrio(i, e.target.value)} disabled={running}>
-                    <option value="">{i === 0 ? '— All enabled profiles —' : '— None —'}</option>
-                    {(cmdProfiles || []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                        {p.enabled === false ? ' (disabled)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="lldp-prio-driver">
-                    {prof ? `${prof.parser} · ${prof.commands?.lldp_brief || '-'}` : '-'}
-                  </span>
-                  {cmdPool.length > 2 && (
-                    <button
-                      type="button"
-                      className="lldp-prio-remove"
-                      onClick={() => removeCmdPrio(i)}
-                      disabled={running}
-                      title="Remove this priority slot"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </label>
-              );
-            })}
+            {orderedCmdProfiles.map((p, i) => (
+              <div className="lldp-prio-row" key={p.id}>
+                <span className={`lldp-prio-badge p${Math.min(i + 1, 3)}`}>{i + 1}</span>
+                <span className="lldp-prio-name">
+                  {p.name}
+                  {p.enabled === false ? ' (disabled)' : ''}
+                </span>
+                <span className="lldp-prio-driver">
+                  {`${p.parser === 'custom' ? `custom (${p.driver})` : p.parser} · ${p.commands?.lldp_brief || '-'}`}
+                </span>
+                <button
+                  type="button"
+                  className="lldp-prio-move"
+                  onClick={() => moveCmdProfile(i, -1)}
+                  disabled={running || i === 0}
+                  title="Try earlier for Unknown devices"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className="lldp-prio-move"
+                  onClick={() => moveCmdProfile(i, 1)}
+                  disabled={running || i === orderedCmdProfiles.length - 1}
+                  title="Try later for Unknown devices"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
           </div>
-
-          {cmdPool.length < maxCmdPrio && (
-            <button
-              type="button"
-              className="lldp-btn-secondary lldp-btn-mini lldp-prio-add"
-              onClick={addCmdPrio}
-              disabled={running}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add priority (C{cmdPool.length + 1})
-            </button>
-          )}
           <span className="lldp-hint">
-            Commands only — the SSH login comes from the credential profile above. C1's commands run first on the open
-            session; if the device rejects them (Huawei <code>display</code> on a Cisco), C2's commands are run on the
-            same session instead, with no second login. Devices found by recursive discovery have no device type of
-            their own, so they are logged in with C1's SSH driver first and tried again with C2's when the commands
-            are rejected.
+            Commands only — the SSH login comes from the credential profile above. Each device runs the command
+            profile of its <b>Device Type / Driver</b>: set on the fleet row, found by auto-detect, or (LLDP
+            neighbors) named by the neighbor's LLDP system description. Only a device that is <b>Unknown</b> — set
+            so, or auto-detect could not name its vendor — tries the profiles in the order above: one login per
+            driver, until one is accepted. A wrong password or a dead host is never retried.
           </span>
         </div>
 
@@ -953,6 +962,13 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               </span>
             ))}
           </div>
+          {(scanStatus.stats?.SAME_DEVICE ?? 0) > 0 && (
+            <div className="lldp-hint">
+              {(scanStatus.stats.SUCCESS ?? 0) + (scanStatus.stats.NO_LLDP ?? 0)} device(s) on{' '}
+              {(scanStatus.stats.SUCCESS ?? 0) + (scanStatus.stats.NO_LLDP ?? 0) + scanStatus.stats.SAME_DEVICE} IP(s):{' '}
+              {scanStatus.stats.SAME_DEVICE} IP(s) belong to a device already found on another IP
+            </div>
+          )}
           <div className="lldp-hint">
             Log directory: <code>{scanStatus.log_dir}</code>
           </div>
@@ -991,8 +1007,11 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
               <span className="lldp-stat-value">{report.total_hosts}</span>
             </div>
             <div className="lldp-stat success">
-              <span className="lldp-stat-label">{isScanReport ? 'Logged In' : 'Success Hosts'}</span>
+              <span className="lldp-stat-label">{isScanReport ? 'Devices Logged In' : 'Success Hosts'}</span>
               <span className="lldp-stat-value">{report.success_hosts}</span>
+              {report.same_device_ips > 0 && (
+                <span className="lldp-stat-note">+{report.same_device_ips} IP(s) of the same device(s)</span>
+              )}
             </div>
             <div className="lldp-stat failed">
               <span className="lldp-stat-label">Failed Hosts</span>
@@ -1148,8 +1167,28 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                       <React.Fragment key={key}>
                         <tr className="clickable" onClick={() => setExpandedHost(open ? null : key)}>
                           <td>{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
-                          <td>{h.hostname}</td>
-                          <td className="mono">{h.ip}</td>
+                          <td>
+                            {h.hostname}
+                            {h.same_name_as?.length > 0 && (
+                              <span
+                                className="lldp-name-clash"
+                                title={`Another device uses this hostname: ${h.same_name_as.join(', ')}. Rename one - the topology joins devices by name.`}
+                              >
+                                same name
+                              </span>
+                            )}
+                          </td>
+                          <td className="mono">
+                            {h.ip}
+                            {h.other_ips?.length > 0 && (
+                              <span
+                                className="lldp-other-ips"
+                                title={`Same device (same name, model and LLDP neighbors) also answered on ${h.other_ips.join(', ')}`}
+                              >
+                                {' '}+{h.other_ips.join(' +')}
+                              </span>
+                            )}
+                          </td>
                           <td>{h.model || '-'}</td>
                           <td>{h.command_profile || '-'}</td>
                           <td>{h.depth}</td>
@@ -1171,6 +1210,13 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                                 {h.log || h.detail || ''}
                                 {'\n\n' + '='.repeat(50) + '\nRAW TERMINAL OUTPUT:\n' + '='.repeat(50) + '\n'}
                                 {h.raw_output || 'No Data'}
+                                {(report.hosts || [])
+                                  .filter((o) => o.same_device_as === h.ip)
+                                  .map(
+                                    (o) =>
+                                      `\n\n${'#'.repeat(50)}\nSAME DEVICE VIA ${o.ip}\n${'#'.repeat(50)}\n${o.log || o.detail || ''}`
+                                  )
+                                  .join('')}
                               </pre>
                             </td>
                           </tr>
@@ -1222,7 +1268,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     <div className="lldp-cmd-item" key={p.id}>
                       <div className="lldp-cmd-item-main">
                         <span className="lldp-cmd-name">{p.name}</span>
-                        <span className="lldp-prio-badge">{p.parser}</span>
+                        <span className="lldp-prio-badge">{p.parser === 'custom' ? `custom · ${p.driver}` : p.parser}</span>
                         {p.enabled === false && <span className="lldp-prio-badge">disabled</span>}
                         <code className="lldp-cmd-preview">{p.commands?.lldp_brief || '-'}</code>
                       </div>
@@ -1231,7 +1277,7 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                           className="lldp-btn-secondary lldp-btn-mini"
                           onClick={() => {
                             setCmdError('');
-                            setEditingCmd({ ...p, commands: { ...p.commands } });
+                            setEditingCmd({ ...p, commands: { ...p.commands }, regexes: { ...(p.regexes || {}) } });
                           }}
                         >
                           <Edit2 className="h-3.5 w-3.5" />
@@ -1280,8 +1326,27 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     >
                       <option value="huawei">huawei — display lldp neighbor style</option>
                       <option value="cisco">cisco — show lldp neighbors style</option>
+                      <option value="raisecom">raisecom — show lldp remote style</option>
+                      <option value="fortinet">fortinet — diagnose lldprx neighbor style</option>
+                      <option value="custom">custom — my own regex (named groups)</option>
                     </select>
                   </label>
+                  {editingCmd.parser === 'custom' && (
+                    <label className="lldp-field">
+                      <span>Login driver (Netmiko device type this profile logs in with)</span>
+                      <input
+                        list="lldp-login-drivers"
+                        value={editingCmd.driver || ''}
+                        onChange={(e) => setEditingCmd((prev) => ({ ...prev, driver: e.target.value }))}
+                        placeholder="e.g. huawei, cisco_ios, juniper_junos"
+                      />
+                      <datalist id="lldp-login-drivers">
+                        {loginDrivers.map((d) => (
+                          <option key={d} value={d} />
+                        ))}
+                      </datalist>
+                    </label>
+                  )}
                   <label className="lldp-toggle">
                     <input
                       type="checkbox"
@@ -1291,8 +1356,9 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                     <span>Enabled</span>
                   </label>
 
-                  {COMMAND_FIELDS.map(([field, label, placeholder]) => (
-                    <label className="lldp-field" key={field}>
+                  {COMMAND_FIELDS.map(([field, label, placeholder, rxPlaceholder]) => (
+                    <React.Fragment key={field}>
+                    <label className="lldp-field">
                       <span>{label}</span>
                       <input
                         className="lldp-cmd-input"
@@ -1305,11 +1371,76 @@ export default function LldpDiscoveryPage({ fleet = [], nornirWorkers = 10, onUp
                         }
                         placeholder={placeholder}
                       />
+                      {rxPlaceholder && (
+                        <div className="lldp-regex-row">
+                          <span className="lldp-regex-tag">regex</span>
+                          <input
+                            className="lldp-regex-input"
+                            value={editingCmd.regexes?.[field] || ''}
+                            onChange={(e) =>
+                              setEditingCmd((prev) => ({
+                                ...prev,
+                                regexes: { ...(prev.regexes || {}), [field]: e.target.value },
+                              }))
+                            }
+                            placeholder={
+                              editingCmd.parser === 'custom' && CUSTOM_REGEX_PLACEHOLDERS[field]
+                                ? CUSTOM_REGEX_PLACEHOLDERS[field]
+                                : `optional — ${rxPlaceholder}`
+                            }
+                          />
+                          {editingCmd.parser === 'custom' && CUSTOM_REGEX_PLACEHOLDERS[field] && (
+                            <button
+                              type="button"
+                              className={`lldp-btn-secondary lldp-btn-mini lldp-rx-toggle ${rxTesterField === field ? 'active' : ''}`}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setRxTesterField((cur) => (cur === field ? null : field));
+                              }}
+                            >
+                              <Wand2 className="h-3.5 w-3.5" />
+                              {rxTesterField === field ? 'Close' : 'Build & test'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </label>
+                    {editingCmd.parser === 'custom' && rxTesterField === field && CUSTOM_REGEX_PLACEHOLDERS[field] && (
+                      <CustomRegexTester
+                        command={editingCmd.commands?.[field] || ''}
+                        pattern={editingCmd.regexes?.[field] || ''}
+                        onUseRegex={(rx) =>
+                          setEditingCmd((prev) => ({ ...prev, regexes: { ...(prev.regexes || {}), [field]: rx } }))
+                        }
+                        fleet={fleet}
+                        driver={editingCmd.driver}
+                      />
+                    )}
+                    </React.Fragment>
                   ))}
+                  {editingCmd.parser === 'custom' ? (
+                    <span className="lldp-hint">
+                      Custom parser: the LLDP regexes read the neighbors. Every match is one neighbor, taken from the
+                      named groups {CUSTOM_GROUPS.map((g, i) => (
+                        <React.Fragment key={g}>
+                          {i > 0 && ', '}
+                          <code>{`(?P<${g}>…)`}</code>
+                        </React.Fragment>
+                      ))}{' '}
+                      — <code>local_port</code> is required, except in a per-port detail regex (a command with{' '}
+                      <code>{'{intf}'}</code> already knows its port). The neighbor list command and its regex are required; the
+                      detail commands run only when they have a regex, and fill in what the list lacks (e.g. the
+                      model). Start a pattern with <code>(?s)</code> to let one match span several lines. Empty
+                      commands are skipped: no sysname command means the name is read from the prompt.
+                    </span>
+                  ) : (
                   <span className="lldp-hint">
-                    Leave a command empty to use the built-in default for the selected parser.
+                    Leave a command empty to use the built-in default for the selected parser. A regex is optional:
+                    with a capture group it reads the value itself (sysname, model), without one it keeps only the
+                    matching lines before the parser runs. If it matches nothing, the built-in parsing is used and the
+                    sweep log says so.
                   </span>
+                  )}
 
                   <div className="lldp-actions">
                     <button type="submit" className="lldp-btn-primary" disabled={cmdSaving}>

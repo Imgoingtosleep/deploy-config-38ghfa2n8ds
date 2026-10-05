@@ -6,17 +6,18 @@ powered by Nornir 3.x and nornir-netmiko.
 import time
 import re
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 
 # Apply global SSH algorithm compatibility (KEX + public key preferences)
-from app.services.ssh_compat import file_lock, device_name_map  # noqa: F401
+from app.services.ssh_compat import file_lock, device_name_map, describe_kex_error  # noqa: F401
 import paramiko
 
 from nornir import InitNornir
 from nornir.core.inventory import Host, Hosts, Inventory, Defaults, ConnectionOptions
 from nornir.core.plugins.inventory import InventoryPluginRegister
 from nornir.core.task import Task
-from nornir_netmiko.tasks import netmiko_send_command, netmiko_send_config, netmiko_save_config
+from nornir_netmiko.tasks import netmiko_send_command, netmiko_send_config
+from app.services.save_config import save_command, save_kwargs, save_with_nornir
 
 from app.schemas.device import DeviceCredentials
 from app.schemas.command import (
@@ -69,6 +70,11 @@ class NornirService:
     @staticmethod
     def _map_platform(device_type: str) -> str:
         dev_type = (device_type or "cisco_ios").lower().strip()
+        # An exact Netmiko driver is kept as is, so e.g. hp_comware_telnet does not
+        # lose its telnet transport to the fuzzy vendor matching below
+        from netmiko.ssh_dispatcher import platforms
+        if dev_type in platforms:
+            return dev_type
         if "cisco_nxos" in dev_type or "nxos" in dev_type:
             return "cisco_nxos"
         elif "cisco_ios_telnet" in dev_type or ("cisco" in dev_type and "telnet" in dev_type):
@@ -98,16 +104,68 @@ class NornirService:
             return "show configuration"
         elif "mikrotik" in dev:
             return "/export"
+        elif "fortinet" in dev or "fortigate" in dev or "fortios" in dev:
+            return "show full-configuration"
         else:
             return "show running-config"
 
     @staticmethod
-    def _extract_exception(multi_result: Any) -> Any:
+    def _unwrap_subtask_error(exc: Any) -> Any:
+        """NornirSubTaskError only says 'Subtask: x (failed)'; the real error is on its result"""
+        for _ in range(5):
+            inner = getattr(getattr(exc, "result", None), "exception", None)
+            if not inner or inner is exc:
+                break
+            exc = inner
+        return exc
+
+    @classmethod
+    def _extract_exception(cls, multi_result: Any) -> Any:
         if hasattr(multi_result, "__iter__"):
             for r in multi_result:
                 if getattr(r, "exception", None):
-                    return r.exception
-        return getattr(multi_result, "exception", None) or "Execution failed on device"
+                    return cls._unwrap_subtask_error(r.exception)
+        return cls._unwrap_subtask_error(getattr(multi_result, "exception", None)) or "Execution failed on device"
+
+    @classmethod
+    def _is_credential_error(cls, exc: Any) -> bool:
+        """Login / session rejections worth retrying with the next credential priority"""
+        err_l = str(cls._unwrap_subtask_error(exc)).lower()
+        return any(k in err_l for k in (
+            "auth", "password", "login", "permission", "channel", "administratively prohibited",
+        ))
+
+    @staticmethod
+    def _apply_credential(task: Task, cred: Dict[str, Any]) -> None:
+        task.host.username = cred.get("username", "")
+        task.host.password = cred.get("password", "")
+        opts = task.host.connection_options["netmiko"]
+        opts.username = task.host.username
+        opts.password = task.host.password
+        if cred.get("secret"):
+            opts.extras["secret"] = cred["secret"]
+
+    @classmethod
+    def _connect_with_credential_fallback(cls, task: Task) -> str:
+        """Open the netmiko session trying the device's credentials in priority order
+        (profile priority 1 -> 2 -> 3, then credential_pool). Later task.run() calls reuse
+        the open session. Returns the name of the credential that logged in."""
+        candidates = task.host.data.get("credential_candidates") or []
+        for c_idx, cred in enumerate(candidates or [{}], 1):
+            if cred:
+                cls._apply_credential(task, cred)
+            try:
+                task.host.get_connection("netmiko", task.nornir.config)
+                return cred.get("name", "") if cred else ""
+            except Exception as ce:
+                try:
+                    task.host.close_connection("netmiko")
+                except Exception:
+                    pass
+                if cls._is_credential_error(ce) and c_idx < len(candidates):
+                    continue
+                raise
+        return ""
 
     @staticmethod
     def _format_failure_reason(exc: Any, host_name: str = "") -> str:
@@ -115,6 +173,10 @@ class NornirService:
         err_str = str(exc or "").strip()
         err_lower = err_str.lower()
         h_prefix = f"on {host_name}: " if host_name else ""
+
+        kex_reason = describe_kex_error(err_str)
+        if kex_reason:
+            return f"{kex_reason} (host {host_name})" if host_name else kex_reason
 
         if "unable to open channel" in err_lower or "channel closed" in err_lower or "channel request failed" in err_lower or "administratively prohibited" in err_lower:
             return (
@@ -188,14 +250,12 @@ class NornirService:
         host_dict = {}
         for idx, dev in enumerate(devices):
             host_key = dev.host.strip() if dev.host and dev.host.strip() else f"device_{idx+1}"
-            raw = (dev.device_type or "").lower().strip()
-            if not raw or raw in ["autodetect", "auto"]:
-                try:
-                    from app.services.autodetect_service import AutoDetectService
-                    detected, _ = AutoDetectService.detect_device_type(dev)
-                    dev.device_type = detected
-                except Exception:
-                    dev.device_type = "huawei" if "huawei" in (settings.DEFAULT_DEVICE_TYPE or "").lower() else "cisco_ios"
+            from app.services.autodetect_service import AutoDetectService
+            # Never a detection status: a failed detection falls back to DEFAULT_DEVICE_TYPE,
+            # and the note says so in the deploy log
+            dev.device_type, driver_note = AutoDetectService.resolve_driver(dev)
+            if AutoDetectService.is_telnet(dev):
+                dev.device_type = AutoDetectService.telnet_driver(dev.device_type)
             platform = cls._map_platform(dev.device_type)
 
             
@@ -221,6 +281,7 @@ class NornirService:
                 "extras": extras,
                 "data": {
                     "original_device": dev,
+                    "driver_note": driver_note,
                     "index": idx,
                     "credential_candidates": candidates,
                 }
@@ -302,41 +363,12 @@ class NornirService:
                 else:
                     actual_cmd = command or ""
 
-            candidates = task.host.data.get("credential_candidates") or []
-            res = None
-            for c_idx, cred in enumerate(candidates or [{}], 1):
-                if cred:
-                    task.host.username = cred.get("username", "")
-                    task.host.password = cred.get("password", "")
-                    task.host.connection_options["netmiko"].username = cred.get("username", "")
-                    task.host.connection_options["netmiko"].password = cred.get("password", "")
-                    if cred.get("secret"):
-                        task.host.connection_options["netmiko"].extras["secret"] = cred["secret"]
-                try:
-                    res = task.run(
-                        task=netmiko_send_command,
-                        command_string=actual_cmd,
-                        read_timeout=settings.DEFAULT_TIMEOUT,
-                    )
-                    break
-                except Exception as ce:
-                    err_l = str(ce).lower()
-                    is_cred_err = (
-                        "auth" in err_l
-                        or "password" in err_l
-                        or "login" in err_l
-                        or "permission" in err_l
-                        or "unable to open channel" in err_l
-                        or "channel" in err_l
-                        or "administratively prohibited" in err_l
-                    )
-                    if is_cred_err and c_idx < len(candidates):
-                        try:
-                            task.host.close_connection("netmiko")
-                        except Exception:
-                            pass
-                        continue
-                    raise ce
+            cred_name = cls._connect_with_credential_fallback(task)
+            res = task.run(
+                task=netmiko_send_command,
+                command_string=actual_cmd,
+                read_timeout=settings.DEFAULT_TIMEOUT,
+            )
             detected_sysname = ""
             try:
                 plat_l = (task.host.platform or "").lower()
@@ -359,8 +391,8 @@ class NornirService:
 
             t_elapsed = round(time.time() - t_start, 2)
             masked = NetmikoService.clean_cli_output(res.result or "")
-            winning_user = task.host.username or (cred.get("username") if cred else "")
-            winning_label = cred.get("name") if cred else None
+            winning_user = task.host.username
+            winning_label = cred_name or None
             return {
                 "command": actual_cmd,
                 "output": masked,
@@ -444,8 +476,13 @@ class NornirService:
         post_check_commands: List[str] = None,
         backup_before_deploy: bool = False,
         num_workers: int = None,
+        on_event: Optional[Callable[[DeviceCredentials, str, str, str], None]] = None,
     ) -> BatchDeployResponse:
-        """Run advanced configuration deployment across fleet using Nornir Engine"""
+        """Run advanced configuration deployment across fleet using Nornir Engine.
+
+        on_event(device, action, status, detail) is called as each step finishes on each
+        device, from the Nornir worker threads, so its timestamps are the real step times.
+        """
         start_time = time.time()
         if not devices:
             return BatchDeployResponse(
@@ -473,9 +510,22 @@ class NornirService:
 
         nr = cls.init_nornir(devices, num_workers=num_workers)
 
+        root_error = cls._unwrap_subtask_error
+
+        def emit(task: Task, action: str, status: str, detail: str = ""):
+            if on_event:
+                try:
+                    on_event(task.host.data.get("original_device"), action, status, detail)
+                except Exception:
+                    pass
+
         def _nornir_deploy_task(task: Task) -> Dict[str, Any]:
             t_start = time.time()
             dev_type = task.host.platform or "cisco_ios"
+            note = task.host.data.get("driver_note")
+            emit(task, "START", "running", f"driver={dev_type}" + (f" ({note})" if note else ""))
+            cred_name = cls._connect_with_credential_fallback(task)
+            emit(task, "LOGIN", "success", f"user={task.host.username}" + (f" ({cred_name})" if cred_name else ""))
             backup_output = None
             pre_res_list = []
             post_res_list = []
@@ -489,10 +539,12 @@ class NornirService:
                     b_res = task.run(task=netmiko_send_command, command_string=show_run, read_timeout=settings.DEFAULT_TIMEOUT)
                     backup_output = NetmikoService.clean_cli_output(b_res.result or "")
                     step_logs[-1]["status"] = "success"
+                    emit(task, "BACKUP", "success", f"{show_run} ({len(backup_output.splitlines())} lines)")
                 except Exception as be:
                     backup_output = f"Backup failed: {str(be)}"
                     step_logs[-1]["status"] = "failed"
                     step_logs[-1]["error"] = str(be)
+                    emit(task, "BACKUP", "failed", f"{show_run}: {root_error(be)}")
 
             # 2. Pre-Checks
             for cmd in (pre_check_commands or []):
@@ -507,6 +559,7 @@ class NornirService:
                         success=True,
                         execution_time_seconds=round(time.time() - cmd_st, 2),
                     ))
+                    emit(task, "PRE-CHECK", "success", actual_pre)
                 except Exception as pe:
                     pre_res_list.append(CommandResponse(
                         host=task.host.name,
@@ -516,25 +569,31 @@ class NornirService:
                         error=str(pe),
                         execution_time_seconds=round(time.time() - cmd_st, 2),
                     ))
+                    emit(task, "PRE-CHECK", "failed", f"{actual_pre}: {root_error(pe)}")
 
             # 3. Config Deployment Set
             step_logs.append({"step": "deploy", "title": f"Pushing {len(clean_commands)} Config Commands", "status": "running"})
             cfg_res = task.run(task=netmiko_send_config, config_commands=clean_commands, read_timeout=settings.DEFAULT_TIMEOUT)
             deploy_output = cfg_res.result or ""
             step_logs[-1]["status"] = "success"
+            emit(task, "DEPLOY", "success", f"{len(clean_commands)} commands")
 
-            # 4. Save to Startup / NVRAM
+            # 4. Save to Startup / NVRAM: the last config command, confirmed with y / yes
             save_output = None
+            save_error = None
             if save_config:
-                step_logs.append({"step": "save", "title": "Saving Config to NVRAM", "status": "running"})
-                try:
-                    s_res = task.run(task=netmiko_save_config)
-                    save_output = s_res.result
+                save_cmd = save_command(dev_type)
+                step_logs.append({"step": "save", "title": f"Saving Config to Startup ({save_cmd}{', confirm Y' if save_kwargs(dev_type).get('confirm') else ''})", "status": "running"})
+                saved = save_with_nornir(task, dev_type)
+                save_output = saved["output"] or saved["error"]
+                if saved["success"]:
                     step_logs[-1]["status"] = "success"
-                except Exception as se:
-                    save_output = f"Save failed: {str(se)}"
+                    emit(task, "SAVE", "success", save_cmd)
+                else:
+                    save_error = saved["error"]
                     step_logs[-1]["status"] = "failed"
-                    step_logs[-1]["error"] = str(se)
+                    step_logs[-1]["error"] = save_error
+                    emit(task, "SAVE", "failed", f"{save_cmd}: {save_error}")
 
             # 5. Post-Checks
             for cmd in (post_check_commands or []):
@@ -549,6 +608,7 @@ class NornirService:
                         success=True,
                         execution_time_seconds=round(time.time() - cmd_st, 2),
                     ))
+                    emit(task, "POST-CHECK", "success", actual_post)
                 except Exception as pe:
                     post_res_list.append(CommandResponse(
                         host=task.host.name,
@@ -558,6 +618,7 @@ class NornirService:
                         error=str(pe),
                         execution_time_seconds=round(time.time() - cmd_st, 2),
                     ))
+                    emit(task, "POST-CHECK", "failed", f"{actual_post}: {root_error(pe)}")
 
             # 6. Auto-generate rollback
             rollback_cmds = NetmikoService.generate_rollback(clean_commands, dev_type)
@@ -588,6 +649,10 @@ class NornirService:
                 pass
 
             t_elapsed = round(time.time() - t_start, 2)
+            emit(
+                task, "DONE", "failed" if save_error else "success",
+                f"sysname={detected_sysname or '-'}, {t_elapsed}s",
+            )
             return {
                 "deploy_output": NetmikoService.clean_cli_output(full_terminal_output),
                 "sysname_device": detected_sysname,
@@ -599,9 +664,19 @@ class NornirService:
                 "step_logs": step_logs,
                 "execution_time_seconds": t_elapsed,
                 "authenticated_username": task.host.username,
+                "save_error": save_error,
+                "commands_deployed": clean_commands + ([save_cmd] if save_config else []),
             }
 
-        agg_result = nr.run(task=_nornir_deploy_task)
+        def _logged_deploy_task(task: Task) -> Dict[str, Any]:
+            # Connection is opened lazily by the first task.run, so login / SSH errors land here too
+            try:
+                return _nornir_deploy_task(task)
+            except Exception as e:
+                emit(task, "ERROR", "failed", cls._format_failure_reason(root_error(e), task.host.name))
+                raise
+
+        agg_result = nr.run(task=_logged_deploy_task)
 
         results = [None] * len(devices)
         for host_name, multi_result in agg_result.items():
@@ -639,17 +714,21 @@ class NornirService:
                     sysname_device=sysname,
                     command=f"Nornir Config Deployment ({len(clean_commands)} lines)",
                     output=deploy_out,
-                    success=True,
-                    error=None,
+                    # Config that was pushed but not saved is lost on reboot: count it as failed
+                    success=not task_data.get("save_error"),
+                    error=(
+                        f"Config pushed but NOT saved to startup: {task_data['save_error']}"
+                        if task_data.get("save_error") else None
+                    ),
                     execution_time_seconds=task_data.get("execution_time_seconds", 0.0),
-                    commands_deployed=clean_commands,
+                    commands_deployed=task_data.get("commands_deployed", clean_commands),
                     save_output=task_data.get("save_output"),
                     backup_config=task_data.get("backup_output"),
                     pre_check_results=task_data.get("pre_check_results", []),
                     post_check_results=task_data.get("post_check_results", []),
                     rollback_commands=task_data.get("rollback_commands", []),
                     step_logs=task_data.get("step_logs", []),
-                    authenticated_username=task_data.get("authenticated_username") or task.host.username,
+                    authenticated_username=task_data.get("authenticated_username") or host_obj.username,
                 )
 
         # Fill any missing entries safely
@@ -704,6 +783,7 @@ class NornirService:
             t_start = time.time()
             dev_type = task.host.platform or "cisco_ios"
             cmd = cls._get_show_run_cmd(dev_type)
+            cls._connect_with_credential_fallback(task)
             res = task.run(
                 task=netmiko_send_command,
                 command_string=cmd,

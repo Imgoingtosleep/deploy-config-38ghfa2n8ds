@@ -18,15 +18,10 @@ def _execute_device_command(
     vendor_commands: dict = None,
 ) -> CommandResponse:
     """Helper function to execute command on a single device with multi-vendor auto-translation"""
-    dev_type = (device.device_type or "").lower()
-    if not dev_type or dev_type in ["autodetect", "auto"]:
-        try:
-            from app.services.autodetect_service import AutoDetectService
-            detected_type, _ = AutoDetectService.detect_device_type(device)
-            device.device_type = detected_type
-            dev_type = detected_type
-        except Exception:
-            pass
+    from app.services.autodetect_service import AutoDetectService
+    # Always a real driver (never 'unreachable' / 'cant_detect'); serial consoles are not probed
+    dev_type, _ = AutoDetectService.resolve_driver(device)
+    device.device_type = dev_type
 
     from app.services.command_translator import CommandTranslator
     from app.services.nornir_service import NornirService
@@ -97,15 +92,9 @@ def execute_batch_command(request: BatchCommandRequest):
             )
 
         def _resolve_command_for_device(dev: DeviceCredentials) -> str:
-            dev_type = (dev.device_type or "").lower()
-            if not dev_type or dev_type in ["autodetect", "auto"]:
-                try:
-                    from app.services.autodetect_service import AutoDetectService
-                    detected_type, _ = AutoDetectService.detect_device_type(dev)
-                    dev.device_type = detected_type
-                    dev_type = detected_type
-                except Exception:
-                    pass
+            from app.services.autodetect_service import AutoDetectService
+            dev_type, _ = AutoDetectService.resolve_driver(dev)
+            dev.device_type = dev_type
             from app.services.command_translator import CommandTranslator
             from app.services.nornir_service import NornirService
 

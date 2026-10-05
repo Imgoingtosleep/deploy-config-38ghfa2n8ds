@@ -7,8 +7,9 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.api.endpoints import (
     devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp,
-    command_profiles, model_rules,
+    command_profiles, model_rules, config_templates, deploy_schedules,
 )
+from app.services.deploy_schedule_service import DeployScheduleService
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -46,6 +47,26 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}/model-rules",
     tags=["LLDP Model Rules"],
 )
+app.include_router(
+    config_templates.router,
+    prefix=f"{settings.API_V1_STR}/config-templates",
+    tags=["Deploy Config Templates"],
+)
+app.include_router(
+    deploy_schedules.router,
+    prefix=f"{settings.API_V1_STR}/deploy-schedules",
+    tags=["Scheduled Deploy"],
+)
+
+
+@app.on_event("startup")
+def start_deploy_scheduler():
+    DeployScheduleService.start()
+
+
+@app.on_event("shutdown")
+def stop_deploy_scheduler():
+    DeployScheduleService.stop()
 
 
 # The Windows .exe serves the built React app itself, on the same port as the API.

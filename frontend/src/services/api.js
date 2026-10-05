@@ -233,6 +233,67 @@ export const submitDeployJob = async (
   return response.data;
 };
 
+// Scheduled deploy: `schedule` = { runAt, deadline, title, repeat, interval, weekdays, occurrences, repeatUntil }
+// runAt / deadline / repeatUntil are Date objects, repeat is 'once' | 'hourly' | 'daily' | 'weekly',
+// weekdays is 0=Monday..6=Sunday and occurrences is the total number of runs (null = until cancelled)
+export const scheduleDeployJob = async (
+  devices,
+  configCommands,
+  saveConfig,
+  preCheckCommands,
+  postCheckCommands,
+  backupBeforeDeploy,
+  numWorkers,
+  schedule
+) => {
+  const payload = {
+    devices,
+    config_commands: configCommands,
+    save_config: saveConfig,
+    pre_check_commands: preCheckCommands,
+    post_check_commands: postCheckCommands,
+    backup_before_deploy: backupBeforeDeploy,
+    run_at: schedule.runAt.toISOString(),
+    deadline: schedule.deadline ? schedule.deadline.toISOString() : null,
+    client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    client_offset_minutes: -schedule.runAt.getTimezoneOffset(),
+    title: schedule.title || null,
+    repeat: schedule.repeat || 'once',
+    interval: schedule.interval || 1,
+    weekdays: schedule.weekdays || [],
+    occurrences: schedule.occurrences || null,
+    repeat_until: schedule.repeatUntil ? schedule.repeatUntil.toISOString() : null,
+  };
+  if (numWorkers) payload.num_workers = numWorkers;
+  const response = await apiClient.post('/deploy-schedules', payload);
+  return response.data;
+};
+
+export const getDeploySchedules = async () => {
+  const response = await apiClient.get('/deploy-schedules');
+  return response.data;
+};
+
+export const cancelDeploySchedule = async (id) => {
+  const response = await apiClient.post(`/deploy-schedules/${id}/cancel`);
+  return response.data;
+};
+
+export const runDeployScheduleNow = async (id) => {
+  const response = await apiClient.post(`/deploy-schedules/${id}/run-now`);
+  return response.data;
+};
+
+export const deleteDeploySchedule = async (id) => {
+  const response = await apiClient.delete(`/deploy-schedules/${id}`);
+  return response.data;
+};
+
+export const getDeployScheduleLog = async (id) => {
+  const response = await apiClient.get(`/deploy-schedules/${id}/log`, { responseType: 'text' });
+  return response.data;
+};
+
 export const submitBackupJob = async (devices, numWorkers = null) => {
   const payload = { devices };
   if (numWorkers) payload.num_workers = numWorkers;
@@ -247,7 +308,8 @@ export const submitHealthCheckJob = async (
   vendorCommands = {},
   suiteName = null,
   numWorkers = null,
-  commandRegexes = {}
+  commandRegexes = {},
+  commandSets = null
 ) => {
   const payload = {
     devices,
@@ -257,6 +319,8 @@ export const submitHealthCheckJob = async (
     vendor_commands: vendorCommands,
     suite_name: suiteName,
   };
+  // Profile runs: each device runs the set of its driver, as written
+  if (commandSets?.length) payload.command_sets = commandSets;
   if (numWorkers) payload.num_workers = numWorkers;
   const response = await apiClient.post('/jobs/submit-healthcheck', payload);
   return response.data;
@@ -430,6 +494,22 @@ export const deleteCommandProfile = async (id) => {
   return response.data;
 };
 
+// 'custom' parser helpers: the regex is Python ((?P<name>...)), so the backend tests it
+export const testCustomRegex = async (output, pattern, defaultLocalPort = null) => {
+  const response = await apiClient.post('/command-profiles/test-regex', {
+    output,
+    pattern,
+    default_local_port: defaultLocalPort || null,
+  });
+  return response.data;
+};
+
+// Run one command as written (no vendor translation) on a fleet device: sample output for a regex
+export const getCommandSampleOutput = async (device, command, driver = null) => {
+  const response = await apiClient.post('/command-profiles/sample-output', { device, command, driver });
+  return response.data;
+};
+
 export const reorderCommandProfiles = async (orderedIds) => {
   const response = await apiClient.post('/command-profiles/reorder', { ordered_ids: orderedIds });
   return response.data;
@@ -578,3 +658,35 @@ export default apiClient;
 
 
 
+
+// User-made Deploy Config templates (config text may hold {{VARIABLE}} placeholders)
+export const getConfigTemplates = async () => {
+  const response = await apiClient.get('/config-templates');
+  return response.data;
+};
+
+export const createConfigTemplate = async (template) => {
+  const response = await apiClient.post('/config-templates', template);
+  return response.data;
+};
+
+export const updateConfigTemplate = async (id, template) => {
+  const response = await apiClient.put(`/config-templates/${id}`, template);
+  return response.data;
+};
+
+export const deleteConfigTemplate = async (id) => {
+  const response = await apiClient.delete(`/config-templates/${id}`);
+  return response.data;
+};
+
+// Built-in Deploy Config templates the user deleted (keys '<vendor>:<title>')
+export const getHiddenBuiltinTemplates = async () => {
+  const response = await apiClient.get('/config-templates/builtins/hidden');
+  return response.data;
+};
+
+export const hideBuiltinTemplate = async (key) => {
+  const response = await apiClient.post('/config-templates/builtins/hide', { key });
+  return response.data;
+};

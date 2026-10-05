@@ -21,7 +21,8 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - ./backend/app:/app/app
-      # LLDP subnet scan logs (LLDP_LOG_DIR=logs/lldp) persist on the host
+      # LLDP subnet scan logs (LLDP_LOG_DIR=logs/lldp) and scheduled deploy logs
+      # (DEPLOY_LOG_DIR=logs/deploy) persist on the host
       - ./backend/logs:/app/logs
     # privileged: true allows backend to directly access USB-to-Serial Console cables (/dev/ttyUSB0, /dev/ttyACM0)
     privileged: true
@@ -39,7 +40,7 @@ services:
     ports:
       - "${FRONTEND_PORT:-4000}:4000"
     volumes:
-      - ./frontend:/app
+      - ./frontend:/app 
       - /app/node_modules
     environment:
       - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:4050}

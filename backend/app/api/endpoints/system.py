@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.core.config import settings
 from app.schemas.command import WorkersSettingsResponse, WorkersSettingsUpdate
+from app.services.ssh_compat import ssh_compat_status
 
 router = APIRouter()
 
@@ -25,3 +26,10 @@ def update_nornir_workers(payload: WorkersSettingsUpdate):
         max_workers=getattr(settings, "MAX_NUM_WORKERS", 100),
         default_workers=10,
     )
+
+
+@router.get("/ssh-compat")
+def get_ssh_compat():
+    """Installed paramiko version and whether it can still speak the legacy SSH key exchanges"""
+    return ssh_compat_status()
+
