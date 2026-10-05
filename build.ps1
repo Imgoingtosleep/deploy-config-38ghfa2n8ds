@@ -49,6 +49,8 @@ $pyiArgs = @(
     "--collect-all", "nornir",
     "--collect-all", "nornir_netmiko",
     "--collect-all", "nornir_utils",
+    "--collect-all", "tzdata",
+    "--collect-all", "openpyxl",
     "--hidden-import", "multipart",
     "--hidden-import", "python_multipart"
 )
