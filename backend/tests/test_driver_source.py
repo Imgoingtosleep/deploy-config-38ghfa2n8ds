@@ -29,17 +29,23 @@ PRIORITY = [HUAWEI, CISCO]  # command profile priority 1, 2
 class CredentialProfileHasNoDriverTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._file = profile_svc.DATA_FILE
-        profile_svc.DATA_FILE = os.path.join(self._tmp.name, "credential_profiles.json")
+        self._original_get_filename = profile_svc.ProfileService._get_filename
+        self.test_file = os.path.join(self._tmp.name, "credential_profiles_system.json")
+        
+        def fake_get_filename(cls, username):
+            return self.test_file
+            
+        profile_svc.ProfileService._get_filename = classmethod(fake_get_filename)
+        
         # A profiles.json written before this change: it still names a driver
-        with open(profile_svc.DATA_FILE, "w", encoding="utf-8") as f:
+        with open(self.test_file, "w", encoding="utf-8") as f:
             json.dump([{
                 "id": "prof-old", "name": "old", "device_type": "cisco_ios", "port": 22, "is_default": True,
                 "credentials": [{"priority": 1, "username": "admin", "password": "pw"}],
             }], f)
 
     def tearDown(self):
-        profile_svc.DATA_FILE = self._file
+        profile_svc.ProfileService._get_filename = self._original_get_filename
         self._tmp.cleanup()
 
     def test_an_old_profile_driver_is_dropped_on_load(self):
