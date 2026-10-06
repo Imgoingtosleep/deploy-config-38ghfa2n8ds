@@ -10,6 +10,31 @@ const apiClient = axios.create({
   timeout: 60000, // 60s timeout for network SSH commands
 });
 
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('sso_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem('sso_token');
+      localStorage.removeItem('sso_user');
+      window.location.reload();
+    }
+    return Promise.reject(error);
+  }
+);
+
+export const loginSSO = async (username, password) => {
+  const response = await apiClient.post('/auth/login', { username, password });
+  return response.data;
+};
+
 export const getSupportedDeviceTypes = async () => {
   const response = await apiClient.get('/devices/types');
   return response.data;

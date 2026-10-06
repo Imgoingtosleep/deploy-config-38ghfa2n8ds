@@ -5,10 +5,12 @@ import HealthCheckPage from './pages/HealthCheckPage';
 import TroubleshootPage from './pages/TroubleshootPage';
 import DeployConfigPage from './pages/DeployConfigPage';
 import LldpDiscoveryPage from './pages/LldpDiscoveryPage';
+import LoginPage from './pages/LoginPage';
 import { getNornirWorkers, setNornirWorkers as saveNornirWorkersApi } from './services/api';
 import './App.css';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(!!localStorage.getItem('sso_token'));
   const [activeTab, setActiveTab] = useState('healthcheck');
 
   // Nornir Concurrent Workers (Default starts at 10, min: 1, max: 100)
@@ -72,6 +74,10 @@ export default function App() {
   ]);
 
   const activeFleetCount = fleet.filter((d) => d.host && d.host.trim() !== '').length;
+
+  if (!isAuthenticated) {
+    return <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <div className="app-container">

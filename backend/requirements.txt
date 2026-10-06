@@ -17,3 +17,5 @@ requests>=2.31.0,<3
 pyserial>=3.5,<4
 openpyxl>=3.1.5,<4
 tzdata>=2024.1
+PyJWT>=2.8.0,<3
+httpx>=0.25.0,<1

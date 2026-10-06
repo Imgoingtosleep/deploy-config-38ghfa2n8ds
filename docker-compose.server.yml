@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: net-auto-server-backend
+    restart: always
+    env_file:
+      - .env.server
+    privileged: true
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/logs:/app/logs
+    networks:
+      - deploy-config-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - ENV_FILE=.env.server
+    container_name: net-auto-server-frontend
+    restart: always
+    env_file:
+      - .env.server
+    depends_on:
+      - backend
+    networks:
+      - deploy-config-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: net-auto-server-nginx
+    restart: always
+    ports:
+      - "8200:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - deploy-config-network
+
+networks:
+  deploy-config-network:
+    driver: bridge

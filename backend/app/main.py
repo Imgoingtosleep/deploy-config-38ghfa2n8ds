@@ -3,14 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.endpoints import (
     devices, healthcheck, troubleshoot, deploy, templates, jobs, playbooks, profiles, system, lldp,
-    command_profiles, model_rules, config_templates, deploy_schedules,
+    command_profiles, model_rules, config_templates, deploy_schedules, auth,
 )
 from app.services.deploy_schedule_service import DeployScheduleService
+
+import os
+ROOT_PATH = os.getenv("ROOT_PATH", "")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Backend API for Network Switch & Router Config Deployment, Health Checks, and Troubleshooting",
+    root_path=ROOT_PATH,
 )
 
 # CORS Middleware configuration
@@ -23,6 +27,7 @@ app.add_middleware(
 )
 
 # Include Routers
+app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
 app.include_router(devices.router, prefix=f"{settings.API_V1_STR}/devices", tags=["Devices"])
 app.include_router(profiles.router, prefix=f"{settings.API_V1_STR}/profiles", tags=["User Profiles & Credentials"])
 app.include_router(healthcheck.router, prefix=f"{settings.API_V1_STR}/healthcheck", tags=["Health Check"])
