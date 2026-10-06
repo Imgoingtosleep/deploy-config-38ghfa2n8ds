@@ -7,9 +7,8 @@ cffi==2.1.1
 charset-normalizer==3.5.2
 click==8.5.0
 colorama==0.4.6
-cryptography==50.0.2
+cryptography==42.0.8
 et_xmlfile==2.0.0
-exceptiongroup==1.3.1
 fastapi==0.142.2
 h11==0.16.0
 httpcore==1.0.9
@@ -27,7 +26,6 @@ nornir-utils==0.3.0
 ntc_templates==9.3.0
 openpyxl==3.1.5
 opentelemetry-api==1.45.0
-packaging==26.3
 paramiko==3.5.1
 pycparser==3.0
 pydantic==2.13.5
@@ -53,4 +51,4 @@ urllib3==2.8.0
 uvicorn==0.54.0
 uvloop==0.23.0
 watchfiles==1.3.0
-websockets==16.1.1
+websockets==17.2
