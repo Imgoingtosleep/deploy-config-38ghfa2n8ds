@@ -1,5 +1,5 @@
 # Exact patch version: a floating tag can silently change Python under the pinned packages
-FROM python:3.10.21-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
