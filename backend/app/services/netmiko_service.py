@@ -198,16 +198,21 @@ class NetmikoService:
 
         # 1. Check if device is linked to a Credential Profile (which contains multi-tier prioritized credentials)
         prof = None
+        app_user = "system"
         if device.profile_id:
             try:
                 from app.services.profile_service import ProfileService
                 prof = ProfileService.get_profile_by_id(device.profile_id)
+                if device.profile_id.startswith("prof_"):
+                    parts = device.profile_id.split("_", 2)
+                    if len(parts) >= 3:
+                        app_user = parts[1]
             except Exception:
                 pass
         elif not device.username and not device.password:
             try:
                 from app.services.profile_service import ProfileService
-                all_p = ProfileService.get_profiles()
+                all_p = ProfileService.get_profiles(app_user)
                 prof = next((p for p in all_p if p.get("is_default")), (all_p[0] if all_p else None))
             except Exception:
                 pass
@@ -276,7 +281,7 @@ class NetmikoService:
         if device.fallback_profile_ids:
             try:
                 from app.services.profile_service import ProfileService
-                all_profiles = {prof["id"]: prof for prof in ProfileService.get_profiles()}
+                all_profiles = {prof["id"]: prof for prof in ProfileService.get_profiles(app_user)}
                 for pid in device.fallback_profile_ids:
                     if pid in all_profiles:
                         prof = all_profiles[pid]

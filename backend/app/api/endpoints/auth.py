@@ -65,3 +65,21 @@ async def login(req: LoginRequest):
         "token": encoded_jwt,
         "user": payload_user
     }
+
+from fastapi import Depends
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
+
+def get_current_username(token: str = Depends(oauth2_scheme)) -> str:
+    """Extract username from JWT token. Returns 'anonymous' if no token is provided."""
+    if not token:
+        return "anonymous"
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            return "anonymous"
+        return username
+    except jwt.PyJWTError:
+        return "anonymous"

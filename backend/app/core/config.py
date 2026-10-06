@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # With no deadline, a schedule that could not start within this many minutes of run_at is marked missed
     DEPLOY_SCHEDULE_GRACE_MINUTES: int = int(os.getenv("DEPLOY_SCHEDULE_GRACE_MINUTES", 15))
 
+    # Encryption
+    FERNET_MASTER_KEY: str = os.getenv("FERNET_MASTER_KEY", "uO1QeB4n5HwJ9PzvD3tK2mXq8YcR6L0A_7fVcSgTZbI=")
+
+
     class Config:
         case_sensitive = True
         extra = "allow"
