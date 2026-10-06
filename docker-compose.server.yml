@@ -21,7 +21,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - ENV_FILE=.env.server
+        - VITE_API_BASE_URL=${VITE_API_BASE_URL}
     container_name: net-auto-server-frontend
     restart: always
     env_file:
