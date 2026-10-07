@@ -72,14 +72,16 @@ from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
 
 def get_current_username(token: str = Depends(oauth2_scheme)) -> str:
-    """Extract username from JWT token. Returns 'anonymous' if no token is provided."""
+    """Extract username from JWT token. Raises 401 if missing or invalid."""
     if not token:
-        return "anonymous"
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
-            return "anonymous"
+            raise HTTPException(status_code=401, detail="Invalid token payload")
         return username
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
     except jwt.PyJWTError:
-        return "anonymous"
+        raise HTTPException(status_code=401, detail="Invalid token")
