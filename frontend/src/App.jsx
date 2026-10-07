@@ -79,6 +79,21 @@ export default function App() {
     return <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
+  const handleLogout = () => {
+    localStorage.removeItem('sso_token');
+    localStorage.removeItem('sso_user');
+    setIsAuthenticated(false);
+  };
+
+  const getSsoUserName = () => {
+    try {
+      const user = JSON.parse(localStorage.getItem('sso_user'));
+      return user?.name || user?.username || 'User';
+    } catch {
+      return 'User';
+    }
+  };
+
   return (
     <div className="app-container">
       {/* Top Navbar */}
@@ -87,6 +102,8 @@ export default function App() {
         setActiveTab={setActiveTab}
         deviceConnected={activeFleetCount > 0}
         deviceHost={`${activeFleetCount} Devices`}
+        userName={getSsoUserName()}
+        onLogout={handleLogout}
       />
 
       {/* Main Content Area */}
