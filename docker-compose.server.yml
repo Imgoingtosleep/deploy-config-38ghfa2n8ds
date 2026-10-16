@@ -21,7 +21,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_BASE_URL=/deploy-config/8200
+        - VITE_API_BASE_URL=/deploy-config/8002
     container_name: net-auto-server-frontend
     restart: always
     env_file:
@@ -36,7 +36,7 @@ services:
     container_name: net-auto-server-nginx
     restart: always
     ports:
-      - "8200:80"
+      - "8002:80"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
